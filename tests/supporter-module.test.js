@@ -1,0 +1,204 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { app } from '../server.js';
+
+const server = app.listen(0);
+const port = () => server.address().port;
+const baseUrl = () => `http://127.0.0.1:${port()}`;
+
+async function api(path, payload = undefined, method = 'POST') {
+  const response = await fetch(`${baseUrl()}${path}`, {
+    method,
+    headers: { 'content-type': 'application/json' },
+    body: payload === undefined ? undefined : JSON.stringify(payload)
+  });
+  const text = await response.text();
+  let json;
+  try { json = JSON.parse(text); } catch { json = { raw: text }; }
+  if (!response.ok) {
+    throw new Error(`${method} ${path} failed: ${response.status} ${JSON.stringify(json)}`);
+  }
+  return json;
+}
+
+test('supporter dashboard and recommendation generation', async () => {
+  const participant = await api('/api/participants', {
+    name: '支援テスト',
+    email: 'support-test@example.com',
+    challenge: '毎日30分学習',
+    goal: '継続する'
+  });
+
+  const supporter = await api('/api/supporters/register', {
+    organization_name: 'Future Challenge Lab',
+    supporter_name: 'サポーターA',
+    email: 'supporterA@example.com',
+    support_category: '学習支援',
+    strengths: ['学習', '継続'],
+    timing_tags: ['停滞時', '再開時'],
+    description: '学習継続を支える支援者',
+    capacity: 5,
+    accepting_new_matches: true
+  });
+
+  await api('/api/checkins', {
+    participant_id: participant.id,
+    answers: { q1: 1, q2: 1, q3: 1, q4: 1, q5: 1 }
+  });
+
+  const candidates = await api(`/api/supporter-candidates/${participant.id}`, undefined, 'GET');
+  assert.ok(Array.isArray(candidates.candidates));
+  assert.ok(candidates.candidates.length >= 1);
+  assert.match(candidates.candidates[0].recommended_support_type || '', /支援|介入|相談|整理/);
+
+  const dashboard = await api(`/api/supporter/dashboard?supporter_id=${supporter.id}`, undefined, 'GET');
+  assert.ok(Array.isArray(dashboard.targets));
+  assert.ok(typeof dashboard.summary.total_support_count === 'number');
+  assert.ok(typeof dashboard.summary.support_capacity === 'number');
+});
+
+test('duplicate supporter match is rejected', async () => {
+  const participant = await api('/api/participants', {
+    name: '重複テスト',
+    email: 'duplicate@example.com',
+    challenge: '毎日20分',
+    goal: '習慣化'
+  });
+
+  const supporter = await api('/api/supporters/register', {
+    organization_name: 'FCL',
+    supporter_name: '重複支援者',
+    email: 'duplicate-supporter@example.com',
+    support_category: '習慣化',
+    strengths: ['習慣化'],
+    timing_tags: ['停滞時'],
+    description: '習慣化支援',
+    capacity: 2,
+    accepting_new_matches: true
+  });
+
+  const candidate = (await api(`/api/supporter-candidates/${participant.id}`, undefined, 'GET')).candidates[0];
+  const first = await api('/api/supporter-match', {
+    participant_id: participant.id,
+    supporter_id: candidate.supporter_id || supporter.id
+  });
+  assert.equal(first.status, 'saved');
+
+  await assert.rejects(
+    () => api('/api/supporter-match', {
+      participant_id: participant.id,
+      supporter_id: candidate.supporter_id || supporter.id
+    }),
+    /409|duplicate/i
+  );
+});
+
+test('support execution and outcome retrieval', async () => {
+  const participant = await api('/api/participants', {
+    name: '支援実行テスト',
+    email: 'execution@example.com',
+    challenge: '毎日15分の筋トレ',
+    goal: '継続'
+  });
+
+  const supporter = await api('/api/supporters/register', {
+    organization_name: 'Exercise Lab',
+    supporter_name: '実行支援者',
+    email: 'execution-supporter@example.com',
+    support_category: '運動',
+    strengths: ['運動'],
+    timing_tags: ['再開時'],
+    description: '運動継続を支える',
+    capacity: 3,
+    accepting_new_matches: true
+  });
+
+  const executionSupporter = await api('/api/supporters/register', {
+    organization_name: 'Exercise Lab',
+    supporter_name: '実行支援者2',
+    email: 'execution-supporter-2@example.com',
+    support_category: '運動',
+    strengths: ['運動', '習慣化'],
+    timing_tags: ['再開時', '伴走'],
+    description: '運動と習慣化を支える',
+    capacity: 4,
+    accepting_new_matches: true
+  });
+
+  await api('/api/checkins', {
+    participant_id: participant.id,
+    answers: { q1: 1, q2: 1, q3: 1, q4: 1, q5: 1 }
+  });
+
+  const candidate = (await api(`/api/supporter-candidates/${participant.id}`, undefined, 'GET')).candidates[0];
+  const executionSupporterId = candidate.supporter_id === executionSupporter.id ? supporter.id : executionSupporter.id;
+  await api('/api/supporter-match', {
+    participant_id: participant.id,
+    supporter_id: executionSupporterId
+  });
+
+  const execution = await api('/api/supporter/execute', {
+    participant_id: participant.id,
+    supporter_id: executionSupporterId,
+    recommendation_type: 'supporter',
+    recommendation_reason: '高リスクのため',
+    suggested_message: '今日の最初の一歩を10分だけ始めましょう。',
+    approved: true
+  });
+
+  assert.equal(execution.status, 'saved');
+  assert.ok(execution.assignment || execution.execution_event);
+
+  const outcome = await api(`/api/supporter/outcomes/${executionSupporterId}`, undefined, 'GET');
+  assert.ok(Array.isArray(outcome.outcomes));
+  assert.ok(typeof outcome.summary.observed_execution_rate === 'number');
+});
+
+test('matching flow accepts both approvals and blocks declines', async () => {
+  const participant = await api('/api/participants', {
+    name: '承認フロー',
+    email: 'approval-flow@example.com',
+    challenge: '毎日20分の読書',
+    goal: '継続'
+  });
+
+  const supporter = await api('/api/supporters/register', {
+    organization_name: 'Reading Lab',
+    supporter_name: '読書支援者',
+    email: 'reading-support@example.com',
+    support_category: '読書',
+    strengths: ['読書', '習慣化'],
+    timing_tags: ['停滞時', '再開時'],
+    description: '読書継続を支える',
+    capacity: 2,
+    accepting_new_matches: true
+  });
+
+  const match = await api('/api/matches', { participant_id: participant.id });
+  const candidate = match.find(x => x.supporter_id === supporter.id) || match[0];
+  assert.ok(candidate);
+
+  const emailTrigger = await api(`/api/matches/${candidate.id}/send-email`, {
+    email_type: 'matching_candidate'
+  }, 'POST');
+  assert.equal(emailTrigger.status, 'sent');
+
+  await api(`/api/matches/${candidate.id}/challenger-approve`, {}, 'POST');
+  const supporterApproved = await api(`/api/matches/${candidate.id}/supporter-approve`, {}, 'POST');
+  assert.equal(supporterApproved.status, 'connected');
+
+  const declinedMatch = await api('/api/matches', { participant_id: participant.id });
+  const secondCandidate = declinedMatch[0];
+  assert.ok(secondCandidate);
+  const decline = await api(`/api/matches/${secondCandidate.id}/decline`, { actor: 'challenger' }, 'POST');
+  assert.equal(decline.status, 'declined');
+
+  await assert.rejects(
+    () => api(`/api/matches/${secondCandidate.id}/supporter-approve`, {}, 'POST'),
+    /409|not active|match is not active/i
+  );
+});
+
+test.after(async () => {
+  await new Promise((resolve) => server.close(resolve));
+});

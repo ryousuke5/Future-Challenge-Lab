@@ -27,8 +27,16 @@ Write-Host "  候補数: $($cand.candidate_count)"
 
 if ($cand.candidates.length -gt 0) {
   $sid = $cand.candidates[0].supporter_id
-  $match = Invoke-RestMethod "$b/api/supporter-match" -Method Post -ContentType 'application/json' -Body "{`"participant_id`":`"$($p.id)`",`"supporter_id`":`"$sid`"}"
-  Write-Host "  マッチ保存: $($match.status)"
+  $matches = Invoke-RestMethod "$b/api/matches" -Method Post -ContentType 'application/json' -Body "{`"participant_id`":`"$($p.id)`"}"
+  $match = @($matches) | Where-Object { $_.supporter_id -eq $sid } | Select-Object -First 1
+  if (-not $match) {
+    $match = Invoke-RestMethod "$b/api/supporter-match" -Method Post -ContentType 'application/json' -Body "{`"participant_id`":`"$($p.id)`",`"supporter_id`":`"$sid`"}"
+  }
+  Write-Host "  マッチ保存または再利用: $($match.status)"
+
+  Invoke-RestMethod "$b/api/matches/$($match.id)/challenger-approve" -Method Post -ContentType 'application/json' -Body '{}' | Out-Null
+  Invoke-RestMethod "$b/api/matches/$($match.id)/supporter-approve" -Method Post -ContentType 'application/json' -Body '{}' | Out-Null
+  Write-Host "  双方承認: connected"
   
   # 4. マッチ後の行動結果を保存
   Write-Host "`n[マッチ後の行動記録]" -ForegroundColor Yellow

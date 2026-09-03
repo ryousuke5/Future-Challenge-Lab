@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
+import { pathToFileURL } from 'node:url';
 
 const app = express();
 app.use(cors());
@@ -12,6 +13,33 @@ const port = process.env.PORT || 3000;
 const hasSupabase = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 const supabase = hasSupabase ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY) : null;
 const memory = { participants: [], checkins: [], interventions: [], intervention_assignments: [], action_results: [], supporters: [], supporter_matches: [], connection_events: [], intervention_outcomes: [], model_learning_events: [], intervention_policy_decisions: [], supporter_outcomes: [] };
+const supporterApprovalState = new Map();
+
+function readSupporterApprovalState(matchId){
+  if (!matchId) return {};
+  return supporterApprovalState.get(matchId) || {};
+}
+
+function writeSupporterApprovalState(matchId, patch = {}){
+  if (!matchId) return;
+  const base = readSupporterApprovalState(matchId);
+  supporterApprovalState.set(matchId, { ...base, ...patch });
+}
+
+function hydrateMatchApprovalState(match){
+  if (!match) return match;
+  const stored = readSupporterApprovalState(match.id);
+  const approvals = { ...(match.meta?.approvals || {}), ...(stored.meta?.approvals || {}), ...(stored.approvals || {}) };
+  const meta = { ...(match.meta || {}), ...(stored.meta || {}), approvals };
+  return {
+    ...match,
+    challenger_approved_at: match.challenger_approved_at || stored.challenger_approved_at || null,
+    supporter_approved_at: match.supporter_approved_at || stored.supporter_approved_at || null,
+    declined_at: match.declined_at || stored.declined_at || null,
+    expired_at: match.expired_at || stored.expired_at || null,
+    meta
+  };
+}
 
 function db(table) { if (!supabase) return null; return supabase.from(table); }
 function uuid() { return crypto.randomUUID(); }
@@ -22,7 +50,7 @@ function intervention(variant, r){
   if(variant==='A') return { type:'自己決定回復型', text:r>=70?'今日、自分で決められる最小の一歩を1つだけ選んでください。誰かに言われたからではなく、あなた自身が選ぶ一歩にします。':'今日、自分で決めた一歩を1つ実行してください。'};
   return { type:'選択肢拡大型', text:r>=70?'次の3つから最も負担が小さいものを選んでください。①5分だけ着手 ②誰かに相談 ③やめる理由を言語化して方向を調整':'次の行動候補を3つ書き、今の自分に一番合うものを選んでください。'};
 }
-function evaluateAIIntervention({risk, score, resumed, policySelected, pastInterventionContext}){
+function evaluateAIIntervention({risk, score, resumed, policySelected}){
   const level = riskLevel(risk);
   const interventionRequired = risk >= 50 || (score <= 12 && risk >= 30) || Boolean(resumed) || ['intervention','both'].includes(policySelected?.action_type);
   if(!interventionRequired) return { required:false, risk_level:level, intervention_type:null, intervention_content:null, reason:null };
@@ -31,696 +59,81 @@ function evaluateAIIntervention({risk, score, resumed, policySelected, pastInter
   const interventionContent = risk >= 70
     ? '今は大きな目標より、今日の最小行動を自分で1つ選ぶことを優先してください。誰かの指示ではなく自分の意思で始める習慣を作ります。'
     : '今の負担を減らすため、選択肢を絞って今日の一歩を3案の中から選ぶ形に整えます。自分の意思で選べる感覚を取り戻す支援を行います。';
-  const pastRecommendationText = pastInterventionContext?.status === 'available' && pastInterventionContext?.recommended_intervention_type
-    ? ` 過去の観測データに基づく推奨として、${pastInterventionContext.recommended_intervention_type}を優先的に参照します。`
-    : '';
   const reason = risk >= 70
-    ? `継続リスクが高く、自己決定感の回復が必要な状態のため。${pastRecommendationText}`
-    : `継続を維持するために、選択肢の整理と自己決定の回復支援が必要と判断したため。${pastRecommendationText}`;
+    ? '継続リスクが高く、自己決定感の回復が必要な状態のため。'
+    : '継続を維持するために、選択肢の整理と自己決定の回復支援が必要と判断したため。';
 
-  return { required:true, risk_level:level, intervention_type:interventionType, intervention_content:interventionContent, reason, past_intervention_context: pastInterventionContext || null };
+  return { required:true, risk_level:level, intervention_type:interventionType, intervention_content:interventionContent, reason };
 }
 function isSchemaCompatibilityError(error){
   const message = (error && error.message) || '';
-  return /column .*checkin_id|checkin_id.*column|unknown column|could not find the 'checkin_id'|does not exist/i.test(message);
+  return /column .*checkin_id|checkin_id.*column|unknown column|could not find the '.*' column|does not exist|not found.*column|status.*check|check constraint.*status|violates check constraint/i.test(message);
 }
-function normalizeInsertRow(row = {}){
-  return Object.fromEntries(Object.entries(row).filter(([, value]) => value !== undefined));
-}
-function buildInterventionInsertPayload({ participant_id, decision }) {
-  const recommendedAction = decision?.intervention_content?.trim()
-    || (decision?.risk_level === 'high'
-      ? '今日の最小行動を1つだけ選び、自分で始めます。'
-      : decision?.risk_level === 'medium'
-        ? '今日の一歩を1つ選び、無理なく続けます。'
-        : '今日の一歩を自分で選び、少しずつ進めます。');
 
-  return normalizeInsertRow({
-    participant_id,
-    intervention_type: decision?.intervention_type || 'choice_expansion',
-    risk_level: decision?.risk_level || 'medium',
-    recommended_action: recommendedAction
+function logSupabaseError({ table, operation, error }){
+  if (!error) return;
+  console.error('[supabase-error]', {
+    table,
+    operation,
+    status: error?.status ?? null,
+    code: error?.code ?? null,
+    message: error?.message ?? null,
+    details: error?.details ?? null,
+    hint: error?.hint ?? null
   });
 }
-async function saveAIInterventionRecord({participant_id, checkin_id, risk, score, resumed, policySelected, pastInterventionContext}){
-  const decision = evaluateAIIntervention({risk, score, resumed, policySelected, pastInterventionContext});
+
+function buildLegacyInterventionRow(row = {}) {
+  return {
+    participant_id: row.participant_id,
+    intervention_type: row.intervention_type,
+    risk_level: row.risk_level,
+    recommended_action: row.recommended_action ?? row.intervention_content ?? row.reason ?? '',
+    intervention_date: row.intervention_date ?? row.conducted_at ?? new Date().toISOString(),
+    created_at: row.created_at ?? row.conducted_at ?? new Date().toISOString()
+  };
+}
+
+async function saveAIInterventionRecord({participant_id, checkin_id, risk, score, resumed, policySelected}){
+  const decision = evaluateAIIntervention({risk, score, resumed, policySelected});
   if(!decision.required) return { recorded:false, decision };
-  if(!participant_id) {
-    const error = new Error('participant_id is required to save an AI intervention record');
-    console.error('[intervention_save_failed]', {
-      code: 'MISSING_PARTICIPANT_ID',
-      message: error.message,
-      details: { has_checkin_id: Boolean(checkin_id), decision },
-      hint: 'Use the real participant UUID currently being analyzed.',
-      attempted_columns: ['participant_id', 'intervention_type', 'risk_level', 'recommended_action']
-    });
-    return { recorded:false, error: error.message, decision };
-  }
 
-  const candidate = buildInterventionInsertPayload({ participant_id, decision });
+  const candidates = [];
+  if(checkin_id) candidates.push({
+    participant_id,
+    checkin_id,
+    intervention_type: decision.intervention_type,
+    risk_level: decision.risk_level,
+    intervention_content: decision.intervention_content,
+    reason: decision.reason,
+    conducted_at: new Date().toISOString(),
+    metadata: { risk_score: risk, autonomy_total: score, resumed, policy_action_type: policySelected?.action_type || null }
+  });
+  candidates.push({
+    participant_id,
+    intervention_type: decision.intervention_type,
+    risk_level: decision.risk_level,
+    intervention_content: decision.intervention_content,
+    reason: decision.reason,
+    conducted_at: new Date().toISOString(),
+    metadata: { risk_score: risk, autonomy_total: score, resumed, policy_action_type: policySelected?.action_type || null }
+  });
 
-  try {
-    const row = await insert('interventions', candidate);
-    return { recorded:true, row, decision };
-  } catch (error) {
-    console.error('[intervention_save_failed]', {
-      code: error?.code || 'INSERT_FAILED',
-      message: error?.message || 'Unknown insert failure',
-      details: error?.details || { message: error?.message || 'Unknown insert failure' },
-      hint: error?.hint || 'Check the existing public.interventions schema and ensure only the supported columns are used.',
-      attempted_columns: Object.keys(candidate)
-    });
-    if(isSchemaCompatibilityError(error)) {
-      console.error('[intervention_save_failed_schema_warning]', { candidate, decision, has_participant_id: Boolean(participant_id), has_checkin_id: Boolean(checkin_id) });
+  let lastError = null;
+  for(const candidate of candidates){
+    try {
+      const row = await insert('interventions', candidate);
+      return { recorded:true, row, decision };
+    } catch (error) {
+      lastError = error;
+      if(!isSchemaCompatibilityError(error) || candidate.checkin_id === undefined) break;
     }
-    return { recorded:false, error: error?.message || 'Unknown insert failure', decision };
   }
+  return { recorded:false, error: lastError ? lastError.message : 'Unknown insert failure', decision };
 }
 function bucketRisk(r){ return r>=70?'high':r>=45?'medium':'low'; }
 function bucketAutonomy(score){ return score<=9?'low':score<=16?'medium':'high'; }
 function posterior(successes, trials, alpha=1, beta=1){ return (successes+alpha)/(trials+alpha+beta); }
-function buildInterventionExecutionMetrics({interventionAssignments = [], actionResults = []}){
-  const interventionResultRows = actionResults.filter(row => row && row.intervention_id);
-  const completed = interventionResultRows.filter(row => row.completed === true).length;
-  const total = interventionResultRows.length;
-  const rate = total > 0 ? Number(((completed / total) * 100).toFixed(1)) : 0;
-
-  return {
-    interventions_total: interventionAssignments.length,
-    execution_results_total: total,
-    execution_completed_total: completed,
-    rate,
-    available: total > 0,
-    label: total > 0 ? `${rate}%` : 'まだ介入後の実行データがありません',
-    comparison_available: false,
-    description: total > 0 ? `介入後の実行 ${completed}件 / ${total}件` : 'まだ介入後の実行データがありません'
-  };
-}
-function buildInterventionTypeMetrics({interventionAssignments = [], actionResults = []}){
-  const byType = new Map();
-  for (const assignment of interventionAssignments) {
-    if (!assignment || !assignment.intervention_type) continue;
-    const info = byType.get(assignment.intervention_type) || { intervention_type: assignment.intervention_type, intervention_count: 0, execution_result_count: 0, execution_count: 0 };
-    info.intervention_count += 1;
-    byType.set(assignment.intervention_type, info);
-  }
-
-  for (const row of actionResults) {
-    if (!row || !row.intervention_id) continue;
-    const assignment = interventionAssignments.find(item => item && item.id === row.intervention_id);
-    if (!assignment || !assignment.intervention_type) continue;
-    const info = byType.get(assignment.intervention_type) || { intervention_type: assignment.intervention_type, intervention_count: 0, execution_result_count: 0, execution_count: 0 };
-    info.execution_result_count += 1;
-    if (row.completed === true) info.execution_count += 1;
-    byType.set(assignment.intervention_type, info);
-  }
-
-  const rows = [...byType.values()].map(info => ({
-    intervention_type: info.intervention_type,
-    intervention_count: info.intervention_count,
-    execution_result_count: info.execution_result_count,
-    execution_count: info.execution_count,
-    execution_rate: info.execution_result_count > 0 ? Number(((info.execution_count / info.execution_result_count) * 100).toFixed(1)) : 0,
-    observed_label: info.execution_result_count > 0 ? `${Number(((info.execution_count / info.execution_result_count) * 100).toFixed(1))}%` : 'データ不足'
-  })).sort((a, b) => (b.execution_result_count || 0) - (a.execution_result_count || 0));
-
-  return {
-    available: rows.length > 0 && rows.some(item => item.execution_result_count > 0),
-    by_type: rows,
-    total_types: rows.length,
-    note: '観測値のみ。因果効果は断定していません。'
-  };
-}
-function buildHighRiskNextDayMetrics({interventionAssignments = [], actionResults = [], checkins = []}){
-  const checkinById = new Map(checkins.map(checkin => [checkin.id, checkin]));
-  const highRiskAssignments = interventionAssignments.filter(item => {
-    const checkin = item && item.checkin_id ? checkinById.get(item.checkin_id) : null;
-    return Boolean(checkin && checkin.risk_level === 'high');
-  });
-
-  const rows = [];
-  for (const assignment of highRiskAssignments) {
-    const linkedActions = actionResults.filter(row => row && row.intervention_id === assignment.id);
-    const total = linkedActions.length;
-    const completed = linkedActions.filter(row => row.completed === true).length;
-    const checkin = assignment.checkin_id ? checkinById.get(assignment.checkin_id) : null;
-    const assignedAt = assignment.assigned_at ? new Date(assignment.assigned_at).getTime() : null;
-    const nextDayActions = linkedActions.filter(row => {
-      if (!row.created_at || !assignedAt) return false;
-      const createdAt = new Date(row.created_at).getTime();
-      return createdAt >= assignedAt && createdAt <= assignedAt + 24 * 60 * 60 * 1000;
-    });
-    const nextDayCompleted = nextDayActions.filter(row => row.completed === true).length;
-    const rate = nextDayActions.length > 0 ? Number(((nextDayCompleted / nextDayActions.length) * 100).toFixed(1)) : 0;
-    rows.push({
-      intervention_id: assignment.id,
-      checkin_id: assignment.checkin_id,
-      risk_level: checkin?.risk_level || 'high',
-      intervention_type: assignment.intervention_type || null,
-      execution_result_count: nextDayActions.length,
-      execution_count: nextDayCompleted,
-      execution_rate: rate,
-      observed_label: nextDayActions.length > 0 ? `${rate}%` : 'データ不足'
-    });
-  }
-
-  const executionResultCount = rows.reduce((sum, row) => sum + row.execution_result_count, 0);
-  const executionCount = rows.reduce((sum, row) => sum + row.execution_count, 0);
-  const rate = executionResultCount > 0 ? Number(((executionCount / executionResultCount) * 100).toFixed(1)) : 0;
-
-  return {
-    available: rows.length > 0 && executionResultCount > 0,
-    high_risk_intervention_count: rows.length,
-    execution_result_count: executionResultCount,
-    execution_count: executionCount,
-    execution_rate: rate,
-    label: executionResultCount > 0 ? `${rate}%` : 'データ不足',
-    note: '観測値のみ。因果効果は断定していません。',
-    by_intervention: rows
-  };
-}
-function summarizeInterventionHistoryRows(rows = []){
-  return rows.map(row => ({
-    intervention_type: row.intervention_type,
-    intervention_count: row.intervention_count,
-    execution_result_count: row.execution_result_count,
-    execution_count: row.execution_count,
-    execution_rate: row.execution_rate,
-    observed_label: row.execution_result_count > 0 ? `${row.execution_rate}%` : 'データ不足',
-    risk_levels: row.risk_levels || []
-  }));
-}
-async function buildPastInterventionRecommendation({ participant_id, currentRiskLevel = null, currentRiskScore = null }){
-  if (!participant_id) {
-    return { status: 'insufficient_data', fallback: 'existing_logic', reason: 'participant_idが未指定のため、既存AI介入ロジックへフォールバックします。', history: [], recommended_intervention_type: null, context_text: '' };
-  }
-
-  const [assignments, results, checkins] = await Promise.all([
-    select('intervention_assignments', { participant_id }),
-    select('action_results', { participant_id }),
-    select('checkins', { participant_id })
-  ]);
-
-  if (!assignments.length) {
-    return { status: 'insufficient_data', fallback: 'existing_logic', reason: '過去の介入データがありません。既存AI介入ロジックを使用します。', history: [], recommended_intervention_type: null, context_text: '過去の観測：データなし。既存ロジックを使用。' };
-  }
-
-  const byId = new Map(checkins.map(checkin => [checkin.id, checkin]));
-  const byType = new Map();
-
-  for (const assignment of assignments) {
-    if (!assignment || !assignment.intervention_type) continue;
-    const info = byType.get(assignment.intervention_type) || {
-      intervention_type: assignment.intervention_type,
-      intervention_count: 0,
-      execution_result_count: 0,
-      execution_count: 0,
-      risk_levels: new Set()
-    };
-    info.intervention_count += 1;
-    const riskLevel = assignment.checkin_id ? (byId.get(assignment.checkin_id)?.risk_level || 'unknown') : 'unknown';
-    if (riskLevel !== 'unknown') info.risk_levels.add(riskLevel);
-    byType.set(assignment.intervention_type, info);
-  }
-
-  for (const row of results) {
-    if (!row || !row.intervention_id) continue;
-    const assignment = assignments.find(item => item && item.id === row.intervention_id);
-    if (!assignment || !assignment.intervention_type) continue;
-    const info = byType.get(assignment.intervention_type) || {
-      intervention_type: assignment.intervention_type,
-      intervention_count: 0,
-      execution_result_count: 0,
-      execution_count: 0,
-      risk_levels: new Set()
-    };
-    info.execution_result_count += 1;
-    if (row.completed === true) info.execution_count += 1;
-    const riskLevel = assignment.checkin_id ? (byId.get(assignment.checkin_id)?.risk_level || 'unknown') : 'unknown';
-    if (riskLevel !== 'unknown') info.risk_levels.add(riskLevel);
-    byType.set(assignment.intervention_type, info);
-  }
-
-  const rows = summarizeInterventionHistoryRows([...byType.values()].map(info => ({
-    intervention_type: info.intervention_type,
-    intervention_count: info.intervention_count,
-    execution_result_count: info.execution_result_count,
-    execution_count: info.execution_count,
-    execution_rate: info.execution_result_count > 0 ? Number(((info.execution_count / info.execution_result_count) * 100).toFixed(1)) : 0,
-    risk_levels: [...info.risk_levels]
-  }))).sort((a, b) => (b.execution_result_count || 0) - (a.execution_result_count || 0));
-
-  const minSampleSize = 3;
-  const isHighRiskContext = currentRiskLevel === 'high' || Number(currentRiskScore || 0) >= 70;
-  const highRiskRows = rows.filter(row => row.risk_levels.includes('high'));
-  const eligibleRows = rows.filter(row => row.execution_result_count > 0 && row.execution_result_count >= minSampleSize && (!isHighRiskContext || highRiskRows.length === 0 || row.risk_levels.includes('high')));
-  const candidateRows = isHighRiskContext && highRiskRows.length > 0 ? highRiskRows.filter(row => row.execution_result_count >= minSampleSize) : eligibleRows;
-
-  if (!candidateRows.length) {
-    return {
-      status: 'insufficient_data',
-      fallback: 'existing_logic',
-      reason: '過去の観測数が少なく、十分な比較ができないため既存AI介入ロジックへフォールバックします。',
-      history: rows,
-      recommended_intervention_type: null,
-      context_text: rows.length ? rows.map(row => `${row.intervention_type} ${row.execution_result_count}回 実行${row.execution_count}回 観測実行率${row.execution_result_count > 0 ? `${row.execution_rate}%` : 'データ不足'}`).join('\n') : '過去の観測：データなし',
-      sample_size: rows.reduce((sum, row) => sum + row.execution_result_count, 0),
-      candidate_rows: []
-    };
-  }
-
-  const winner = [...candidateRows].sort((a, b) => b.execution_rate - a.execution_rate)[0];
-  const reason = isHighRiskContext && winner.risk_levels.includes('high')
-    ? '高リスク状態の過去介入結果を優先して比較したため、観測実行率が高い候補を推奨します。'
-    : '過去の観測実行率に基づく候補として、観測データが最も多く、実行率が高い介入タイプを推奨します。';
-  const contextText = [
-    '過去の観測：',
-    ...rows.map(row => `${row.intervention_type} ${row.execution_result_count}回 実行${row.execution_count}回 観測実行率${row.execution_result_count > 0 ? `${row.execution_rate}%` : 'データ不足'}`),
-    '',
-    `今回の推奨：${winner.intervention_type}`
-  ].join('\n');
-
-  return {
-    status: 'available',
-    fallback: 'past_observation_rate',
-    reason,
-    history: rows,
-    recommended_intervention_type: winner.intervention_type,
-    recommended_execution_rate: winner.execution_rate,
-    context_text: contextText,
-    sample_size: winner.execution_result_count,
-    candidate_rows: candidateRows
-  };
-}
-async function buildInterventionOptimizationSummary({ participants = [], interventionAssignments = [], actionResults = [], checkins = [] }) {
-  const summary = {
-    total_participants: participants.length,
-    target_count: participants.length,
-    with_past_data_count: 0,
-    data_insufficient_count: 0,
-    recommendations: []
-  };
-
-  for (const participant of participants) {
-    const recommendation = await buildPastInterventionRecommendation({
-      participant_id: participant.id,
-      currentRiskLevel: (checkins.filter(checkin => checkin.participant_id === participant.id).sort((a, b) => new Date(b.checked_in_at) - new Date(a.checked_in_at))[0] || {}).risk_level || null,
-      currentRiskScore: (checkins.filter(checkin => checkin.participant_id === participant.id).sort((a, b) => new Date(b.checked_in_at) - new Date(a.checked_in_at))[0] || {}).risk_score || null
-    });
-
-    if (recommendation.status === 'available') {
-      summary.with_past_data_count += 1;
-      summary.recommendations.push({ participant_id: participant.id, intervention_type: recommendation.recommended_intervention_type, execution_rate: recommendation.recommended_execution_rate || 0 });
-    } else {
-      summary.data_insufficient_count += 1;
-    }
-  }
-
-  return summary;
-}
-function evaluateSupportNeed({ participant, checkin, interventionAssignments = [], actionResults = [] }) {
-  const latestCheckin = checkin || null;
-  const riskScore = Number(latestCheckin?.risk_score ?? participant?.last_risk_score ?? 0);
-  const riskLevel = latestCheckin?.risk_level || (riskScore >= 70 ? 'high' : riskScore >= 45 ? 'medium' : 'low');
-  const ownAssignments = interventionAssignments.filter(item => item && item.participant_id === participant?.id);
-  const ownResults = actionResults.filter(item => item && item.participant_id === participant?.id);
-  const incomplete = ownResults.filter(item => item && item.completed !== true).length;
-  const barrierCount = ownResults.filter(item => String(item?.barrier || '').trim().length > 0).length;
-  const hasNoProgress = ownAssignments.length > 0 && ownResults.filter(item => item && item.completed === true).length === 0;
-  const repeatedIssue = incomplete >= 2 || barrierCount >= 2;
-  const highRisk = riskLevel === 'high' || riskScore >= 70;
-  const requiresSupport = Boolean(highRisk || repeatedIssue || hasNoProgress || (latestCheckin?.analysis?.resumed && riskScore >= 50));
-
-  return {
-    requires_support: requiresSupport,
-    high_risk: highRisk,
-    repeated_issue: repeatedIssue,
-    has_no_progress: hasNoProgress,
-    risk_score: riskScore,
-    risk_level: riskLevel,
-    incomplete_actions: incomplete,
-    barrier_count: barrierCount,
-    note: highRisk ? '高リスク状態のため支援候補を確認します。' : repeatedIssue ? '同じ問題が繰り返されているため支援候補を確認します。' : hasNoProgress ? '過去の介入で行動に結びついていないため支援候補を確認します。' : '支援が必要と判断されないため候補を作成しません。'
-  };
-}
-async function buildSupporterRecommendation({ participant_id, checkin, supporters = [], supporterMatches = [], supporterOutcomes = [], interventionAssignments = [], actionResults = [], save_match = false }) {
-  if (!participant_id) {
-    return { status: 'not_required', fallback: 'supporter_data_insufficient', reason: 'participant_idが未指定のため支援者候補を作成しません。', selected_supporter: null, candidates: [], candidate_count: 0, observed_data_count: 0 };
-  }
-
-  const participants = await select('participants', { id: participant_id });
-  const participant = participants[0] || null;
-  const latestCheckin = checkin || null;
-  const supportSignals = evaluateSupportNeed({ participant, checkin: latestCheckin, interventionAssignments, actionResults });
-
-  if (!supportSignals.requires_support) {
-    return {
-      status: 'not_required',
-      fallback: 'support_not_required',
-      reason: '現在のAI分析とリスク情報からは支援者候補の優先が不要と判断されました。',
-      selected_supporter: null,
-      candidates: [],
-      candidate_count: 0,
-      observed_data_count: 0,
-      support_signals: supportSignals
-    };
-  }
-
-  if (!Array.isArray(supporters) || supporters.length === 0) {
-    return {
-      status: 'data_insufficient',
-      fallback: 'supporter_data_insufficient',
-      reason: '支援者データ不足。支援者候補はありません。',
-      selected_supporter: null,
-      candidates: [],
-      candidate_count: 0,
-      observed_data_count: 0,
-      support_signals: supportSignals
-    };
-  }
-
-  const challengeText = `${participant?.challenge || ''} ${participant?.goal || ''}`.toLowerCase();
-  const candidateRows = supporters
-    .filter(supporter => supporter && supporter.active !== false)
-    .map(supporter => {
-      const matchRows = supporterMatches.filter(item => item && item.supporter_id === supporter.id);
-      const outcomeRows = supporterOutcomes.filter(item => item && item.supporter_id === supporter.id);
-      const positiveOutcomes = outcomeRows.filter(item => Number(item?.outcome_score ?? 0) > 0 || ['restarted', 'action_completed', 'connected_and_progressed', 'positive'].includes(item?.outcome)).length;
-      const observedRate = outcomeRows.length > 0 ? Number(((positiveOutcomes / outcomeRows.length) * 100).toFixed(1)) : null;
-      const keywordText = `${supporter.support_category || ''} ${(supporter.strengths || []).join(' ')} ${supporter.description || ''}`.toLowerCase();
-      const keywordMatch = keywordText.split(/\s+|,|、/).filter(Boolean).some(keyword => keyword.length > 1 && challengeText.includes(keyword));
-      const timingFit = latestCheckin?.risk_level === 'high'
-        ? (supporter.timing_tags || []).some(tag => ['離脱前', '停滞時', '再開時', '伴走'].includes(String(tag)))
-        : latestCheckin?.analysis?.resumed
-          ? (supporter.timing_tags || []).includes('再開時')
-          : Boolean((supporter.timing_tags || []).length);
-      let score = 40;
-      if (keywordMatch) score += 25;
-      if (timingFit) score += 15;
-      if (matchRows.length > 0) score += Math.min(10, matchRows.length * 3);
-      if (observedRate !== null) score += Math.min(20, observedRate * 0.2);
-      return {
-        supporter_id: supporter.id,
-        supporter_name: supporter.supporter_name,
-        organization_name: supporter.organization_name,
-        support_category: supporter.support_category,
-        match_count: matchRows.length,
-        observed_outcomes_count: outcomeRows.length,
-        observed_rate: observedRate,
-        score: Number(score.toFixed(2)),
-        reason: observedRate !== null
-          ? `過去の観測データに基づく候補として、支援実績 ${observedRate}% を参考にしています。`
-          : `支援者候補はありますが、過去の観測データが不足しています。`,
-        keyword_match: keywordMatch,
-        timing_fit: timingFit
-      };
-    })
-    .filter(item => Number(item.score) > 0)
-    .sort((a, b) => b.score - a.score);
-
-  const observedCandidates = candidateRows.filter(item => item.observed_rate !== null && item.observed_outcomes_count > 0);
-  const selected = observedCandidates[0] || candidateRows[0] || null;
-
-  if (!selected) {
-    return {
-      status: 'data_insufficient',
-      fallback: 'supporter_data_insufficient',
-      reason: '支援者候補はありますが、過去の観測データが不足しています。',
-      selected_supporter: null,
-      candidates: candidateRows,
-      candidate_count: candidateRows.length,
-      observed_data_count: observedCandidates.length,
-      support_signals: supportSignals,
-      match_saved: false
-    };
-  }
-
-  const status = observedCandidates.length > 0 ? 'available' : 'data_insufficient';
-  const savedMatch = save_match ? await insert('supporter_matches', {
-    participant_id,
-    supporter_id: selected.supporter_id,
-    score: Number(selected.score.toFixed(2)),
-    reason: selected.reason,
-    status: 'suggested',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  }) : null;
-
-  return {
-    status,
-    fallback: status === 'available' ? 'past_observation_data' : 'supporter_data_insufficient',
-    reason: status === 'available'
-      ? '過去の観測データに基づく候補として、観測実績のある支援者候補を優先しました。'
-      : '支援者候補はありますが、過去の観測データが不足しています。',
-    selected_supporter: {
-      id: selected.supporter_id,
-      supporter_name: selected.supporter_name,
-      organization_name: selected.organization_name,
-      support_category: selected.support_category,
-      observed_rate: selected.observed_rate,
-      match_count: selected.match_count
-    },
-    candidates: candidateRows.slice(0, 5),
-    candidate_count: candidateRows.length,
-    observed_data_count: observedCandidates.length,
-    match_id: savedMatch?.id || null,
-    match_saved: Boolean(savedMatch),
-    support_signals: supportSignals
-  };
-}
-async function buildSupporterSummary({ participants = [], checkins = [], supporters = [], supporterMatches = [], supporterOutcomes = [], actionResults = [], interventionAssignments = [] }) {
-  const summary = {
-    matching_count: supporterMatches.length,
-    candidate_available_count: 0,
-    observed_data_count: 0,
-    data_insufficient_count: 0,
-    ai_only_count: 0,
-    ai_plus_supporter_count: 0,
-    recommendations: []
-  };
-
-  for (const participant of participants) {
-    const latest = (checkins.filter(checkin => checkin.participant_id === participant.id).sort((a, b) => new Date(b.checked_in_at) - new Date(a.checked_in_at))[0] || null);
-    const recommendation = await buildSupporterRecommendation({
-      participant_id: participant.id,
-      checkin: latest,
-      supporters,
-      supporterMatches,
-      supporterOutcomes,
-      interventionAssignments,
-      actionResults,
-      save_match: false
-    });
-
-    if (recommendation.status === 'available') {
-      summary.candidate_available_count += 1;
-      summary.observed_data_count += 1;
-      summary.ai_plus_supporter_count += 1;
-      summary.recommendations.push({ participant_id: participant.id, supporter_name: recommendation.selected_supporter?.supporter_name || null, observed_rate: recommendation.selected_supporter?.observed_rate || null });
-    } else if (recommendation.status === 'data_insufficient') {
-      summary.data_insufficient_count += 1;
-      summary.candidate_available_count += 1;
-      summary.recommendations.push({ participant_id: participant.id, supporter_name: recommendation.selected_supporter?.supporter_name || null, observed_rate: recommendation.selected_supporter?.observed_rate || null, note: recommendation.reason });
-    } else {
-      summary.ai_only_count += 1;
-    }
-  }
-
-  return summary;
-}
-async function buildSupporterConnectionExecutionMetrics({ supporterMatches = [], connectionEvents = [], actionResults = [], checkins = [] }) {
-  // 支援接続後の実行率を計算
-  // supporter_matches で status='requested' または 'connected' のマッチを取得
-  // その後に記録された action_results の完了率を算出
-  
-  const connectedMatches = supporterMatches.filter(m => 
-    m.status === 'requested' || m.status === 'connected'
-  );
-  
-  if (connectedMatches.length === 0) {
-    return {
-      available: false,
-      total_connected_matches: 0,
-      actions_after_match_total: 0,
-      actions_after_match_completed: 0,
-      execution_rate: null,
-      note: '支援接続が記録されていません。'
-    };
-  }
-  
-  // 各マッチについて、マッチ時刻以降の action_results を抽出
-  let totalActionsAfterMatch = 0;
-  let completedActionsAfterMatch = 0;
-  
-  for (const match of connectedMatches) {
-    // マッチの作成時刻
-    const matchTime = new Date(match.created_at);
-    
-    // このマッチの participant_id に対する action_results の中で、
-    // マッチ時刻以降に作成されたものを抽出
-    const actionsAfterMatch = actionResults.filter(action => 
-      action.participant_id === match.participant_id &&
-      new Date(action.created_at) >= matchTime
-    );
-    
-    totalActionsAfterMatch += actionsAfterMatch.length;
-    completedActionsAfterMatch += actionsAfterMatch.filter(a => a.completed === true).length;
-  }
-  
-  const executionRate = totalActionsAfterMatch > 0
-    ? Number(((completedActionsAfterMatch / totalActionsAfterMatch) * 100).toFixed(1))
-    : null;
-  
-  return {
-    available: totalActionsAfterMatch > 0,
-    total_connected_matches: connectedMatches.length,
-    actions_after_match_total: totalActionsAfterMatch,
-    actions_after_match_completed: completedActionsAfterMatch,
-    execution_rate: executionRate,
-    note: totalActionsAfterMatch > 0
-      ? `支援接続後の実行率 ${executionRate}%（${completedActionsAfterMatch}/${totalActionsAfterMatch}件）`
-      : '支援接続後の行動記録がありません。'
-  };
-}
-async function buildAIInterventionExecutionMetrics({ interventionAssignments = [], actionResults = [], checkins = [], riskLevel = null }) {
-  // AI介入後の実行率を計算
-  // intervention_assignments で記録されたAI介入を取得
-  // その後に記録された action_results の完了率を算出
-  
-  let targetInterventions = interventionAssignments;
-  
-  // 高リスク時は高リスク時のデータを優先
-  if (riskLevel === 'high') {
-    const highRiskIntervention = interventionAssignments.filter(i => {
-      if (!i.checkin_id) return false;
-      const checkin = checkins.find(c => c.id === i.checkin_id);
-      return checkin && checkin.risk_level === 'high';
-    });
-    if (highRiskIntervention.length >= 3) {
-      targetInterventions = highRiskIntervention;
-    }
-    // 高リスク時データが不足している場合は全体データへフォールバック
-  }
-  
-  if (targetInterventions.length === 0) {
-    return {
-      available: false,
-      total_interventions: 0,
-      actions_after_intervention_total: 0,
-      actions_after_intervention_completed: 0,
-      execution_rate: null,
-      note: 'AI介入の実行データが不足しています。'
-    };
-  }
-  
-  // 各介入について、介入時刻以降の action_results を抽出
-  let totalActionsAfterIntervention = 0;
-  let completedActionsAfterIntervention = 0;
-  
-  for (const intervention of targetInterventions) {
-    // 介入の割り当て時刻
-    const interventionTime = new Date(intervention.assigned_at);
-    
-    // このintervention_idに関連する action_results を取得
-    const actionsForIntervention = actionResults.filter(action => 
-      action.intervention_id === intervention.id &&
-      new Date(action.created_at) >= interventionTime
-    );
-    
-    totalActionsAfterIntervention += actionsForIntervention.length;
-    completedActionsAfterIntervention += actionsForIntervention.filter(a => a.completed === true).length;
-  }
-  
-  const executionRate = totalActionsAfterIntervention > 0
-    ? Number(((completedActionsAfterIntervention / totalActionsAfterIntervention) * 100).toFixed(1))
-    : null;
-  
-  return {
-    available: totalActionsAfterIntervention > 0,
-    total_interventions: targetInterventions.length,
-    actions_after_intervention_total: totalActionsAfterIntervention,
-    actions_after_intervention_completed: completedActionsAfterIntervention,
-    execution_rate: executionRate,
-    note: totalActionsAfterIntervention > 0
-      ? `AI介入後の実行率 ${executionRate}%（${completedActionsAfterIntervention}/${totalActionsAfterIntervention}件）`
-      : 'AI介入後の行動記録がありません。'
-  };
-}
-async function buildInterventionPathRecommendation({ 
-  interventionAssignments = [], 
-  actionResults = [], 
-  checkins = [],
-  supporterMatches = [], 
-  riskLevel = null 
-}) {
-  // AI介入経路と支援接続経路の観測実行率を比較
-  // 十分なデータがある場合は、観測実行率が高い方を推奨
-  
-  const aiMetrics = await buildAIInterventionExecutionMetrics({
-    interventionAssignments,
-    actionResults,
-    checkins,
-    riskLevel
-  });
-  
-  const supporterMetrics = await buildSupporterConnectionExecutionMetrics({
-    supporterMatches,
-    connectionEvents: [],
-    actionResults,
-    checkins
-  });
-  
-  // データ不足の判定（いずれかが利用可能なデータ不足）
-  if (!aiMetrics.available || !supporterMetrics.available) {
-    return {
-      status: 'insufficient_data',
-      recommended_path: 'existing_logic',
-      reason: 'AI介入または支援接続のどちらかで観測データが不足しています。既存ロジックを利用してください。',
-      ai_intervention_observed_rate: aiMetrics.execution_rate,
-      supporter_observed_rate: supporterMetrics.execution_rate,
-      ai_note: aiMetrics.note,
-      supporter_note: supporterMetrics.note
-    };
-  }
-  
-  // 両方のデータが十分な場合：観測実行率を比較
-  const aiRate = aiMetrics.execution_rate || 0;
-  const supporterRate = supporterMetrics.execution_rate || 0;
-  
-  let recommendedPath;
-  let reason;
-  
-  if (aiRate > supporterRate + 5) {
-    // AI介入の方が5%以上高い場合
-    recommendedPath = 'ai_intervention';
-    reason = `過去の観測データでは、AI介入後の実行率（${aiRate}%）が支援接続後（${supporterRate}%）より高く観測されています。`;
-  } else if (supporterRate > aiRate + 5) {
-    // 支援接続の方が5%以上高い場合
-    recommendedPath = 'supporter';
-    reason = `過去の観測データでは、支援接続後の実行率（${supporterRate}%）がAI介入後（${aiRate}%）より高く観測されています。`;
-  } else {
-    // 差が5%以内の場合はデータ不足判定
-    return {
-      status: 'insufficient_data',
-      recommended_path: 'existing_logic',
-      reason: `観測データはありますが、AI介入（${aiRate}%）と支援接続（${supporterRate}%）の差が小さいため、既存ロジックを利用してください。`,
-      ai_intervention_observed_rate: aiRate,
-      supporter_observed_rate: supporterRate,
-      ai_note: aiMetrics.note,
-      supporter_note: supporterMetrics.note
-    };
-  }
-  
-  return {
-    status: 'available',
-    recommended_path: recommendedPath,
-    reason,
-    ai_intervention_observed_rate: aiRate,
-    supporter_observed_rate: supporterRate,
-    ai_note: aiMetrics.note,
-    supporter_note: supporterMetrics.note
-  };
-}
 async function optimizeAction({participant_id, checkin}){
   const [allI, allA, supporters, supportOutcomes, participant] = await Promise.all([
     select('intervention_assignments'), select('action_results'), select('supporters'), select('supporter_outcomes'), select('participants',{id:participant_id})
@@ -792,17 +205,463 @@ async function optimizeAction({participant_id, checkin}){
 }
 
 async function insert(table, row){
-  const normalized = normalizeInsertRow(row);
-  const q=db(table); if(q){ const {data,error}=await q.insert(normalized).select().single(); if(error) throw error; return data; }
-  normalized.id=normalized.id||uuid(); memory[table].push(normalized); return normalized;
+  const q=db(table); if(q){
+    const compatibleRow = stripUnsupportedColumns(table, row);
+    if (table === 'supporter_matches') {
+      writeSupporterApprovalState(row.id, {
+        approvals: row.meta?.approvals || {},
+        meta: row.meta || {},
+        challenger_approved_at: row.challenger_approved_at || null,
+        supporter_approved_at: row.supporter_approved_at || null,
+        declined_at: row.declined_at || null,
+        expired_at: row.expired_at || null
+      });
+    }
+    try {
+      const {data,error}=await q.insert(compatibleRow).select().single();
+      if(error) throw error;
+      return table === 'supporter_matches' ? hydrateMatchApprovalState(data) : data;
+    } catch (error) {
+      logSupabaseError({ table, operation: 'insert', error });
+      if (table === 'supporters' && isSchemaCompatibilityError(error)) {
+        const fallback = stripUnsupportedColumns(table, row);
+        const {data,error:retryError}=await q.insert(fallback).select().single();
+        if(retryError) throw retryError;
+        return data;
+      }
+      if (table === 'interventions' && isSchemaCompatibilityError(error)) {
+        const fallback = buildLegacyInterventionRow(row);
+        const {data,error:retryError}=await q.insert(fallback).select().single();
+        if(retryError) throw retryError;
+        return data;
+      }
+      if (table === 'supporter_matches' && isSchemaCompatibilityError(error)) {
+        const fallback = stripUnsupportedColumns(table, compatibleRow);
+        const {data,error:retryError}=await q.insert(fallback).select().single();
+        if(retryError) throw retryError;
+        return table === 'supporter_matches' ? hydrateMatchApprovalState({ ...data, status: effectiveMatchStatus({ ...data, meta: {} }) }) : data;
+      }
+      throw error;
+    }
+  }
+  row.id=row.id||uuid(); memory[table].push(row); return row;
 }
 async function select(table, filters={}){
-  const q=db(table); if(q){ let query=q.select('*'); for(const [k,v] of Object.entries(filters)) query=query.eq(k,v); const {data,error}=await query; if(error) throw error; return data||[]; }
-  return memory[table].filter(x=>Object.entries(filters).every(([k,v])=>x[k]===v));
+  const q=db(table); if(q){ let query=q.select('*'); for(const [k,v] of Object.entries(filters)) query=query.eq(k,v); const {data,error}=await query; if(error) throw error; return (data||[]).map(row => table === 'supporter_matches' ? hydrateMatchApprovalState(row) : row); }
+  return memory[table].filter(x=>Object.entries(filters).every(([k,v])=>x[k]===v)).map(row => table === 'supporter_matches' ? hydrateMatchApprovalState(row) : row);
 }
 async function update(table,id,patch){
-  const q=db(table); if(q){ const {data,error}=await q.update(patch).eq('id',id).select().single(); if(error) throw error; return data; }
-  const row=memory[table].find(x=>x.id===id); if(row) Object.assign(row,patch); return row;
+  const q=db(table); if(q){
+    const compatiblePatch = stripUnsupportedColumns(table, patch);
+    if (table === 'supporter_matches') {
+      writeSupporterApprovalState(id, {
+        approvals: patch?.meta?.approvals || readSupporterApprovalState(id).approvals || {},
+        meta: patch?.meta || readSupporterApprovalState(id).meta || {},
+        challenger_approved_at: patch?.challenger_approved_at || readSupporterApprovalState(id).challenger_approved_at || null,
+        supporter_approved_at: patch?.supporter_approved_at || readSupporterApprovalState(id).supporter_approved_at || null,
+        declined_at: patch?.declined_at || readSupporterApprovalState(id).declined_at || null,
+        expired_at: patch?.expired_at || readSupporterApprovalState(id).expired_at || null
+      });
+    }
+    try {
+      const {data,error}=await q.update(compatiblePatch).eq('id',id).select().single();
+      if(error) throw error;
+      return table === 'supporter_matches' ? hydrateMatchApprovalState(data) : data;
+    } catch (error) {
+      logSupabaseError({ table, operation: 'update', error });
+      if (table === 'supporters' && isSchemaCompatibilityError(error)) {
+        const fallback = stripUnsupportedColumns(table, patch);
+        const {data,error:retryError}=await q.update(fallback).eq('id',id).select().single();
+        if(retryError) throw retryError;
+        return data;
+      }
+      if (table === 'supporter_matches' && isSchemaCompatibilityError(error)) {
+        const fallback = stripUnsupportedColumns(table, compatiblePatch);
+        const {data,error:retryError}=await q.update(fallback).eq('id',id).select().single();
+        if(retryError) throw retryError;
+        return table === 'supporter_matches' ? hydrateMatchApprovalState({ ...data, status: effectiveMatchStatus({ ...data, meta: {} }) }) : data;
+      }
+      throw error;
+    }
+  }
+  const row=memory[table].find(x=>x.id===id); if(row) Object.assign(row,patch); return table === 'supporter_matches' ? hydrateMatchApprovalState(row) : row;
+}
+
+function sanitizeText(value, fallback='unknown'){
+  if(value===null || value===undefined || value==='') return fallback;
+  const text=String(value).trim(); return text || fallback;
+}
+
+function coerceNumber(value, fallback=0){
+  const parsed=Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function safeDate(value){
+  const date=new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function stableValue(value){
+  if(Array.isArray(value)) return value.map(stableValue);
+  if(value && typeof value === 'object') return Object.keys(value).sort().reduce((result,key)=>{ result[key]=stableValue(value[key]); return result; },{});
+  return value;
+}
+
+function sameValue(left, right){
+  return JSON.stringify(stableValue(left)) === JSON.stringify(stableValue(right));
+}
+
+function buildCoreSummary(participant, latestCheckin, recentCheckins, recentActions, recentAssignments){
+  const last = latestCheckin || {};
+  const lastRisk = coerceNumber(last.risk_score ?? last.analysis?.signals?.risk ?? 0, 0);
+  const lastAutonomy = coerceNumber(last.autonomy_total ?? last.analysis?.signals?.score ?? 0, 0);
+  const prior = recentCheckins[1] || {};
+  const priorRisk = coerceNumber(prior.risk_score ?? prior.analysis?.signals?.risk ?? 0, 0);
+  const priorAutonomy = coerceNumber(prior.autonomy_total ?? prior.analysis?.signals?.score ?? 0, 0);
+  const actionCount = recentActions.length;
+  const completionRate = recentActions.length ? recentActions.filter(x => x.completed).length / recentActions.length : 0;
+  const lastAction = recentActions[0] || null;
+  const lastAssignment = recentAssignments[0] || null;
+
+  return {
+    goal: sanitizeText(participant?.goal || last?.goal || last?.analysis?.goal || 'unknown', 'unknown'),
+    currentState: sanitizeText(last?.analysis?.summary || last?.analysis?.state || 'unknown', 'unknown'),
+    stateTrend: {
+      riskDelta: Number((lastRisk - priorRisk).toFixed(2)),
+      autonomyDelta: Number((lastAutonomy - priorAutonomy).toFixed(2)),
+      actionTrend: actionCount ? (completionRate >= 0.5 ? 'maintained' : 'declining') : 'unknown'
+    },
+    motivation: last?.analysis?.motivation ?? (lastAutonomy >= 12 ? 'moderate' : 'low'),
+    confidence: last?.analysis?.confidence ?? (lastAutonomy >= 13 ? 'moderate' : 'low'),
+    fatigue: last?.analysis?.fatigue ?? (lastRisk >= 60 ? 'high' : 'moderate'),
+    emotion: last?.analysis?.emotion ?? 'unknown',
+    barriers: last?.analysis?.barriers || lastAction?.barrier || 'unknown',
+    supportNeed: last?.analysis?.supportNeed || (lastRisk >= 60 ? 'support' : 'self-directed'),
+    recentAction: lastAction?.action_text || 'unknown',
+    lastAssignment: lastAssignment?.intervention_text || 'unknown',
+    observedAt: last?.checked_in_at || new Date().toISOString()
+  };
+}
+
+function detectStateChanges(recentCheckins){
+  const changes = [];
+  if(recentCheckins.length < 2) return changes;
+
+  const latest = recentCheckins[0];
+  const previous = recentCheckins[1];
+  const latestScore = coerceNumber(latest.autonomy_total ?? latest.analysis?.signals?.score ?? 0, 0);
+  const previousScore = coerceNumber(previous.autonomy_total ?? previous.analysis?.signals?.score ?? 0, 0);
+  const latestRisk = coerceNumber(latest.risk_score ?? latest.analysis?.signals?.risk ?? 0, 0);
+  const previousRisk = coerceNumber(previous.risk_score ?? previous.analysis?.signals?.risk ?? 0, 0);
+
+  if(latestScore < previousScore) changes.push(`自信・行動の感覚が ${previousScore} → ${latestScore} と下がっており、自信低下傾向が見られます。`);
+  if(latestScore > previousScore) changes.push(`行動の回復傾向が見られ、${previousScore} → ${latestScore} へ改善しています。`);
+  if(latestRisk > previousRisk) changes.push(`離脱リスクが ${previousRisk} → ${latestRisk} と上がっており、負荷が高まっている可能性があります。`);
+  if(latestRisk < previousRisk) changes.push(`リスクが ${previousRisk} → ${latestRisk} と下がっており、状態が落ち着いている可能性があります。`);
+  if(recentCheckins.length >= 3){
+    const first = recentCheckins[recentCheckins.length - 1];
+    const firstScore = coerceNumber(first.autonomy_total ?? first.analysis?.signals?.score ?? 0, 0);
+    if(latestScore < firstScore) changes.push(`過去の推移では ${firstScore} → ${latestScore} で行動量の低下が続いている可能性があります。`);
+  }
+
+  return changes.slice(0, 5);
+}
+
+function detectRiskSignals(recentCheckins, recentActions, recentAssignments){
+  const latest = recentCheckins[0] || {};
+  const latestRisk = coerceNumber(latest.risk_score ?? latest.analysis?.signals?.risk ?? 0, 0);
+  const signals = [];
+
+  if(latestRisk >= 70) signals.push('高い離脱リスクが継続している可能性があります。');
+  else if(latestRisk >= 45) signals.push('リスクは中程度で、状態が揺らぎやすい傾向があります。');
+  else signals.push('リスクは比較的安定しているように見えます。');
+
+  if(recentActions.length >= 2){
+    const completed = recentActions.filter(x => x.completed).length;
+    if(completed === 0) signals.push('最近の行動結果に未実行が多く、継続のハードルが高い可能性があります。');
+    else if(completed < recentActions.length / 2) signals.push('最近の実行率が低く、実行を支える仕組みが必要な可能性があります。');
+  }
+
+  if(recentAssignments.length >= 2) signals.push('支援や介入の履歴があるため、今の課題が一回の施策では解決しにくい可能性があります。');
+
+  return signals.slice(0, 4);
+}
+
+function generateCoreInsight(context, state, stateChanges, riskSignals){
+  const currentBarrier = context.barriers === 'unknown' ? '具体的な困りごと' : context.barriers;
+  const problem = `現在の大きな問題は、${currentBarrier}が行動を止めていることや、次に何をすればよいかが明確でないことの可能性があります。`;
+
+  const insightParts = [];
+  if(stateChanges.length) insightParts.push(stateChanges[0]);
+  if(riskSignals.length) insightParts.push(riskSignals[0]);
+  if(context.recentAction && context.recentAction !== 'unknown') insightParts.push(`最近の行動として「${context.recentAction}」があり、実行の難しさが変化に影響している可能性があります。`);
+
+  const insight = insightParts.length
+    ? insightParts.join(' ')
+    : '現在の状態には大きな変化が見られず、行動の継続に必要な次の一歩がまだ曖昧になっている可能性があります。';
+
+  return {
+    insight,
+    problem,
+    hypothesis: 'やる気そのものより、「何から始めるか」を具体化すると再び実行しやすくなる可能性があります。',
+    hypotheses: [
+      '今の負担が高く、選択肢が多すぎて次の行動が決まりにくくなっている可能性があります。',
+      '疲労や困りごとの再発が、行動の一貫性に影響している可能性があります。',
+      'やる気そのものより、「何から始めるか」が曖昧になっていることが停滞につながっている可能性があります。'
+    ]
+  };
+}
+
+function generateCoreSolutions(state, insight, problem){
+  const solutionId = state?.supportNeed === 'support' ? 'B' : 'A';
+  return [
+    {
+      id: 'A',
+      title: '今できる作業を1つ進める',
+      description: '最小単位で進められる作業を1つに絞り、短時間で達成できる形に整理します。',
+      reason: '行動開始までの負担を下げ、実行可能な一歩を作るためです。'
+    },
+    {
+      id: 'B',
+      title: '問題を整理する',
+      description: '今の困りごととその原因を3つ以内に整理し、どこで止まっているかを明確にします。',
+      reason: '次に何をすればよいかの不明確さを減らすためです。'
+    },
+    {
+      id: 'C',
+      title: '支援者や周囲の目に相談する',
+      description: '一人で抱え込んでいる場合は、誰かに相談して気持ちや方法を一段下げて整理します。',
+      reason: '一人での判断負荷が高い場合に、別の視点を使えるためです。'
+    }
+  ].map(option => {
+    const isRecommended = option.id === solutionId;
+    return {
+      ...option,
+      recommended: isRecommended,
+      note: isRecommended ? '現在の状態に合わせて優先度が高い選択肢です。' : '本人が選べるよう、代替案として提示します。'
+    };
+  });
+}
+
+function buildAdaptiveQuestions({ recentCheckins, recentActions, context }){
+  const questions=[];
+  if(!recentCheckins.length) questions.push({id:'current_state',question:'今の状態を一言で教えてください。',reason:'現在地の観測がまだないため'});
+  if(recentActions.length >= 2 && recentActions.filter(action=>!action.completed).length >= 2){
+    questions.push({id:'recent_change',question:'最近、行動しにくくなった変化はありましたか？',reason:'最近の未実行が続いているため'});
+  }
+  if(context.barriers && context.barriers !== 'unknown'){
+    const checkinBarrierCount=recentCheckins.filter(checkin=>String(checkin.analysis?.barriers||'').includes(context.barriers)).length;
+    const actionBarrierCount=recentActions.filter(action=>String(action.barrier||'').includes(context.barriers)).length;
+    const barrierCount=checkinBarrierCount+actionBarrierCount;
+    if(barrierCount >= 2) questions.push({id:'barrier_continuation',question:'「'+context.barriers+'」は今も続いていますか？',reason:'同じ困りごとが複数回観測されたため'});
+  }
+  return questions.slice(0,2);
+}
+
+function buildPersonalSupportPattern({ participant_id, assignments, actions, supportHistory }){
+  const methods=[
+    {id:'A',label:'作業分解',rows:assignments.filter(row=>row.variant==='A')},
+    {id:'B',label:'選択肢整理',rows:assignments.filter(row=>row.variant==='B')},
+    {id:'C',label:'相談提案',rows:supportHistory}
+  ].map(method=>{
+    const outcomes=method.id==='C'
+      ? method.rows.map(row=>({completed:['action_completed','restarted','connected_and_progressed','positive'].includes(row.outcome)}))
+      : method.rows.map(row=>({completed:actions.some(action=>action.intervention_id===row.id && action.completed)}));
+    const completed=outcomes.filter(row=>row.completed).length;
+    return {...method,trials:outcomes.length,completed,observed_rate:outcomes.length?Number((completed/outcomes.length).toFixed(3)):null};
+  });
+  const observed=methods.filter(method=>method.trials>0).sort((a,b)=>(b.observed_rate??-1)-(a.observed_rate??-1));
+  return {
+    status:observed.length?'observational':'insufficient_data',
+    preferred_method:observed[0]?.id||null,
+    statement:observed.length?`過去の観測では「${observed[0].label}」の実行率が比較的高いです。因果効果は断定しません。`:'観測データが少ないため、複数の支援方法を探索します。',
+    methods:methods.map(({id,label,trials,completed,observed_rate})=>({id,label,trials,completed,observed_rate}))
+  };
+}
+
+async function callOpenAiFallback(prompt){
+  const key = process.env.OPENAI_API_KEY;
+  if(!key) return null;
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${key}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        temperature: 0.4,
+        messages: [{ role: 'system', content: 'You are a helpful assistant for challenge continuation. Return valid JSON with keys: state, state_change, risk, insight, problem, solutions, recommended_option, next_action.' }, { role: 'user', content: prompt }],
+        response_format: { type: 'json_object' }
+      })
+    });
+
+    if(!response.ok){
+      const err = await response.text();
+      throw new Error(err || 'OpenAI API error');
+    }
+
+    const json = await response.json();
+    const text = json?.choices?.[0]?.message?.content;
+    if(!text) throw new Error('AI response missing content');
+
+    try {
+      return JSON.parse(text);
+    } catch (parseError) {
+      return { state: 'unknown', state_change: 'AI response parse failed', risk: { level: 'unknown', reason: 'AI response parse failed' }, insight: 'AI応答の形式が想定と違いました。', problem: '問題を整理し直すことが必要です。', solutions: [], recommended_option: 'A', next_action: '問題を3つまでに整理する' };
+    }
+  } catch (error) {
+    console.error('OpenAI API error', error.message);
+    return null;
+  }
+}
+
+async function runFclAiCore({ participant_id, checkin_text, participant_profile = {}, current_goal, answers = {}, recent_context = {} } = {}){
+  if(!participant_id) throw new Error('invalid participant_id');
+  const participant = (await select('participants',{id:participant_id}))[0];
+  if(!participant) throw new Error('participant not found');
+
+  const checkins = (await select('checkins',{participant_id})).sort((a,b) => new Date(b.checked_in_at) - new Date(a.checked_in_at));
+  const latestCheckin = checkins[0] || null;
+  const recentActions = (await select('action_results',{participant_id})).sort((a,b) => new Date(b.created_at || b.completed_at || 0) - new Date(a.created_at || a.completed_at || 0)).slice(0, 5);
+  const recentAssignments = (await select('intervention_assignments',{participant_id})).sort((a,b) => new Date(b.assigned_at) - new Date(a.assigned_at)).slice(0, 5);
+  const supportHistory = (await select('supporter_outcomes',{participant_id})).sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
+
+  const coreContext = buildCoreSummary(participant, latestCheckin, checkins, recentActions, recentAssignments);
+  coreContext.goal = current_goal || participant.goal || coreContext.goal;
+  coreContext.checkin_text = sanitizeText(checkin_text, '');
+  coreContext.participant_profile = participant_profile || {};
+  coreContext.barriers = sanitizeText(participant_profile?.barrier || answers?.barrier || coreContext.barriers, 'unknown');
+  coreContext.supportHistory = supportHistory;
+
+  const state = {
+    goal: coreContext.goal,
+    currentState: latestCheckin?.analysis?.summary || (coreContext.barriers !== 'unknown'
+      ? `「${coreContext.barriers}」により次の行動が不明確な状態`
+      : coreContext.checkin_text ? '現在の状況を観測中' : '現在の状態を確認中'),
+    stateTrend: coreContext.stateTrend,
+    motivation: coreContext.motivation,
+    confidence: coreContext.confidence,
+    fatigue: coreContext.fatigue,
+    emotion: coreContext.emotion,
+    barriers: coreContext.barriers,
+    supportNeed: coreContext.supportNeed,
+    recentAction: coreContext.recentAction
+  };
+
+  const stateChanges = detectStateChanges(checkins);
+  const riskSignals = detectRiskSignals(checkins, recentActions, recentAssignments);
+  const coreInsight = generateCoreInsight(coreContext, state, stateChanges, riskSignals);
+  const solutions = generateCoreSolutions(state, coreInsight.insight, coreInsight.problem)
+    .map(option => ({ id: option.id, title: option.title, description: option.description, reason: option.reason }));
+  const adaptiveQuestions = buildAdaptiveQuestions({ recentCheckins: checkins, recentActions, context: coreContext });
+  const personalSupportPattern = buildPersonalSupportPattern({ participant_id, assignments: recentAssignments, actions: recentActions, supportHistory });
+
+  const normalizedRisk = {
+    level: latestCheckin?.risk_level || (coerceNumber(latestCheckin?.risk_score ?? 0, 0) >= 70 ? 'high' : coerceNumber(latestCheckin?.risk_score ?? 0, 0) >= 45 ? 'medium' : 'low'),
+    reason: riskSignals[0] || '状態変化が限定的で、追加観測が必要な可能性があります。'
+  };
+
+  const baseResult = {
+    state: state.currentState || 'unknown',
+    state_change: stateChanges.join(' ') || '変化の有無はまだ不明ですが、継続の基準を確認する必要があります。',
+    risk: normalizedRisk,
+    insight: coreInsight.insight,
+    problem: coreInsight.problem,
+    hypothesis: coreInsight.hypothesis,
+    solutions,
+    recommended_option: solutions[0]?.id || 'A',
+    next_action: `今日の最初の一歩として、${solutions[0]?.title || '問題を整理する'}を3分で始めます。`,
+    adaptive_questions: adaptiveQuestions,
+    personal_support_pattern: personalSupportPattern,
+    exploration: { mode: personalSupportPattern.status==='observational' ? 'exploit_with_exploration' : 'explore', reason: personalSupportPattern.statement }
+  };
+
+  const prompt = `participant_goal=${coreContext.goal}\ncheckin_text=${coreContext.checkin_text}\nstate=${JSON.stringify(state)}\nstate_changes=${JSON.stringify(stateChanges)}\nrisk_signals=${JSON.stringify(riskSignals)}\nrecent_action=${coreContext.recentAction}\nbarriers=${coreContext.barriers}\n`;
+  const llmResult = await callOpenAiFallback(prompt);
+  if(llmResult && llmResult.solutions && llmResult.solutions.length){
+    const result = {
+      ...baseResult,
+      ...llmResult,
+      solutions: Array.isArray(llmResult.solutions) && llmResult.solutions.length ? llmResult.solutions.slice(0, 3) : baseResult.solutions,
+      recommended_option: llmResult.recommended_option || baseResult.recommended_option,
+      next_action: llmResult.next_action || baseResult.next_action
+    };
+    await insert('model_learning_events',{participant_id,features:{action_type:'core_analysis',result,state:result.state,state_change:result.state_change,insight:result.insight,problem:result.problem,hypothesis:result.hypothesis,adaptive_questions:result.adaptive_questions,personal_support_pattern:result.personal_support_pattern},label:{recommended_option:result.recommended_option,next_action:result.next_action}});
+    return result;
+  }
+
+  await insert('model_learning_events',{participant_id,features:{action_type:'core_analysis',result:baseResult,state:baseResult.state,state_change:baseResult.state_change,insight:baseResult.insight,problem:baseResult.problem,hypothesis:baseResult.hypothesis,adaptive_questions:baseResult.adaptive_questions,personal_support_pattern:baseResult.personal_support_pattern},label:{recommended_option:baseResult.recommended_option,next_action:baseResult.next_action}});
+  return baseResult;
+}
+
+async function saveFclCoreDecision({ participant_id, selected_option, reason, next_action, target_date }){
+  if(!participant_id) throw new Error('invalid participant_id');
+  const participant = (await select('participants',{id:participant_id}))[0];
+  if(!participant) throw new Error('participant not found');
+
+  const row = await insert('model_learning_events', {
+    participant_id,
+    features: {
+      action_type: 'core_decision',
+      selected_option: sanitizeText(selected_option, 'A'),
+      reason: sanitizeText(reason, 'self_selected'),
+      next_action: sanitizeText(next_action, '次に何をするかを整理する'),
+      target_date: sanitizeText(target_date, null),
+      created_at: new Date().toISOString()
+    },
+    label: {
+      selected_option: sanitizeText(selected_option, 'A'),
+      next_action: sanitizeText(next_action, '次に何をするかを整理する'),
+      decision_made_by: 'participant'
+    }
+  });
+
+  return row;
+}
+
+async function saveFclCoreOutcome({ participant_id, selected_option, next_action, outcome_status, result_note, target_date }){
+  if(!participant_id) throw new Error('invalid participant_id');
+  const participant = (await select('participants',{id:participant_id}))[0];
+  if(!participant) throw new Error('participant not found');
+
+  const status = ['completed','partial','not_completed','not_started'].includes(String(outcome_status||'').toLowerCase())
+    ? String(outcome_status).toLowerCase()
+    : 'not_completed';
+
+  const completed = status === 'completed';
+  const row = await insert('action_results', {
+    participant_id,
+    intervention_id: null,
+    action_text: sanitizeText(next_action, '次に一歩を進める'),
+    completed,
+    barrier: status === 'not_completed' ? sanitizeText(result_note, '未実行') : '',
+    result_note: sanitizeText(result_note, ''),
+    completed_at: status === 'completed' || status === 'partial' ? new Date().toISOString() : null,
+    created_at: new Date().toISOString()
+  });
+
+  await insert('model_learning_events', {
+    participant_id,
+    features: {
+      action_type: 'core_outcome',
+      selected_option: sanitizeText(selected_option, 'A'),
+      next_action: sanitizeText(next_action, '次に一歩を進める'),
+      outcome_status: status,
+      result_note: sanitizeText(result_note, ''),
+      target_date: sanitizeText(target_date, null)
+    },
+    label: {
+      outcome_status: status,
+      selected_option: sanitizeText(selected_option, 'A'),
+      completion: completed,
+      action_text: sanitizeText(next_action, '次に一歩を進める')
+    }
+  });
+
+  return row;
 }
 
 app.get('/api/health',(req,res)=>res.json({ok:true,supabase:hasSupabase,mode:hasSupabase?'supabase':'memory'}));
@@ -812,43 +671,51 @@ app.post('/api/participants',async(req,res)=>{
   catch(e){res.status(500).json({error:e.message});}
 });
 
+app.get('/api/participants/:id',async(req,res)=>{
+  try{
+    const participant=(await select('participants',{id:req.params.id}))[0];
+    if(!participant) return res.status(404).json({error:'participant not found'});
+    res.json(participant);
+  }catch(e){res.status(500).json({error:e.message});}
+});
+
+app.get('/api/core/history/:participant_id',async(req,res)=>{
+  try{
+    const participant=(await select('participants',{id:req.params.participant_id}))[0];
+    if(!participant) return res.status(404).json({error:'participant not found'});
+    const events=(await select('model_learning_events',{participant_id:participant.id})).sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
+    const analysis=events.find(event=>event.features?.action_type==='core_analysis');
+    const decision=events.find(event=>event.features?.action_type==='core_decision');
+    const outcome=events.find(event=>event.features?.action_type==='core_outcome');
+    const checkin=(await select('checkins',{participant_id:participant.id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0] || null;
+    res.json({participant,checkin,analysis:analysis ? (analysis.features?.result || {...analysis.features,label:analysis.label}) : null,decision:decision ? {...decision.features,label:decision.label} : null,outcome:outcome ? {...outcome.features,label:outcome.label} : null});
+  }catch(e){res.status(500).json({error:e.message});}
+});
+
 app.post('/api/checkins',async(req,res)=>{
   try{
     const {participant_id, answers={}}=req.body;
+    const recentCheckins=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
+    const duplicateCheckin=recentCheckins.find(row => sameValue(row.autonomy_answers || {}, answers) && safeDate(row.checked_in_at) && Date.now()-safeDate(row.checked_in_at).getTime() < 24*3600*1000);
+    if(duplicateCheckin){
+      const assignment=(await select('intervention_assignments',{participant_id,checkin_id:duplicateCheckin.id}))[0] || null;
+      return res.json({duplicate:true,checkin:duplicateCheckin,intervention:assignment,resumed:Boolean(duplicateCheckin.analysis?.resumed),intervention_record_status:'duplicate'});
+    }
     const score=scoreAnswers(answers), risk=riskFromScore(score), level=riskLevel(risk);
-    const previous=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0];
+    const previous=recentCheckins[0];
     const resumed=Boolean(previous && (Date.now()-new Date(previous.checked_in_at).getTime())>36*3600*1000);
     const analysis={summary:level==='high'?'自己決定感が低く、離脱リスクが高い状態です。':'自己決定感を保てています。',resumed,signals:{score,risk,level}};
     const checkin=await insert('checkins',{participant_id,autonomy_total:score,autonomy_answers:answers,risk_score:risk,risk_level:level,analysis,checked_in_at:new Date().toISOString()});
-    const [allAssignments, allActionResults, allSupporters, allMatches, allOutcomes] = await Promise.all([
-      select('intervention_assignments'),
-      select('action_results'),
-      select('supporters'),
-      select('supporter_matches'),
-      select('supporter_outcomes')
-    ]);
-    const pastInterventionContext = await buildPastInterventionRecommendation({ participant_id, currentRiskLevel: level, currentRiskScore: risk });
     const policy=await optimizeAction({participant_id,checkin});
     let assigned=null;
-    if(policy.selected.action_type==='intervention' || policy.selected.action_type==='both'){
+    if(['intervention','supporter','both'].includes(policy.selected.action_type)){
       const iv=intervention(policy.selected.variant,risk);
-      assigned=await insert('intervention_assignments',{participant_id,checkin_id:checkin.id,variant:policy.selected.variant,intervention_type:iv.type,intervention_text:iv.text,meta:{risk_bucket:bucketRisk(risk),autonomy_bucket:bucketAutonomy(score),resumed,policy_version:'unified-contextual-bandit-v2'},assigned_at:new Date().toISOString()});
+      assigned=await insert('intervention_assignments',{participant_id,checkin_id:checkin.id,variant:policy.selected.variant||'A',intervention_type:iv.type,intervention_text:iv.text,meta:{risk_bucket:bucketRisk(risk),autonomy_bucket:bucketAutonomy(score),resumed,policy_version:'unified-contextual-bandit-v2'},assigned_at:new Date().toISOString()});
     }
     let suggestedSupporterMatch=null;
     if((policy.selected.action_type==='supporter'||policy.selected.action_type==='both') && policy.selected.supporter_id){
-      suggestedSupporterMatch=await insert('supporter_matches',{participant_id,supporter_id:policy.selected.supporter_id,score:Number((policy.selected.score*100).toFixed(2)),reason:'介入最適化AIが、現在地・再開状態・支援成果データを統合して選択',status:'suggested',created_at:new Date().toISOString(),updated_at:new Date().toISOString()});
+      suggestedSupporterMatch=await insert('supporter_matches',{participant_id,supporter_id:policy.selected.supporter_id,score:Number((policy.selected.score*100).toFixed(2)),reason:'介入最適化AIが、現在地・再開状態・支援成果データを統合して選択',status:'pending',created_at:new Date().toISOString(),updated_at:new Date().toISOString()});
     }
-
-    const supportRecommendation = await buildSupporterRecommendation({
-      participant_id,
-      checkin,
-      supporters: allSupporters,
-      supporterMatches: allMatches,
-      supporterOutcomes: allOutcomes,
-      interventionAssignments: allAssignments,
-      actionResults: allActionResults,
-      save_match: false
-    });
 
     const aiInterventionRecord = await saveAIInterventionRecord({
       participant_id,
@@ -856,22 +723,7 @@ app.post('/api/checkins',async(req,res)=>{
       risk,
       score,
       resumed,
-      policySelected: policy.selected,
-      pastInterventionContext
-    });
-
-    await insert('model_learning_events', {
-      participant_id,
-      features: {
-        action_type: 'supporter_matching',
-        context: { risk_score: risk, risk_level: level, autonomy_total: score, support_needed: supportRecommendation.status !== 'not_required' },
-        support_recommendation: supportRecommendation
-      },
-      label: {
-        selected_supporter_id: supportRecommendation.selected_supporter?.id || null,
-        support_status: supportRecommendation.status,
-        fallback: supportRecommendation.fallback || 'none'
-      }
+      policySelected: policy.selected
     });
 
     res.json({
@@ -880,8 +732,6 @@ app.post('/api/checkins',async(req,res)=>{
       suggestedSupporterMatch,
       resumed,
       optimization:policy,
-      past_intervention_recommendation: pastInterventionContext,
-      support_recommendation: supportRecommendation,
       ai_intervention: aiInterventionRecord.decision || null,
       intervention_record_status: aiInterventionRecord.recorded ? 'saved' : aiInterventionRecord.error ? 'failed' : 'not_required',
       intervention_record_error: aiInterventionRecord.error || null
@@ -891,6 +741,13 @@ app.post('/api/checkins',async(req,res)=>{
 
 app.post('/api/actions',async(req,res)=>{
   try{
+    const actionPayload={participant_id:req.body.participant_id,intervention_id:req.body.intervention_id||null,action_text:req.body.action_text||'',completed:Boolean(req.body.completed),barrier:req.body.barrier||'',result_note:req.body.result_note||''};
+    const existingAction=(await select('action_results',{participant_id:actionPayload.participant_id})).find(row =>
+      (row.intervention_id||null)===(actionPayload.intervention_id||null) &&
+      row.action_text===actionPayload.action_text && Boolean(row.completed)===actionPayload.completed &&
+      (row.barrier||'')===actionPayload.barrier && (row.result_note||'')===actionPayload.result_note
+    );
+    if(existingAction) return res.status(200).json({status:'duplicate',duplicate:true,row:existingAction});
     const row=await insert('action_results',{participant_id:req.body.participant_id,intervention_id:req.body.intervention_id||null,action_text:req.body.action_text||'',completed:Boolean(req.body.completed),barrier:req.body.barrier||'',result_note:req.body.result_note||'',completed_at:req.body.completed?new Date().toISOString():null});
     if(req.body.intervention_id){
       const ints=(await select('intervention_assignments',{id:req.body.intervention_id}))[0];
@@ -913,7 +770,7 @@ app.post('/api/supporter-outcomes',async(req,res)=>{
 });
 
 app.post('/api/supporters/register',async(req,res)=>{
-  try{ const row=await insert('supporters',{organization_name:req.body.organization_name,supporter_name:req.body.supporter_name,email:req.body.email||'',support_category:req.body.support_category,strengths:Array.isArray(req.body.strengths)?req.body.strengths:[],timing_tags:Array.isArray(req.body.timing_tags)?req.body.timing_tags:[],description:req.body.description||'',active:true}); res.json(row); }
+  try{ const row=await insert('supporters',{organization_name:req.body.organization_name,supporter_name:req.body.supporter_name,email:req.body.email||'',support_category:req.body.support_category,strengths:Array.isArray(req.body.strengths)?req.body.strengths:[],timing_tags:Array.isArray(req.body.timing_tags)?req.body.timing_tags:[],description:req.body.description||'',active:true,capacity:Number(req.body.capacity ?? 5),accepting_new_matches:req.body.accepting_new_matches !== false}); res.json(row); }
   catch(e){res.status(500).json({error:e.message});}
 });
 
@@ -926,20 +783,628 @@ function matchScore(p,s,last){
   return {score:Math.min(score,100),reason:reason.join('。')||'挑戦分野と支援内容の近さを基礎スコアとして算出'};
 }
 
+function normalizeMatchStatus(status){
+  const legacyMap = {
+    suggested: 'pending',
+    requested: 'pending',
+    pending: 'pending',
+    connected: 'connected',
+    declined: 'declined',
+    expired: 'expired',
+    challenger_approved: 'challenger_approved',
+    supporter_approved: 'supporter_approved'
+  };
+  const allowed = new Set(['pending','challenger_approved','supporter_approved','connected','declined','expired','suggested','requested']);
+  const key = String(status ?? '').trim().toLowerCase();
+  if (allowed.has(key)) return key === 'suggested' || key === 'requested' ? 'pending' : key;
+  return legacyMap[key] || 'pending';
+}
+
+function toCompatibleMatchStatus(status){
+  const normalized = normalizeMatchStatus(status);
+  if (['connected','declined','expired'].includes(normalized)) return normalized;
+  if (normalized === 'challenger_approved' || normalized === 'supporter_approved') return 'requested';
+  return 'suggested';
+}
+
+function stripUnsupportedColumns(table, row = {}) {
+  const compatible = { ...row };
+  if (table === 'supporters') {
+    delete compatible.capacity;
+    delete compatible.accepting_new_matches;
+  }
+  if (table === 'supporter_matches') {
+    delete compatible.meta;
+    delete compatible.challenger_approved_at;
+    delete compatible.supporter_approved_at;
+    delete compatible.connected_at;
+    delete compatible.declined_at;
+    delete compatible.expired_at;
+    compatible.status = toCompatibleMatchStatus(compatible.status || 'pending');
+  }
+  return compatible;
+}
+
+function deriveMatchFinalState(match){
+  if (!match) return 'pending';
+  const hydrated = hydrateMatchApprovalState(match);
+  const status = normalizeMatchStatus(hydrated?.status || 'pending');
+  const challengerApproved = Boolean(hydrated?.challenger_approved_at) || Boolean(hydrated?.meta?.approvals?.challenger) || status === 'challenger_approved';
+  const supporterApproved = Boolean(hydrated?.supporter_approved_at) || Boolean(hydrated?.meta?.approvals?.supporter) || status === 'supporter_approved';
+  const declined = Boolean(hydrated?.declined_at) || status === 'declined' || hydrated?.meta?.status === 'declined';
+  const expired = Boolean(hydrated?.expired_at) || status === 'expired' || hydrated?.meta?.status === 'expired';
+
+  if (declined || expired) return 'declined';
+  if (challengerApproved && supporterApproved) return 'connected';
+  if (challengerApproved) return 'challenger_approved';
+  if (supporterApproved) return 'supporter_approved';
+  return 'pending';
+}
+
+function approvalSnapshot(match){
+  const hydrated = hydrateMatchApprovalState(match);
+  const status = normalizeMatchStatus(hydrated?.status || 'pending');
+  const approvals = {
+    challenger: Boolean(hydrated?.challenger_approved_at) || Boolean(hydrated?.meta?.approvals?.challenger) || status === 'challenger_approved' || status === 'connected',
+    supporter: Boolean(hydrated?.supporter_approved_at) || Boolean(hydrated?.meta?.approvals?.supporter) || status === 'supporter_approved' || status === 'connected'
+  };
+  const effective_status = deriveMatchFinalState({ ...hydrated, meta: { ...(hydrated?.meta || {}), approvals } });
+  return { ...approvals, effective_status };
+}
+
+function effectiveMatchStatus(match){
+  if (!match) return 'pending';
+  const hydrated = hydrateMatchApprovalState(match);
+  const derived = deriveMatchFinalState(hydrated);
+  if (['connected','challenger_approved','supporter_approved','declined','expired'].includes(derived)) return derived;
+  return normalizeMatchStatus(hydrated.status || 'pending');
+}
+
+function getRecommendationTypeLabel(type){
+  switch(type){
+    case 'checkin_follow_up': return 'チェックインで見直す';
+    case 'self_directed_follow_up': return '自分で整理して進める';
+    case 'supporter':
+    default: return '支援者と一緒に進める';
+  }
+}
+
+async function buildSupporterPriority(participant_id){
+  const participant=(await select('participants',{id:participant_id}))[0];
+  if(!participant) throw new Error('participant not found');
+
+  const checkins=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
+  const latest=checkins[0] || null;
+  const recentActions=(await select('action_results',{participant_id})).sort((a,b)=>new Date(b.created_at||b.completed_at||0)-new Date(a.created_at||a.completed_at||0)).slice(0,5);
+  const recentAssignments=(await select('intervention_assignments',{participant_id})).sort((a,b)=>new Date(b.assigned_at)-new Date(a.assigned_at)).slice(0,5);
+  const riskScore=Number(latest?.risk_score ?? latest?.analysis?.signals?.risk ?? 0);
+  const autonomy=Number(latest?.autonomy_total ?? latest?.analysis?.signals?.score ?? 0);
+  const completed=recentActions.filter(x=>x.completed).length;
+
+  let priority='low';
+  if(riskScore >= 70 || (riskScore >= 45 && autonomy <= 12) || completed === 0){
+    priority='high';
+  } else if(riskScore >= 45 || autonomy <= 16){
+    priority='medium';
+  }
+
+  const status = autonomy >= 18 && riskScore <= 35 ? '安定継続' : autonomy >= 12 ? 'バランス維持' : '支援が必要';
+  const recommendationType = priority === 'high' ? 'supporter' : priority === 'medium' ? 'checkin_follow_up' : 'self_directed_follow_up';
+  const recommendationLabel = getRecommendationTypeLabel(recommendationType);
+  const recommendationReason = riskScore >= 70
+    ? '高リスクのため、支援者の視点で行動の定着を支える必要があると判断されたためです。'
+    : '直近のチェックインと行動実行の状況から、支援者が支援の入口を作ると改善しやすい可能性があります。';
+  const suggestedMessage = priority === 'high'
+    ? '今日は最初の一歩を10分だけに絞って、支援者と一緒に進めることを検討してください。'
+    : '今の困りごとを一度整理し、今日の一歩を一緒に決めると続けやすくなります。';
+
+  return {
+    participant_id,
+    priority,
+    challenger_status: status,
+    latest_checkin: latest,
+    risk_level: latest?.risk_level || riskLevel(riskScore),
+    latest_risk_score: riskScore,
+    autonomy_score: autonomy,
+    recent_action_count: recentActions.length,
+    recommendation_type_code: recommendationType,
+    recommended_support_type: recommendationLabel,
+    recommendation_reason: recommendationReason,
+    suggested_message: suggestedMessage,
+    supporter_can_edit: true,
+    requires_explicit_approval: true,
+    recommendation_label: 'recommendation',
+    recent_assignments: recentAssignments,
+    action_completion_rate: recentActions.length ? completed / recentActions.length : 0
+  };
+}
+
+async function getSupporterCandidates(participant_id){
+  const participant=(await select('participants',{id:participant_id}))[0];
+  if(!participant) return {status:'not_found', candidates:[], priority:null};
+
+  const priorityData=await buildSupporterPriority(participant_id);
+  const checkins=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
+  const last=checkins[0] || null;
+  const supporters=(await select('supporters')).filter(s=>s.active!==false);
+
+  const candidates=supporters.map(s=>({
+    supporter_id:s.id,
+    supporter_name:s.supporter_name,
+    organization_name:s.organization_name,
+    support_category:s.support_category,
+    ...matchScore(participant,s,last),
+    recommendation_type_code: priorityData.recommendation_type_code,
+    recommended_support_type: priorityData.recommended_support_type,
+    recommendation_reason: priorityData.recommendation_reason,
+    suggested_message: priorityData.suggested_message
+  })).sort((a,b)=>b.score-a.score).slice(0,5);
+
+  return {
+    status: priorityData.priority === 'low' && priorityData.action_completion_rate >= 0.7 ? 'not_required' : 'ok',
+    priority: priorityData.priority,
+    candidate_count: candidates.length,
+    priority_data: priorityData,
+    candidates
+  };
+}
+
 app.post('/api/matches',async(req,res)=>{
   try{
-    const ps=(await select('participants',{id:req.body.participant_id}))[0];
-    const ss=(await select('supporters')).filter(s=>s.active!==false);
-    const last=(await select('checkins',{participant_id:req.body.participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0];
+    const participant_id = req.body.participant_id || req.body.challenger_id;
+    const ps=(await select('participants',{id:participant_id}))[0];
+    const allSupporters = (await select('supporters')).filter(s => s.active !== false && s.accepting_new_matches !== false);
+    const allMatches = (await select('supporter_matches')).filter(m => !['connected','declined','expired'].includes(effectiveMatchStatus(m)));
+    const activeCounts = new Map();
+    for (const match of allMatches) {
+      if (['connected','challenger_approved','supporter_approved'].includes(match.status)) {
+        activeCounts.set(match.supporter_id, (activeCounts.get(match.supporter_id) || 0) + 1);
+      }
+    }
+    const ss = allSupporters.filter(s => (Number(s.capacity ?? 5) > (activeCounts.get(s.id) || 0)));
+    const last=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0];
     const ranked=ss.map(s=>({s,...matchScore(ps||{},s,last)})).sort((a,b)=>b.score-a.score).slice(0,5);
-    const rows=[]; for(const x of ranked){ rows.push(await insert('supporter_matches',{participant_id:req.body.participant_id,supporter_id:x.s.id,score:x.score,reason:x.reason,status:'suggested',created_at:new Date().toISOString(),updated_at:new Date().toISOString()})); }
-    res.json(rows.map((r,i)=>({...r,supporter:ranked[i]?.s})));
+    const rows=[];
+    for(const x of ranked){
+      const existing = (await select('supporter_matches',{participant_id, supporter_id: x.s.id})).find(m => !['connected','declined','expired'].includes(effectiveMatchStatus(m)));
+      if (existing) {
+        rows.push({ ...existing, supporter: x.s, match_score: Number(existing.score), status: effectiveMatchStatus(existing) });
+        continue;
+      }
+      const record = await insert('supporter_matches',{
+        participant_id,
+        supporter_id:x.s.id,
+        score:x.score,
+        reason:x.reason,
+        status:'pending',
+        meta:{
+          match_type:'matching_candidate',
+          challenger_support_need: ps?.challenge || '',
+          expected_support_frequency: '1-2回/週',
+          recommendation_score: Number(x.score)
+        },
+        created_at:new Date().toISOString(),
+        updated_at:new Date().toISOString()
+      });
+      rows.push({ ...record, supporter: x.s, match_score: Number(record.score), status: effectiveMatchStatus(record) });
+    }
+    res.json(rows);
   }catch(e){res.status(500).json({error:e.message});}
 });
 
 app.post('/api/matches/:id/request',async(req,res)=>{
-  try{ const m=(await select('supporter_matches',{id:req.params.id}))[0]; if(!m) return res.status(404).json({error:'match not found'}); const updated=await update('supporter_matches',m.id,{status:'requested',updated_at:new Date().toISOString()}); await insert('connection_events',{participant_id:m.participant_id,supporter_id:m.supporter_id,match_id:m.id,event_type:'connection_requested',note:req.body.note||''}); res.json(updated); }
+  try{ const m=(await select('supporter_matches',{id:req.params.id}))[0]; if(!m) return res.status(404).json({error:'match not found'}); const updated=await update('supporter_matches',m.id,{status:'pending',updated_at:new Date().toISOString()}); await insert('connection_events',{participant_id:m.participant_id,supporter_id:m.supporter_id,match_id:m.id,event_type:'connection_requested',note:req.body.note||''}); res.json(updated); }
   catch(e){res.status(500).json({error:e.message});}
+});
+
+app.get('/api/matches/:id/detail', async (req, res) => {
+  try {
+    const match = (await select('supporter_matches',{id:req.params.id}))[0];
+    if (!match) return res.status(404).json({ error: 'match not found' });
+    const participant = (await select('participants',{id:match.participant_id}))[0];
+    const supporter = (await select('supporters',{id:match.supporter_id}))[0];
+    const recentCheckin = (await select('checkins',{participant_id:match.participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0];
+    const priority = await buildSupporterPriority(match.participant_id);
+    const detail = {
+      match: {
+        ...match,
+        match_score: Number(match.score ?? 0),
+        status: effectiveMatchStatus(match),
+        expected_support_frequency: match.meta?.expected_support_frequency || '1-2回/週'
+      },
+      participant: {
+        id: participant?.id || match.participant_id,
+        name: participant?.name || '未登録',
+        challenge: participant?.challenge || '挑戦内容未入力',
+        goal: participant?.goal || '目標未入力'
+      },
+      supporter: {
+        id: supporter?.id || match.supporter_id,
+        name: supporter?.supporter_name || '支援者',
+        organization_name: supporter?.organization_name || '未登録',
+        support_category: supporter?.support_category || '支援',
+        capacity: Number(supporter?.capacity ?? 5),
+        accepting_new_matches: supporter?.accepting_new_matches !== false
+      },
+      priority,
+      current_state: recentCheckin ? { risk_score: recentCheckin.risk_score, autonomy_total: recentCheckin.autonomy_total, risk_level: recentCheckin.risk_level, summary: recentCheckin.analysis?.summary || '現在の観測を確認中' } : null,
+      email_redirect_url: `/match-detail.html?match_id=${match.id}`
+    };
+    res.json(detail);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'match detail failed' });
+  }
+});
+
+app.post('/api/matches/:id/send-email', async (req, res) => {
+  try {
+    const emailType = req.body?.email_type || 'matching_candidate';
+    const match = (await select('supporter_matches',{id:req.params.id}))[0];
+    if (!match) return res.status(404).json({ error: 'match not found' });
+    const participant = (await select('participants',{id:match.participant_id}))[0];
+    const supporter = (await select('supporters',{id:match.supporter_id}))[0];
+    const allowedTypes = new Set(['matching_candidate','approval_received','connection_confirmed']);
+    const finalType = allowedTypes.has(emailType) ? emailType : 'matching_candidate';
+    const email = {
+      type: finalType,
+      subject: {
+        matching_candidate: 'FCL: 支援候補のご案内',
+        approval_received: 'FCL: 承認の受領をお知らせ',
+        connection_confirmed: 'FCL: 接続成立のお知らせ'
+      }[finalType],
+      body: {
+        matching_candidate: `支援候補のご案内です。FCLサイトで詳細を確認し、承認の可否を選んでください。\n\n挑戦者: ${participant?.name || '未登録'}\n支援者: ${supporter?.supporter_name || '支援者'}\n詳細: /match-detail.html?match_id=${match.id}`,
+        approval_received: `承認を受け取りました。双方の承認後に接続が成立します。\n\nFCLサイトで状況を確認してください。\n詳細: /match-detail.html?match_id=${match.id}`,
+        connection_confirmed: `支援の接続が成立しました。支援実施と観測をFCLサイトで続けてください。\n\n詳細: /match-detail.html?match_id=${match.id}`
+      }[finalType],
+      redirect_url: `/match-detail.html?match_id=${match.id}`
+    };
+    await insert('connection_events', {
+      participant_id: match.participant_id,
+      supporter_id: match.supporter_id,
+      match_id: match.id,
+      event_type: 'email_sent',
+      note: JSON.stringify({ email_type: finalType, redirect_url: email.redirect_url }),
+      created_at: new Date().toISOString()
+    });
+    res.json({ ok: true, email, match_id: match.id, status: 'sent' });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'send email failed' });
+  }
+});
+
+async function updateMatchApprovalStatus(matchId, actor, action){
+  const match = (await select('supporter_matches',{id:matchId}))[0];
+  if (!match) throw new Error('match not found');
+  const currentStatus = effectiveMatchStatus(match);
+  if (['declined','expired'].includes(currentStatus)) throw new Error('match is no longer active');
+
+  const now = new Date().toISOString();
+  const actorKey = actor === 'supporter' ? 'supporter_approved_at' : 'challenger_approved_at';
+  const previousApprovalSnapshot = approvalSnapshot(match);
+  const approvals = {
+    challenger: previousApprovalSnapshot.challenger || actor === 'challenger',
+    supporter: previousApprovalSnapshot.supporter || actor === 'supporter'
+  };
+
+  const previousState = deriveMatchFinalState(match);
+  const nextState = approvals.challenger && approvals.supporter
+    ? 'connected'
+    : approvals.challenger
+      ? 'challenger_approved'
+      : approvals.supporter
+        ? 'supporter_approved'
+        : 'pending';
+
+  const finalStatus = nextState === 'connected'
+    ? 'connected'
+    : (previousState === 'declined' || previousState === 'expired')
+      ? previousState
+      : nextState;
+
+  const patches = {
+    updated_at: now,
+    status: finalStatus,
+    meta: {
+      ...(match.meta || {}),
+      approvals,
+      status: finalStatus,
+      last_actor: actor,
+      last_action: action,
+      last_updated_at: now
+    }
+  };
+
+  if (action === 'decline') {
+    patches.status = 'declined';
+    patches.declined_at = now;
+    patches.meta.status = 'declined';
+    patches.meta.approvals = { challenger: approvals.challenger, supporter: approvals.supporter };
+    const updated = await update('supporter_matches', match.id, patches);
+    return { ...updated, status: 'declined', meta: { ...(updated?.meta || {}), ...patches.meta } };
+  }
+
+  patches[actorKey] = now;
+  patches.meta.approvals = approvals;
+
+  const transitionedToConnected = previousState !== 'connected' && finalStatus === 'connected';
+  if (transitionedToConnected) {
+    await insert('connection_events', {
+      participant_id: match.participant_id,
+      supporter_id: match.supporter_id,
+      match_id: match.id,
+      event_type: 'connection_confirmed',
+      note: 'challenger and supporter approved the connection',
+      created_at: now
+    });
+  } else if (finalStatus !== 'connected') {
+    await insert('connection_events', {
+      participant_id: match.participant_id,
+      supporter_id: match.supporter_id,
+      match_id: match.id,
+      event_type: 'approval_received',
+      note: `${actor} approved the match`,
+      created_at: now
+    });
+  }
+
+  const updated = await update('supporter_matches', match.id, patches);
+  const finalMeta = { ...(updated?.meta || {}), ...(patches.meta || {}) };
+  return { ...updated, meta: finalMeta, status: finalStatus };
+}
+
+app.post('/api/matches/:id/challenger-approve', async (req, res) => {
+  try {
+    const match = (await select('supporter_matches',{id:req.params.id}))[0];
+    if (!match) return res.status(404).json({ error: 'match not found' });
+    if (['declined','expired'].includes(effectiveMatchStatus(match))) return res.status(409).json({ error: 'match is not active' });
+    if (match.challenger_approved_at) return res.status(409).json({ error: 'challenger approval already recorded' });
+    const updated = await updateMatchApprovalStatus(match.id, 'challenger', 'approve');
+    res.json({ ok: true, match: updated, status: updated.status, actor: 'challenger' });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'challenger approval failed' });
+  }
+});
+
+app.post('/api/matches/:id/supporter-approve', async (req, res) => {
+  try {
+    const match = (await select('supporter_matches',{id:req.params.id}))[0];
+    if (!match) return res.status(404).json({ error: 'match not found' });
+    if (['declined','expired'].includes(effectiveMatchStatus(match))) return res.status(409).json({ error: 'match is not active' });
+    if (match.supporter_approved_at) return res.status(409).json({ error: 'supporter approval already recorded' });
+    const updated = await updateMatchApprovalStatus(match.id, 'supporter', 'approve');
+    res.json({ ok: true, match: updated, status: updated.status, actor: 'supporter' });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'supporter approval failed' });
+  }
+});
+
+app.post('/api/matches/:id/decline', async (req, res) => {
+  try {
+    const match = (await select('supporter_matches',{id:req.params.id}))[0];
+    if (!match) return res.status(404).json({ error: 'match not found' });
+    if (effectiveMatchStatus(match) === 'connected') return res.status(409).json({ error: 'connected match cannot be declined' });
+    const actor = req.body?.actor || 'challenger';
+    const updated = await updateMatchApprovalStatus(match.id, actor, 'decline');
+    res.json({ ok: true, match: updated, status: updated.status, actor });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'match decline failed' });
+  }
+});
+
+app.get('/api/supporter-candidates/:participant_id', async (req, res) => {
+  try {
+    const result = await getSupporterCandidates(req.params.participant_id);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'candidate generation failed' });
+  }
+});
+
+app.post('/api/supporter-match', async (req, res) => {
+  try {
+    const { participant_id, supporter_id } = req.body || {};
+    if (!participant_id || !supporter_id) return res.status(400).json({ error: 'invalid participant_id or supporter_id' });
+
+    const existing=(await select('supporter_matches',{participant_id,supporter_id}));
+    if (existing.length) {
+      return res.status(409).json({ error: 'duplicate support match', status: 'duplicate', match: existing[0] });
+    }
+
+    const match = await insert('supporter_matches', {
+      participant_id,
+      supporter_id,
+      score: 90,
+      reason: '支援者側が明示的に支援対象として選択したため。',
+      status: 'pending',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    });
+
+    await insert('connection_events', {
+      participant_id,
+      supporter_id,
+      match_id: match.id,
+      event_type: 'supporter_selected',
+      note: 'supporter module explicit selection',
+      created_at: new Date().toISOString()
+    });
+
+    await insert('model_learning_events', {
+      participant_id,
+      features: { action_type: 'supporter_match', supporter_id, match_id: match.id },
+      label: { status: 'pending', selected_by: 'supporter' }
+    });
+
+    res.json({ ok: true, status: 'saved', match_id: match.id, match });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'supporter match failed' });
+  }
+});
+
+app.post('/api/supporter/execute', async (req, res) => {
+  try {
+    const { participant_id, supporter_id, recommendation_type, recommendation_reason, suggested_message, approved, checkin_id } = req.body || {};
+    if (!participant_id || !supporter_id) return res.status(400).json({ error: 'invalid participant_id or supporter_id' });
+    if (!approved) return res.status(400).json({ error: 'supporter approval required' });
+
+    const checkins=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
+    const latest = checkin_id ? (await select('checkins',{id:checkin_id}))[0] || checkins[0] : checkins[0];
+    const existingAssignment = latest ? (await select('intervention_assignments',{participant_id,checkin_id:latest.id}))[0] : null;
+    const executionEvents=(await select('connection_events')).filter(event => event.participant_id===participant_id && event.supporter_id===supporter_id && event.event_type==='support_execution');
+    const duplicateEvent=executionEvents.find(event => (event.note||'') === (suggested_message || 'supporter follow-up executed'));
+    if(duplicateEvent){
+      const assignment=(await select('intervention_assignments',{participant_id})).find(row => row.meta?.support_execution && row.meta?.supporter_id===supporter_id && (!latest || row.checkin_id===latest.id)) || existingAssignment;
+      return res.status(200).json({ok:true,status:'duplicate',duplicate:true,assignment,execution_event:duplicateEvent});
+    }
+    const assignment = existingAssignment
+      ? await update('intervention_assignments', existingAssignment.id, {
+          intervention_type: 'supporter_follow_up',
+          intervention_text: suggested_message || '支援者のサポートを実施します。',
+          meta: { ...existingAssignment.meta, supporter_id, recommendation_type, recommendation_reason, approved, support_execution: true },
+          assigned_at: new Date().toISOString()
+        })
+      : await insert('intervention_assignments', {
+          participant_id,
+          checkin_id: latest?.id || null,
+          variant: 'A',
+          intervention_type: 'supporter_follow_up',
+          intervention_text: suggested_message || '支援者のサポートを実施します。',
+          meta: { supporter_id, recommendation_type, recommendation_reason, approved, support_execution: true },
+          assigned_at: new Date().toISOString()
+        });
+
+    const executionEvent = await insert('connection_events', {
+      participant_id,
+      supporter_id,
+      match_id: null,
+      event_type: 'support_execution',
+      note: suggested_message || 'supporter follow-up executed',
+      created_at: new Date().toISOString()
+    });
+
+    await insert('model_learning_events', {
+      participant_id,
+      intervention_id: assignment?.id || null,
+      features: {
+        action_type: 'support_execution',
+        supporter_id,
+        recommendation_type: recommendation_type || 'supporter',
+        recommendation_reason: recommendation_reason || '',
+        suggested_message: suggested_message || '',
+        approved: Boolean(approved)
+      },
+      label: {
+        outcome: 'support_execution_logged',
+        approved: Boolean(approved)
+      }
+    });
+
+    res.json({ ok: true, status: 'saved', assignment, execution_event: executionEvent });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'support execution failed' });
+  }
+});
+
+app.get('/api/supporter/dashboard', async (req, res) => {
+  try {
+    const supporter_id = req.query.supporter_id;
+    if (!supporter_id) return res.status(400).json({ error: 'invalid supporter_id' });
+
+    const supporter=(await select('supporters',{id:supporter_id}))[0];
+    if (!supporter) return res.status(404).json({ error: 'supporter not found' });
+
+    const matches=(await select('supporter_matches')).filter(x=>x.supporter_id===supporter_id);
+    const targets=[];
+    for (const match of matches) {
+      const participant=(await select('participants',{id:match.participant_id}))[0];
+      const checkins=(await select('checkins',{participant_id:match.participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
+      const latest=checkins[0] || null;
+      const priority = await buildSupporterPriority(match.participant_id);
+      targets.push({
+        match_id: match.id,
+        participant_id: match.participant_id,
+        participant_name: participant?.name || '未登録',
+        priority: priority.priority,
+        challenger_status: priority.challenger_status,
+        latest_checkin: latest,
+        risk_level: latest?.risk_level || 'unknown',
+        recommended_support_type: priority.recommended_support_type,
+        recommendation_reason: priority.recommendation_reason,
+        suggested_message: priority.suggested_message,
+        match_status: effectiveMatchStatus(match),
+        recommendation_type_code: priority.recommendation_type_code
+      });
+    }
+
+    const outcomes=(await select('supporter_outcomes')).filter(x=>x.supporter_id===supporter_id);
+    const executionEvents=(await select('connection_events')).filter(x=>x.supporter_id===supporter_id && x.event_type==='support_execution');
+    const weekly_count = executionEvents.filter(x => {
+      const d = new Date(x.created_at || Date.now());
+      return d > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    }).length;
+    const connectedCount = matches.filter(x => x.status === 'connected').length;
+    const pendingCount = matches.filter(x => ['pending','challenger_approved','supporter_approved'].includes(x.status)).length;
+    const observedExecutionRate = executionEvents.length ? ((executionEvents.length / Math.max(1, matches.length || executionEvents.length)) * 100) : 0;
+
+    res.json({
+      supporter: {
+        id: supporter.id,
+        supporter_name: supporter.supporter_name,
+        organization_name: supporter.organization_name,
+        active: supporter.active !== false,
+        support_category: supporter.support_category,
+        capacity: Number(supporter.capacity ?? 5),
+        accepting_new_matches: supporter.accepting_new_matches !== false,
+        active_connections: connectedCount,
+        weekly_support_count: weekly_count
+      },
+      summary: {
+        total_support_count: matches.length,
+        observed_execution_rate: Number(observedExecutionRate.toFixed(1)),
+        support_capacity: Number(supporter.capacity ?? 5),
+        weekly_support_count: weekly_count,
+        active_connections: connectedCount,
+        pending_matches: pendingCount,
+        high_priority_support: targets.filter(x => x.priority === 'high').length,
+        medium_priority_support: targets.filter(x => x.priority === 'medium').length,
+        low_priority_support: targets.filter(x => x.priority === 'low').length,
+        support_type_distribution: { supporter: executionEvents.length, checkin_follow_up: 0, self_directed_follow_up: 0 },
+        new_matching_enabled: supporter.accepting_new_matches !== false
+      },
+      recent_outcomes: outcomes.slice(-5),
+      targets: targets.slice(0, 10)
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'supporter dashboard failed' });
+  }
+});
+
+app.get('/api/supporter/outcomes/:supporter_id', async (req, res) => {
+  try {
+    const supporter_id = req.params.supporter_id;
+    const outcomes=(await select('supporter_outcomes')).filter(x=>x.supporter_id===supporter_id);
+    const supportEvents=(await select('connection_events')).filter(x=>x.supporter_id===supporter_id && x.event_type==='support_execution');
+    const summary = {
+      total_support_count: outcomes.length,
+      observed_execution_rate: supportEvents.length ? Number(((supportEvents.length / Math.max(1, outcomes.length || supportEvents.length)) * 100).toFixed(1)) : 0,
+      recent_support_outcomes: outcomes.slice(-5)
+    };
+    res.json({ ok: true, outcomes, summary });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'support outcomes failed' });
+  }
+});
+
+app.post('/api/supporters/:id/status', async (req, res) => {
+  try {
+    const supporter = (await select('supporters',{id:req.params.id}))[0];
+    if(!supporter) return res.status(404).json({ error: 'supporter not found' });
+    const updated = await update('supporters', supporter.id, { active: Boolean(req.body?.active ?? true) });
+    res.json({ ok: true, support_status: updated.active ? 'enabled' : 'disabled', supporter: updated });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'supporter status update failed' });
+  }
 });
 
 app.get('/api/optimization/:participant_id',async(req,res)=>{
@@ -947,205 +1412,91 @@ app.get('/api/optimization/:participant_id',async(req,res)=>{
   const checkins=(await select('checkins',{participant_id:req.params.participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
   const latest=checkins[0];
   if(!latest) return res.status(404).json({error:'no checkin'});
-  const recommendation = await buildPastInterventionRecommendation({ participant_id: req.params.participant_id, currentRiskLevel: latest.risk_level, currentRiskScore: latest.risk_score });
-  const preview = {
-    participant_id: req.params.participant_id,
-    current_checkin: latest,
-    recommendation,
-    fallback: recommendation.status === 'available' ? 'past_observation_rate' : 'existing_logic'
-  };
+  const preview=await optimizeIntervention({participant_id:req.params.participant_id,checkin:latest});
   res.json(preview);
  }catch(e){res.status(500).json({error:e.message});}
 });
 
-app.post('/api/supporter-match', async (req, res) => {
-  try {
-    const { participant_id, supporter_id } = req.body;
-
-    if (!participant_id || !supporter_id) {
-      return res.status(400).json({
-        error: 'invalid_params',
-        message: '参加者IDと支援者IDの両方が必要です。'
-      });
-    }
-
-    // 重複チェック：最近のリクエスト・接続状態がないか確認
-    const recentMatches = await select('supporter_matches', { participant_id, supporter_id });
-    const activeMatch = recentMatches?.find(m => m.status === 'requested' || m.status === 'connected');
-
-    if (activeMatch) {
-      return res.status(409).json({
-        error: 'already_requested',
-        message: 'この支援者への相談は既に記録されています。'
-      });
-    }
-
-    // 推薦計算を実行して score と reason を取得
-    const participant = (await select('participants', { id: participant_id }))[0];
-    const checkins = (await select('checkins', { participant_id })).sort((a, b) => new Date(b.checked_in_at) - new Date(a.checked_in_at));
-    const latestCheckin = checkins?.[0];
-
-    if (!latestCheckin) {
-      return res.status(400).json({
-        error: 'no_checkin',
-        message: 'チェックイン記録がありません。'
-      });
-    }
-
-    const [supporters, supporterMatches, supporterOutcomes, interventionAssignments, actionResults] = await Promise.all([
-      select('supporters'),
-      select('supporter_matches', { participant_id }),
-      select('supporter_outcomes', { participant_id }),
-      select('intervention_assignments', { participant_id }),
-      select('action_results', { participant_id })
-    ]);
-
-    const recommendation = await buildSupporterRecommendation({
-      participant_id,
-      checkin: latestCheckin,
-      supporters,
-      supporterMatches,
-      supporterOutcomes,
-      interventionAssignments,
-      actionResults,
-      save_match: false
-    });
-
-    // リクエストされた supporter_id が候補に含まれているか確認
-    const selectedCandidate = recommendation.candidates.find(c => c.supporter_id === supporter_id)
-      || (recommendation.selected_supporter?.id === supporter_id ? {
-        supporter_id: supporter_id,
-        score: recommendation.selected_supporter.match_count ? 60 : 50,
-        reason: recommendation.reason
-      } : null);
-
-    if (!selectedCandidate) {
-      console.warn(`Supporter ${supporter_id} not in current recommendations for participant ${participant_id}`);
-    }
-
-    const score = selectedCandidate?.score || 50;
-    const reason = selectedCandidate?.reason || 'ユーザーが支援者への相談を希望しました。';
-
-    // supporter_matches に INSERT
-    const match = await insert('supporter_matches', {
-      participant_id,
-      supporter_id,
-      score: Number(score),
-      reason,
-      status: 'requested',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    });
-
-    // connection_events にも記録
-    await insert('connection_events', {
-      participant_id,
-      supporter_id,
-      match_id: match?.id || null,
-      event_type: 'user_requested',
-      note: `ユーザーが支援者候補から明示的にリクエスト`,
-      created_at: new Date().toISOString()
-    });
-
-    res.json({
-      success: true,
-      message: '支援者への相談リクエストを記録しました。',
-      match_id: match?.id,
-      supporter_id,
-      status: 'requested',
-      match: match
-    });
-  } catch (error) {
-    console.error('Error saving supporter match:', error);
-    res.status(500).json({
-      error: 'save_failed',
-      message: '支援者への接続記録を保存できませんでした。',
-      details: error?.message || 'Unknown error'
-    });
-  }
-});
-
-app.get('/api/supporter-candidates/:participant_id', async (req, res) => {
-  try {
-    const { participant_id } = req.params;
-
-    if (!participant_id) {
-      return res.status(400).json({
-        error: 'invalid_params',
-        message: 'participant_idが必要です。'
-      });
-    }
-
-    // 最新のチェックイン情報を取得
-    const checkins = (await select('checkins', { participant_id })).sort((a, b) => new Date(b.checked_in_at) - new Date(a.checked_in_at));
-    const latestCheckin = checkins?.[0];
-
-    if (!latestCheckin) {
-      return res.json({
-        status: 'no_checkin',
-        fallback: 'no_checkin_data',
-        reason: 'チェックイン記録がないため、支援候補を提示できません。先にチェックインしてください。',
-        candidates: [],
-        candidate_count: 0,
-        observed_data_count: 0
-      });
-    }
-
-    // サポーター情報と過去データを取得
-    const [supporters, supporterMatches, supporterOutcomes, interventionAssignments, actionResults] = await Promise.all([
-      select('supporters'),
-      select('supporter_matches', { participant_id }),
-      select('supporter_outcomes', { participant_id }),
-      select('intervention_assignments', { participant_id }),
-      select('action_results', { participant_id })
-    ]);
-
-    // 推奨候補を計算
-    const recommendation = await buildSupporterRecommendation({
-      participant_id,
-      checkin: latestCheckin,
-      supporters,
-      supporterMatches,
-      supporterOutcomes,
-      interventionAssignments,
-      actionResults,
-      save_match: false
-    });
-
-    res.json({
-      status: recommendation.status,
-      fallback: recommendation.fallback,
-      reason: recommendation.reason,
-      candidates: recommendation.candidates,
-      candidate_count: recommendation.candidate_count,
-      observed_data_count: recommendation.observed_data_count,
-      selected_supporter: recommendation.selected_supporter,
-      support_signals: recommendation.support_signals
-    });
-  } catch (error) {
-    console.error('Error fetching supporter candidates:', error);
-    res.status(500).json({
-      error: 'fetch_failed',
-      message: '支援者候補の取得に失敗しました。',
-      details: error?.message || 'Unknown error'
-    });
-  }
-});
-
 app.get('/api/dashboard',async(req,res)=>{
  try{
-  const [p,c,i,a,o,m,s,pol,learn,so,ce]=await Promise.all(['participants','checkins','intervention_assignments','action_results','intervention_outcomes','supporter_matches','supporters','intervention_policy_decisions','model_learning_events','supporter_outcomes','connection_events'].map(t=>select(t)));
+  const [p,c,i,a,o,m,s,pol,learn,so]=await Promise.all(['participants','checkins','intervention_assignments','action_results','intervention_outcomes','supporter_matches','supporters','intervention_policy_decisions','model_learning_events','supporter_outcomes'].map(t=>select(t)));
   const variants={A:i.filter(x=>x.variant==='A'),B:i.filter(x=>x.variant==='B')};
   const rate=v=>{const ids=new Set(v.map(x=>x.id)); const rows=a.filter(x=>x.intervention_id&&ids.has(x.intervention_id)); return rows.length?rows.filter(x=>x.completed).length/rows.length:0};
-  const interventionEffectiveness = buildInterventionExecutionMetrics({ interventionAssignments: i, actionResults: a });
-  const interventionTypeEffectiveness = buildInterventionTypeMetrics({ interventionAssignments: i, actionResults: a });
-  const highRiskNextDay = buildHighRiskNextDayMetrics({ interventionAssignments: i, actionResults: a, checkins: c });
-  const interventionOptimization = await buildInterventionOptimizationSummary({ participants: p, interventionAssignments: i, actionResults: a, checkins: c });
-  const supporterMatchingSummary = await buildSupporterSummary({ participants: p, checkins: c, supporters: s, supporterMatches: m, supporterOutcomes: so, actionResults: a, interventionAssignments: i });
-  const supporterConnectionExecution = await buildSupporterConnectionExecutionMetrics({ supporterMatches: m, connectionEvents: ce, actionResults: a, checkins: c });
-  const interventionPathRecommendation = await buildInterventionPathRecommendation({ interventionAssignments: i, actionResults: a, checkins: c, supporterMatches: m });
-  res.json({counts:{participants:p.length,checkins:c.length,restarts:c.filter(x=>x.analysis?.resumed).length,actions:a.length,supporters:s.length,requests:m.filter(x=>x.status==='requested').length,policy_decisions:pol.length,learning_events:learn.length,supporter_outcomes:so.length},ab:{A:{n:variants.A.length,completion_rate:rate(variants.A)},B:{n:variants.B.length,completion_rate:rate(variants.B)}},policy:{version:'unified-contextual-bandit-v2',exploration_rate:pol.length?pol.filter(x=>x.exploration).length/pol.length:0,recent:pol.slice(-10)},outcomes:o,supporter_outcomes:so,intervention_effectiveness: interventionEffectiveness,intervention_type_effectiveness: interventionTypeEffectiveness,high_risk_next_day: highRiskNextDay,intervention_optimization: interventionOptimization,supporter_matching_summary: supporterMatchingSummary,supporter_connection_execution: supporterConnectionExecution,intervention_path_recommendation: interventionPathRecommendation});
+  const connectedMatches=m.filter(match=>effectiveMatchStatus(match)==='connected');
+  const actionsAfterMatch=connectedMatches.flatMap(match=>{
+    const connectedAt=safeDate(match.connected_at||match.updated_at)?.getTime()||0;
+    return a.filter(action=>action.participant_id===match.participant_id && (safeDate(action.created_at||action.completed_at)?.getTime()||0)>=connectedAt);
+  });
+  const executionRate=actionsAfterMatch.length ? actionsAfterMatch.filter(action=>action.completed).length/actionsAfterMatch.length : 0;
+  res.json({counts:{participants:p.length,checkins:c.length,restarts:c.filter(x=>x.analysis?.resumed).length,actions:a.length,supporters:s.length,requests:m.filter(x=>normalizeMatchStatus(x.status)==='pending').length,policy_decisions:pol.length,learning_events:learn.length,supporter_outcomes:so.length},ab:{A:{n:variants.A.length,completion_rate:rate(variants.A)},B:{n:variants.B.length,completion_rate:rate(variants.B)}},policy:{version:'unified-contextual-bandit-v2',exploration_rate:pol.length?pol.filter(x=>x.exploration).length/pol.length:0,recent:pol.slice(-10)},intervention_optimization:{version:'unified-contextual-bandit-v2',assignments:i.length,policy_decisions:pol.length},supporter_connection_execution:{total_connected_matches:connectedMatches.length,actions_after_match_total:actionsAfterMatch.length,actions_after_match_completed:actionsAfterMatch.filter(action=>action.completed).length,execution_rate:Number((executionRate*100).toFixed(1)),note:'connected後のaction_resultsから算出'},outcomes:o,supporter_outcomes:so});
  }catch(e){res.status(500).json({error:e.message});}
 });
 
-app.listen(port,()=>console.log(`FCL connected MVP: http://localhost:${port}`));
+app.post('/api/core/analyze', async (req, res) => {
+  try {
+    const { participant_id, checkin_text, participant_profile, current_goal, answers = {}, recent_context = {} } = req.body || {};
+    if (!participant_id) return res.status(400).json({ error: 'invalid participant_id' });
+    if (!checkin_text || !String(checkin_text).trim()) return res.status(400).json({ error: 'empty input' });
+
+    const response = await runFclAiCore({
+      participant_id,
+      checkin_text,
+      participant_profile,
+      current_goal,
+      answers,
+      recent_context
+    });
+
+    res.json({ ok: true, result: response });
+  } catch (error) {
+    console.error('core analyze error', error);
+    res.status(500).json({ error: error.message || 'analysis failed', fallback: {
+      state: 'unknown',
+      state_change: '観測データが不十分のため、変化を確認できませんでした。',
+      risk: { level: 'unknown', reason: '不足データ' },
+      insight: '観測データが不足しているため、今の状態を整理して再度確認してください。',
+      problem: '次に何をすればよいかがまだ明確でない可能性があります。',
+      solutions: [
+        { id: 'A', title: '今できる作業を1つ進める', description: '最小の一歩から始める' },
+        { id: 'B', title: '問題を整理する', description: '困りごとと次の一歩を短く整理する' },
+        { id: 'C', title: '支援者に相談する', description: '一人で抱え込みすぎない' }
+      ],
+      recommended_option: 'A',
+      next_action: '問題を3つまでに整理する'
+    }});
+  }
+});
+
+app.post('/api/core/decision', async (req, res) => {
+  try {
+    const { participant_id, selected_option, reason, next_action, target_date } = req.body || {};
+    if (!participant_id) return res.status(400).json({ error: 'invalid participant_id' });
+    if (!selected_option) return res.status(400).json({ error: 'empty selection' });
+
+    const row = await saveFclCoreDecision({ participant_id, selected_option, reason, next_action, target_date });
+    res.json({ ok: true, decision: row, selected_option, next_action });
+  } catch (error) {
+    console.error('core decision error', error);
+    res.status(500).json({ error: error.message || 'decision failed' });
+  }
+});
+
+app.post('/api/core/outcome', async (req, res) => {
+  try {
+    const { participant_id, selected_option, next_action, outcome_status, result_note, target_date } = req.body || {};
+    if (!participant_id) return res.status(400).json({ error: 'invalid participant_id' });
+    if (!next_action || !String(next_action).trim()) return res.status(400).json({ error: 'empty next_action' });
+
+    const row = await saveFclCoreOutcome({ participant_id, selected_option, next_action, outcome_status, result_note, target_date });
+    res.json({ ok: true, outcome: row, status: outcome_status || 'not_completed' });
+  } catch (error) {
+    console.error('core outcome error', error);
+    res.status(500).json({ error: error.message || 'outcome failed' });
+  }
+});
+
+export { app };
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  app.listen(port,()=>console.log(`FCL connected MVP: http://localhost:${port}`));
+}

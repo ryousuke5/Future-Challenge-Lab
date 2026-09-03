@@ -67,6 +67,8 @@ create table if not exists supporters (
   timing_tags text[] not null default '{}',
   description text,
   active boolean not null default true,
+  capacity int not null default 5,
+  accepting_new_matches boolean not null default true,
   created_at timestamptz not null default now()
 );
 
@@ -76,7 +78,12 @@ create table if not exists supporter_matches (
   supporter_id uuid not null references supporters(id) on delete cascade,
   score numeric not null,
   reason text,
-  status text not null default 'suggested' check (status in ('suggested','requested','connected','declined')),
+  status text not null default 'pending' check (status in ('pending','challenger_approved','supporter_approved','connected','declined','expired')),
+  challenger_approved_at timestamptz,
+  supporter_approved_at timestamptz,
+  declined_at timestamptz,
+  expired_at timestamptz,
+  meta jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
