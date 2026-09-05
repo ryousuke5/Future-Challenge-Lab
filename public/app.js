@@ -194,6 +194,56 @@ function buildDashboardCards(data){
   `;
 }
 
+function storyMatchId(){ return (document.getElementById('storyMatchId')?.value || '').trim(); }
+
+async function saveStoryConsent(){
+  const matchId=storyMatchId(); if(!matchId)return alert('Match IDを入力してください');
+  try{ await withLoadingUI(document.getElementById('storyConsentBtn'),'同意を保存しています…',async()=>{
+    const consented=document.getElementById('storyConsent').checked;
+    const share_scope=document.getElementById('storyShareScope').value;
+    const response=await fetch(`/api/matches/${encodeURIComponent(matchId)}/story/consent`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({consented,share_scope})});
+    const data=await response.json(); if(!response.ok) throw Error(data.error||'consent failed');
+    document.getElementById('storyResult').textContent=`共有同意: ${data.consent.consented?'有効':'停止'} / 範囲: ${data.consent.share_scope}`;
+  }); }catch(e){showUiError(document.getElementById('storyResult'),'同意の保存に失敗しました。');}
+}
+
+async function generateStory(){
+  const matchId=storyMatchId(); if(!matchId)return alert('Match IDを入力してください');
+  try{ await withLoadingUI(document.getElementById('storyGenerateBtn'),'物語を生成しています…',async()=>{
+    const response=await fetch(`/api/matches/${encodeURIComponent(matchId)}/story/generate`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+    const data=await response.json(); if(!response.ok) throw Error(data.error||'story generation failed');
+    const story=data.story?.story_json || {};
+    document.getElementById('storyResult').innerHTML=`<strong>${story.title||'Challenge Story'}</strong><p><b>挑戦:</b> ${story.challenge||''}</p><p><b>現在:</b> ${story.current_state||''}</p><p><b>壁:</b> ${story.obstacle||''}</p><p><b>希望:</b> ${story.hope||''}</p><p><b>支援してほしいこと:</b> ${story.support_need||''}</p><small>${story.generated_note||''}</small>`;
+  }); }catch(e){showUiError(document.getElementById('storyResult'),'物語の生成に失敗しました。');}
+}
+
+async function approveStory(){
+  const matchId=storyMatchId(); if(!matchId)return alert('Match IDを入力してください');
+  try{ await withLoadingUI(document.getElementById('storyApproveBtn'),'物語を承認しています…',async()=>{
+    const response=await fetch(`/api/matches/${encodeURIComponent(matchId)}/story/approve`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+    const data=await response.json(); if(!response.ok) throw Error(data.error||'story approval failed');
+    document.getElementById('storyResult').textContent='本人承認済み。支援者へ共有できる状態です。';
+  }); }catch(e){showUiError(document.getElementById('storyResult'),'物語の承認に失敗しました。');}
+}
+
+async function sendStoryMail(){
+  const matchId=storyMatchId(); if(!matchId)return alert('Match IDを入力してください');
+  try{ await withLoadingUI(document.getElementById('storyMailBtn'),'メール送信処理中です…',async()=>{
+    const response=await fetch(`/api/matches/${encodeURIComponent(matchId)}/send-email`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email_type:'matching_candidate',recipient_type:'supporter',include_story:true})});
+    const data=await response.json(); if(!response.ok) throw Error(data.error||'send failed');
+    document.getElementById('emailResult').textContent=`支援者メール: ${data.status} / 配送: ${data.delivery}`;
+  }); }catch(e){showUiError(document.getElementById('emailResult'),'物語メールの送信に失敗しました。');}
+}
+
+async function sendConnectionMail(){
+  const matchId=storyMatchId(); if(!matchId)return alert('Match IDを入力してください');
+  try{ await withLoadingUI(document.getElementById('connectionMailBtn'),'接続成立メールを処理中です…',async()=>{
+    const response=await fetch(`/api/matches/${encodeURIComponent(matchId)}/send-email`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email_type:'connection_confirmed',recipient_type:'supporter'})});
+    const data=await response.json(); if(!response.ok) throw Error(data.error||'send failed');
+    document.getElementById('emailResult').textContent=`接続成立メール: ${data.status} / 配送: ${data.delivery}`;
+  }); }catch(e){showUiError(document.getElementById('emailResult'),'接続成立メールに失敗しました。');}
+}
+
 async function dashboard(){
   await withLoadingUI(document.getElementById('dashboardBtn'), 'データ取得中です。しばらくお待ちください…', async () => {
     const x=await fetch('/api/dashboard').then(r=>r.json());
