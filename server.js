@@ -10,9 +10,9 @@ app.use(express.json());
 app.use(express.static('public'));
 
 const port = process.env.PORT || 3000;
-const hasSupabase = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+const hasSupabase = process.env.FCL_STORAGE !== 'memory' && Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 const supabase = hasSupabase ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY) : null;
-const memory = { participants: [], checkins: [], interventions: [], intervention_assignments: [], action_results: [], supporters: [], supporter_matches: [], connection_events: [], intervention_outcomes: [], model_learning_events: [], intervention_policy_decisions: [], supporter_outcomes: [], consent_records: [], challenge_stories: [], email_events: [] };
+const memory = { participants: [], checkins: [], interventions: [], intervention_assignments: [], action_results: [], supporters: [], supporter_matches: [], connection_events: [], intervention_outcomes: [], model_learning_events: [], intervention_policy_decisions: [], supporter_outcomes: [] };
 const supporterApprovalState = new Map();
 
 function readSupporterApprovalState(matchId){
@@ -68,6 +68,11 @@ function evaluateAIIntervention({risk, score, resumed, policySelected}){
 function isSchemaCompatibilityError(error){
   const message = (error && error.message) || '';
   return /column .*checkin_id|checkin_id.*column|unknown column|could not find the '.*' column|does not exist|not found.*column|status.*check|check constraint.*status|violates check constraint/i.test(message);
+}
+
+function isMissingOptionalTableError(error){
+  const message = `${error?.message || ''} ${error?.details || ''}`;
+  return /relation .* does not exist|table .* does not exist|could not find the table|schema cache|PGRST205/i.test(message);
 }
 
 function logSupabaseError({ table, operation, error }){
@@ -136,7 +141,7 @@ function bucketAutonomy(score){ return score<=9?'low':score<=16?'medium':'high';
 function posterior(successes, trials, alpha=1, beta=1){ return (successes+alpha)/(trials+alpha+beta); }
 async function optimizeAction({participant_id, checkin}){
   const [allI, allA, supporters, supportOutcomes, participant] = await Promise.all([
-    select('intervention_assignments'), select('action_results'), select('supporters'), select('supporter_outcomes'), select('participants',{id:participant_id})
+    select('intervention_assignments'), select('action_results'), select('supporters'), selectOptional('supporter_outcomes'), select('participants',{id:participant_id})
   ]);
   const currentParticipant = participant[0] || {};
   const challengeText=`${currentParticipant.challenge||''} ${currentParticipant.goal||''}`.toLowerCase();
@@ -189,18 +194,24 @@ async function optimizeAction({participant_id, checkin}){
   if(exploratory){ selected=ranked[Math.floor(Math.random()*ranked.length)] || {action_type:'intervention',variant:'A',score:0}; }
   else selected=[...ranked].sort((a,b)=>b.score-a.score)[0];
 
-  const decision=await insert('intervention_policy_decisions',{
-    participant_id, checkin_id:checkin.id,
-    context:{...segment,risk_score:checkin.risk_score,autonomy_total:checkin.autonomy_total},
-    candidate_scores:ranked,
-    selected_action_type:selected.action_type,
-    selected_variant:selected.variant||null,
-    selected_supporter_id:selected.supporter_id||null,
-    exploration:exploratory,
-    policy_version:'unified-contextual-bandit-v2',
-    decided_at:new Date().toISOString()
-  });
-  await insert('model_learning_events',{participant_id,features:{action_type:'policy_decision',context:{...segment,risk_score:checkin.risk_score,autonomy_total:checkin.autonomy_total},candidates:ranked},label:{selected_action_type:selected.action_type,selected_variant:selected.variant||null,selected_supporter_id:selected.supporter_id||null,exploration:exploratory}});
+  let decision = null;
+  try {
+    decision = await insert('intervention_policy_decisions',{
+      participant_id, checkin_id:checkin.id,
+      context:{...segment,risk_score:checkin.risk_score,autonomy_total:checkin.autonomy_total},
+      candidate_scores:ranked,
+      selected_action_type:selected.action_type,
+      selected_variant:selected.variant||null,
+      selected_supporter_id:selected.supporter_id||null,
+      exploration:exploratory,
+      policy_version:'unified-contextual-bandit-v2',
+      decided_at:new Date().toISOString()
+    });
+  } catch (error) {
+    if (!isMissingOptionalTableError(error)) throw error;
+    console.warn(`[optional-table-unavailable] intervention_policy_decisions: ${error.message}`);
+  }
+  await saveOptionalLearningEvent({participant_id,features:{action_type:'policy_decision',context:{...segment,risk_score:checkin.risk_score,autonomy_total:checkin.autonomy_total},candidates:ranked},label:{selected_action_type:selected.action_type,selected_variant:selected.variant||null,selected_supporter_id:selected.supporter_id||null,exploration:exploratory}});
   return {selected,decision,candidates:ranked,segment};
 }
 
@@ -249,6 +260,28 @@ async function insert(table, row){
 async function select(table, filters={}){
   const q=db(table); if(q){ let query=q.select('*'); for(const [k,v] of Object.entries(filters)) query=query.eq(k,v); const {data,error}=await query; if(error) throw error; return (data||[]).map(row => table === 'supporter_matches' ? hydrateMatchApprovalState(row) : row); }
   return memory[table].filter(x=>Object.entries(filters).every(([k,v])=>x[k]===v)).map(row => table === 'supporter_matches' ? hydrateMatchApprovalState(row) : row);
+}
+
+// Newer, non-essential learning tables must not prevent a participant from
+// receiving an analysis when an older Supabase schema is still deployed.
+async function selectOptional(table, filters={}){
+  try {
+    return await select(table, filters);
+  } catch (error) {
+    if (!isMissingOptionalTableError(error)) throw error;
+    console.warn(`[optional-table-unavailable] ${table}: ${error.message}`);
+    return [];
+  }
+}
+
+async function saveOptionalLearningEvent(row){
+  try {
+    return { saved: true, row: await insert('model_learning_events', row) };
+  } catch (error) {
+    if (!isMissingOptionalTableError(error)) throw error;
+    console.warn(`[optional-table-unavailable] model_learning_events: ${error.message}`);
+    return { saved: false, error: error.message };
+  }
 }
 async function update(table,id,patch){
   const q=db(table); if(q){
@@ -527,7 +560,7 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
   const latestCheckin = checkins[0] || null;
   const recentActions = (await select('action_results',{participant_id})).sort((a,b) => new Date(b.created_at || b.completed_at || 0) - new Date(a.created_at || a.completed_at || 0)).slice(0, 5);
   const recentAssignments = (await select('intervention_assignments',{participant_id})).sort((a,b) => new Date(b.assigned_at) - new Date(a.assigned_at)).slice(0, 5);
-  const supportHistory = (await select('supporter_outcomes',{participant_id})).sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
+  const supportHistory = (await selectOptional('supporter_outcomes',{participant_id})).sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
 
   const coreContext = buildCoreSummary(participant, latestCheckin, checkins, recentActions, recentAssignments);
   coreContext.goal = current_goal || participant.goal || coreContext.goal;
@@ -589,11 +622,13 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
       recommended_option: llmResult.recommended_option || baseResult.recommended_option,
       next_action: llmResult.next_action || baseResult.next_action
     };
-    await insert('model_learning_events',{participant_id,features:{action_type:'core_analysis',result,state:result.state,state_change:result.state_change,insight:result.insight,problem:result.problem,hypothesis:result.hypothesis,adaptive_questions:result.adaptive_questions,personal_support_pattern:result.personal_support_pattern},label:{recommended_option:result.recommended_option,next_action:result.next_action}});
+    const learningEvent = await saveOptionalLearningEvent({participant_id,features:{action_type:'core_analysis',result,state:result.state,state_change:result.state_change,insight:result.insight,problem:result.problem,hypothesis:result.hypothesis,adaptive_questions:result.adaptive_questions,personal_support_pattern:result.personal_support_pattern},label:{recommended_option:result.recommended_option,next_action:result.next_action}});
+    result.learning_event_saved = learningEvent.saved;
     return result;
   }
 
-  await insert('model_learning_events',{participant_id,features:{action_type:'core_analysis',result:baseResult,state:baseResult.state,state_change:baseResult.state_change,insight:baseResult.insight,problem:baseResult.problem,hypothesis:baseResult.hypothesis,adaptive_questions:baseResult.adaptive_questions,personal_support_pattern:baseResult.personal_support_pattern},label:{recommended_option:baseResult.recommended_option,next_action:baseResult.next_action}});
+  const learningEvent = await saveOptionalLearningEvent({participant_id,features:{action_type:'core_analysis',result:baseResult,state:baseResult.state,state_change:baseResult.state_change,insight:baseResult.insight,problem:baseResult.problem,hypothesis:baseResult.hypothesis,adaptive_questions:baseResult.adaptive_questions,personal_support_pattern:baseResult.personal_support_pattern},label:{recommended_option:baseResult.recommended_option,next_action:baseResult.next_action}});
+  baseResult.learning_event_saved = learningEvent.saved;
   return baseResult;
 }
 
@@ -666,9 +701,37 @@ async function saveFclCoreOutcome({ participant_id, selected_option, next_action
 
 app.get('/api/health',(req,res)=>res.json({ok:true,supabase:hasSupabase,mode:hasSupabase?'supabase':'memory'}));
 
-app.post('/api/participants',async(req,res)=>{
-  try{ const row=await insert('participants',{external_user_id:req.body.external_user_id||`web-${Date.now()}`,name:req.body.name||'',email:req.body.email||'',challenge:req.body.challenge||'',goal:req.body.goal||''}); res.json(row); }
-  catch(e){res.status(500).json({error:e.message});}
+app.post('/api/participants', async (req, res) => {
+  try {
+    const external_user_id =
+      req.body.external_user_id || `web-${Date.now()}`;
+
+    const existing = (await select('participants', {
+      external_user_id
+    }))[0];
+
+    if (existing) {
+      return res.json({
+        ...existing,
+        existing: true
+      });
+    }
+
+    const row = await insert('participants', {
+      external_user_id,
+      name: req.body.name || '',
+      email: req.body.email || '',
+      challenge: req.body.challenge || '',
+      goal: req.body.goal || ''
+    });
+
+    res.json({
+      ...row,
+      existing: false
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get('/api/participants/:id',async(req,res)=>{
@@ -699,7 +762,11 @@ app.post('/api/checkins',async(req,res)=>{
     const duplicateCheckin=recentCheckins.find(row => sameValue(row.autonomy_answers || {}, answers) && safeDate(row.checked_in_at) && Date.now()-safeDate(row.checked_in_at).getTime() < 24*3600*1000);
     if(duplicateCheckin){
       const assignment=(await select('intervention_assignments',{participant_id,checkin_id:duplicateCheckin.id}))[0] || null;
-      return res.json({duplicate:true,checkin:duplicateCheckin,intervention:assignment,resumed:Boolean(duplicateCheckin.analysis?.resumed),intervention_record_status:'duplicate'});
+      const suggestedSupporterMatch=(await select('supporter_matches',{participant_id})).find(match=>match.meta?.checkin_id===duplicateCheckin.id) || null;
+      const suggestedSupporter=suggestedSupporterMatch
+        ? (await select('supporters',{id:suggestedSupporterMatch.supporter_id}))[0] || null
+        : null;
+      return res.json({duplicate:true,checkin:duplicateCheckin,intervention:assignment,suggestedSupporterMatch:suggestedSupporterMatch ? {...suggestedSupporterMatch,supporter:suggestedSupporter} : null,resumed:Boolean(duplicateCheckin.analysis?.resumed),intervention_record_status:'duplicate'});
     }
     const score=scoreAnswers(answers), risk=riskFromScore(score), level=riskLevel(risk);
     const previous=recentCheckins[0];
@@ -714,7 +781,7 @@ app.post('/api/checkins',async(req,res)=>{
     }
     let suggestedSupporterMatch=null;
     if((policy.selected.action_type==='supporter'||policy.selected.action_type==='both') && policy.selected.supporter_id){
-      suggestedSupporterMatch=await insert('supporter_matches',{participant_id,supporter_id:policy.selected.supporter_id,score:Number((policy.selected.score*100).toFixed(2)),reason:'介入最適化AIが、現在地・再開状態・支援成果データを統合して選択',status:'pending',created_at:new Date().toISOString(),updated_at:new Date().toISOString()});
+      suggestedSupporterMatch=await insert('supporter_matches',{participant_id,supporter_id:policy.selected.supporter_id,score:Number((policy.selected.score*100).toFixed(2)),reason:'介入最適化AIが、現在地・再開状態・支援成果データを統合して選択',status:'pending',meta:{checkin_id:checkin.id,source:'checkin_optimization'},created_at:new Date().toISOString(),updated_at:new Date().toISOString()});
     }
 
     const aiInterventionRecord = await saveAIInterventionRecord({
@@ -729,7 +796,7 @@ app.post('/api/checkins',async(req,res)=>{
     res.json({
       checkin,
       intervention:assigned,
-      suggestedSupporterMatch,
+      suggestedSupporterMatch: suggestedSupporterMatch ? {...suggestedSupporterMatch,supporter:{id:policy.selected.supporter_id,organization_name:policy.selected.organization_name||'',supporter_name:policy.selected.supporter_name||''}} : null,
       resumed,
       optimization:policy,
       ai_intervention: aiInterventionRecord.decision || null,
@@ -1036,205 +1103,38 @@ app.get('/api/matches/:id/detail', async (req, res) => {
   }
 });
 
-function buildChallengeStory({participant, match, latestCheckin, recentActions}){
-  const challenge=safeText(participant?.challenge) || '現在の挑戦';
-  const goal=safeText(participant?.goal) || '今の挑戦を続ける';
-  const barrier=safeText(latestCheckin?.analysis?.barrier) || safeText(recentActions?.find(x=>safeText(x.barrier))?.barrier);
-  const currentState=latestCheckin
-    ? (latestCheckin.analysis?.summary || `現在の自己決定度 ${latestCheckin.autonomy_total ?? '不明'}、離脱リスク ${latestCheckin.risk_level || '不明'}`)
-    : '現在の状態を確認中';
-  const progress=(recentActions||[]).slice(0,3).filter(x=>safeText(x.action_text)).map(x=>`${x.completed?'実行できた':'未実行'}：${safeText(x.action_text)}`);
-  const supportNeed = latestCheckin?.risk_level==='high'
-    ? '継続・再開に向けて、無理のない小さな一歩を一緒に整理してほしい。'
-    : barrier
-      ? `「${barrier}」を整理しながら、本人が選べる次の一歩を一緒に考えてほしい。`
-      : '本人が自分で選んだ次の一歩を続けられるよう伴走してほしい。';
-  return {
-    title:'Challenge Story',
-    challenge,
-    goal,
-    past: progress.length ? progress.join(' / ') : 'これまでの行動データはまだ少ない状態です。',
-    current_state: currentState,
-    obstacle: barrier || '現在の主要な障壁はまだ十分に観測されていません。',
-    hope: `「${goal}」を、本人のペースで続けられる状態を目指しています。`,
-    support_need:supportNeed,
-    generated_note:'FCLの観測データから自動生成。診断・因果効果を断定するものではありません。'
-  };
-}
-
-async function getMatchContext(matchId){
-  const match=(await select('supporter_matches',{id:matchId}))[0];
-  if(!match) return null;
-  const participant=(await select('participants',{id:match.participant_id}))[0] || null;
-  const supporter=(await select('supporters',{id:match.supporter_id}))[0] || null;
-  const checkins=(await select('checkins',{participant_id:match.participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
-  const actions=(await select('action_results',{participant_id:match.participant_id})).sort((a,b)=>new Date(b.created_at||b.completed_at||0)-new Date(a.created_at||a.completed_at||0));
-  return {match, participant, supporter, latestCheckin:checkins[0]||null, recentActions:actions.slice(0,5)};
-}
-
-async function getConsent(matchId, participantId, consentType='story_share'){
-  return (await select('consent_records',{match_id:matchId,participant_id:participantId,consent_type:consentType})).sort((a,b)=>new Date(b.consented_at||0)-new Date(a.consented_at||0))[0] || null;
-}
-
-function isStoryShareApproved(consent){
-  return Boolean(consent?.consented) && !consent?.revoked_at;
-}
-
-async function saveConsent({match_id,participant_id,consent_type,share_scope,consented}){
-  const now=new Date().toISOString();
-  const existing=await getConsent(match_id,participant_id,consent_type);
-  const row={
-    match_id, participant_id, consent_type,
-    share_scope:share_scope||'minimal',
-    consented:Boolean(consented),
-    consented_at:Boolean(consented)?now:(existing?.consented_at||null),
-    revoked_at:Boolean(consented)?null:now,
-    version:'v0.3'
-  };
-  if(existing?.id){
-    return await update('consent_records',existing.id,row);
-  }
-  return await insert('consent_records',row);
-}
-
-async function saveChallengeStory({match_id, participant_id, share_scope, story, approved_by_participant=false}){
-  const now=new Date().toISOString();
-  const rows=await select('challenge_stories',{match_id,participant_id});
-  const existing=rows.sort((a,b)=>new Date(b.generated_at||0)-new Date(a.generated_at||0))[0];
-  const row={match_id,participant_id,share_scope:share_scope||'story',story_json:story,story_text:JSON.stringify(story,null,2),approved_by_participant:Boolean(approved_by_participant),approved_at:approved_by_participant?now:null,generated_at:now,version:'v0.3'};
-  return existing?.id ? await update('challenge_stories',existing.id,row) : await insert('challenge_stories',row);
-}
-
-async function latestChallengeStory(matchId){
-  const rows=await select('challenge_stories',{match_id:matchId});
-  return rows.sort((a,b)=>new Date(b.generated_at||0)-new Date(a.generated_at||0))[0] || null;
-}
-
-async function sendEmailViaProvider({to,subject,text,matchId,emailType,recipientType,emailEventId}){
-  const baseUrl=process.env.FCL_BASE_URL || `http://localhost:${port}`;
-  const link=`${baseUrl}/match-detail.html?match_id=${encodeURIComponent(matchId)}${emailEventId?`&email_event_id=${encodeURIComponent(emailEventId)}`:''}`;
-  const body=`${text}\n\nFCLで確認する：${link}`;
-  if(!process.env.RESEND_API_KEY || !process.env.FCL_FROM_EMAIL){
-    return {status:'queued',provider:'outbox',body,redirect_url:link};
-  }
-  const response=await fetch('https://api.resend.com/emails',{
-    method:'POST',
-    headers:{'content-type':'application/json','authorization':`Bearer ${process.env.RESEND_API_KEY}`},
-    body:JSON.stringify({from:process.env.FCL_FROM_EMAIL,to:[to],subject,text:body})
-  });
-  const data=await response.json().catch(()=>({}));
-  if(!response.ok) throw new Error(data?.message || `email provider error ${response.status}`);
-  return {status:'sent',provider:'resend',provider_id:data?.id||null,body,redirect_url:link,email_type:emailType,recipient_type:recipientType};
-}
-
-app.get('/api/matches/:id/story', async (req,res)=>{
-  try{
-    const ctx=await getMatchContext(req.params.id);
-    if(!ctx) return res.status(404).json({error:'match not found'});
-    const consent=await getConsent(req.params.id,ctx.match.participant_id,'story_share');
-    const story=await latestChallengeStory(req.params.id);
-    res.json({ok:true,match_id:req.params.id,consent:consent||{consented:false,share_scope:'minimal'},story:story||null});
-  }catch(error){res.status(500).json({error:error.message||'story read failed'});}
-});
-
-app.post('/api/matches/:id/story/consent', async (req,res)=>{
-  try{
-    const ctx=await getMatchContext(req.params.id);
-    if(!ctx) return res.status(404).json({error:'match not found'});
-    if(effectiveMatchStatus(ctx.match)==='declined') return res.status(409).json({error:'match is declined'});
-    const share_scope=['minimal','story','progress'].includes(req.body?.share_scope)?req.body.share_scope:'story';
-    const consent=await saveConsent({match_id:req.params.id,participant_id:ctx.match.participant_id,consent_type:'story_share',share_scope,consented:req.body?.consented!==false});
-    await insert('connection_events',{participant_id:ctx.match.participant_id,supporter_id:ctx.match.supporter_id,match_id:req.params.id,event_type:'consent_updated',note:JSON.stringify({consent_type:'story_share',share_scope,consented:consent.consented}),created_at:new Date().toISOString()});
-    res.json({ok:true,consent});
-  }catch(error){res.status(500).json({error:error.message||'consent failed'});}
-});
-
-app.post('/api/matches/:id/story/generate', async (req,res)=>{
-  try{
-    const ctx=await getMatchContext(req.params.id);
-    if(!ctx) return res.status(404).json({error:'match not found'});
-    const consent=await getConsent(req.params.id,ctx.match.participant_id,'story_share');
-    if(!isStoryShareApproved(consent)) return res.status(409).json({error:'本人同意が必要です'});
-    const story=buildChallengeStory(ctx);
-    const row=await saveChallengeStory({match_id:req.params.id,participant_id:ctx.match.participant_id,share_scope:consent.share_scope,story});
-    res.json({ok:true,story:row});
-  }catch(error){res.status(500).json({error:error.message||'story generation failed'});}
-});
-
-app.post('/api/matches/:id/story/approve', async (req,res)=>{
-  try{
-    const ctx=await getMatchContext(req.params.id);
-    if(!ctx) return res.status(404).json({error:'match not found'});
-    const consent=await getConsent(req.params.id,ctx.match.participant_id,'story_share');
-    if(!isStoryShareApproved(consent)) return res.status(409).json({error:'本人同意が必要です'});
-    let story=await latestChallengeStory(req.params.id);
-    if(!story) story=await saveChallengeStory({match_id:req.params.id,participant_id:ctx.match.participant_id,share_scope:consent.share_scope,story:buildChallengeStory(ctx)});
-    const approved=await update('challenge_stories',story.id,{approved_by_participant:true,approved_at:new Date().toISOString()});
-    let email=null;
-    try { email=await dispatchMatchEmail({matchId:req.params.id,emailType:'matching_candidate',recipientType:'supporter',includeStory:true,auto:true}); }
-    catch(emailError){ console.error('[supporter-story-email] failed',emailError?.message||emailError); }
-    res.json({ok:true,story:approved,ready_to_send:true,email});
-  }catch(error){res.status(500).json({error:error.message||'story approval failed'});}
-});
-
-app.post('/api/matches/:id/greeting/approve', async (req,res)=>{
-  try{
-    const ctx=await getMatchContext(req.params.id);
-    if(!ctx) return res.status(404).json({error:'match not found'});
-    if(effectiveMatchStatus(ctx.match)!=='connected') return res.status(409).json({error:'connection is not established'});
-    const greeting=safeText(req.body?.greeting) || `はじめまして。FCLの${ctx.participant?.name||'挑戦者'}さんと支援者としてつながることになりました。無理のないペースで、一緒に次の一歩を考えていければと思います。`;
-    const row=await insert('challenge_stories',{match_id:req.params.id,participant_id:ctx.match.participant_id,share_scope:'greeting',story_json:{type:'greeting',text:greeting},story_text:greeting,approved_by_participant:true,approved_by_supporter:true,approved_at:new Date().toISOString(),generated_at:new Date().toISOString(),version:'v0.3-greeting'});
-    res.json({ok:true,greeting:row,ready_to_send:true});
-  }catch(error){res.status(500).json({error:error.message||'greeting approval failed'});}
-});
-
-async function dispatchMatchEmail({matchId,emailType,recipientType='supporter',includeStory=false,auto=false}){
-  const ctx=await getMatchContext(matchId);
-  if(!ctx) throw new Error('match not found');
-  const status=effectiveMatchStatus(ctx.match);
-  const consent=await getConsent(matchId,ctx.match.participant_id,'story_share');
-  const story=await latestChallengeStory(matchId);
-  if(emailType==='greeting' && status!=='connected') throw new Error('greeting requires connected status');
-  if(emailType==='matching_candidate' && includeStory && !(isStoryShareApproved(consent)&&story?.approved_by_participant)) throw new Error('story sharing requires consent and story approval');
-  if(emailType==='connection_confirmed' && status!=='connected') throw new Error('connection not established');
-  const recipient=recipientType==='supporter' ? ctx.supporter?.email : ctx.participant?.email;
-  if(!recipient) throw new Error(`${recipientType} email not registered`);
-
-  let text='';
-  if(emailType==='matching_candidate'){
-    text=`FCLから支援候補のご案内です。\n\n挑戦テーマ：${ctx.participant?.challenge||'未登録'}\n支援理由：${ctx.match.reason||'FCLの推薦による候補です。'}\n\n${includeStory&&story?.approved_by_participant?`Challenge Story:\n${story.story_text}\n\n`:''}FCLサイトで詳細を確認し、承認・辞退を選択してください。`;
-  }else if(emailType==='approval_received'){
-    text='FCLでマッチング候補の片側承認を受け付けました。もう一方の承認後に接続が成立します。';
-  }else if(emailType==='connection_confirmed'){
-    text='FCLで双方の承認が完了し、支援者との接続が成立しました。FCLサイトで次の一歩を確認してください。';
-  }else{
-    text=story?.story_json?.text || `はじめまして。FCLを通じてつながることになりました。まずは無理のない一歩から一緒に考えていければと思います。`;
-  }
-
-  // Idempotency: the same automatic notice is not resent repeatedly within 24h.
-  const recent=await select('email_events',{match_id:matchId,email_type:emailType,recipient_type:recipientType});
-  if(auto){
-    const dupe=recent.find(e=>e.metadata?.auto===true && e.recipient===recipient && Date.now()-new Date(e.created_at||0).getTime()<24*3600*1000);
-    if(dupe) return {status:'duplicate',email_event:dupe,delivery:dupe.metadata?.provider||'outbox'};
-  }
-
-  const now=new Date().toISOString();
-  const event=await insert('email_events',{match_id:matchId,participant_id:ctx.match.participant_id,supporter_id:ctx.match.supporter_id,recipient_type:recipientType,email_type:emailType,recipient,status:'sending',subject:`FCL: ${emailType}`,metadata:{include_story:Boolean(includeStory),consent_id:consent?.id||null,story_id:story?.id||null,auto:Boolean(auto)},created_at:now,sent_at:null,clicked_at:null});
-  try{
-    const providerResult=await sendEmailViaProvider({to:recipient,subject:`FCL: ${emailType}`,text,matchId,emailType,recipientType,emailEventId:event.id});
-    const final=await update('email_events',event.id,{status:providerResult.status,sent_at:providerResult.status==='sent'?new Date().toISOString():null,metadata:{...(event.metadata||{}),provider:providerResult.provider,provider_id:providerResult.provider_id||null}});
-    await insert('connection_events',{participant_id:ctx.match.participant_id,supporter_id:ctx.match.supporter_id,match_id:matchId,event_type:'email_sent',note:JSON.stringify({email_type:emailType,recipient_type:recipientType,email_event_id:event.id,status:providerResult.status,auto:Boolean(auto)}),created_at:new Date().toISOString()});
-    return {status:providerResult.status,email_event:final,redirect_url:providerResult.redirect_url,delivery:providerResult.provider};
-  }catch(error){
-    await update('email_events',event.id,{status:'failed',metadata:{...(event.metadata||{}),error:error.message}}).catch(()=>{});
-    throw error;
-  }
-}
-
 app.post('/api/matches/:id/send-email', async (req, res) => {
   try {
-    const result=await dispatchMatchEmail({matchId:req.params.id,emailType:req.body?.email_type||'matching_candidate',recipientType:req.body?.recipient_type||'supporter',includeStory:Boolean(req.body?.include_story),auto:false});
-    res.json({ok:true,...result});
+    const emailType = req.body?.email_type || 'matching_candidate';
+    const match = (await select('supporter_matches',{id:req.params.id}))[0];
+    if (!match) return res.status(404).json({ error: 'match not found' });
+    const participant = (await select('participants',{id:match.participant_id}))[0];
+    const supporter = (await select('supporters',{id:match.supporter_id}))[0];
+    const allowedTypes = new Set(['matching_candidate','approval_received','connection_confirmed']);
+    const finalType = allowedTypes.has(emailType) ? emailType : 'matching_candidate';
+    const email = {
+      type: finalType,
+      subject: {
+        matching_candidate: 'FCL: 支援候補のご案内',
+        approval_received: 'FCL: 承認の受領をお知らせ',
+        connection_confirmed: 'FCL: 接続成立のお知らせ'
+      }[finalType],
+      body: {
+        matching_candidate: `支援候補のご案内です。FCLサイトで詳細を確認し、承認の可否を選んでください。\n\n挑戦者: ${participant?.name || '未登録'}\n支援者: ${supporter?.supporter_name || '支援者'}\n詳細: /match-detail.html?match_id=${match.id}`,
+        approval_received: `承認を受け取りました。双方の承認後に接続が成立します。\n\nFCLサイトで状況を確認してください。\n詳細: /match-detail.html?match_id=${match.id}`,
+        connection_confirmed: `支援の接続が成立しました。支援実施と観測をFCLサイトで続けてください。\n\n詳細: /match-detail.html?match_id=${match.id}`
+      }[finalType],
+      redirect_url: `/match-detail.html?match_id=${match.id}`
+    };
+    await insert('connection_events', {
+      participant_id: match.participant_id,
+      supporter_id: match.supporter_id,
+      match_id: match.id,
+      event_type: 'email_sent',
+      note: JSON.stringify({ email_type: finalType, redirect_url: email.redirect_url }),
+      created_at: new Date().toISOString()
+    });
+    res.json({ ok: true, email, match_id: match.id, status: 'sent' });
   } catch (error) {
     res.status(500).json({ error: error.message || 'send email failed' });
   }
@@ -1317,18 +1217,6 @@ async function updateMatchApprovalStatus(matchId, actor, action){
 
   const updated = await update('supporter_matches', match.id, patches);
   const finalMeta = { ...(updated?.meta || {}), ...(patches.meta || {}) };
-  try {
-    if (transitionedToConnected) {
-      await dispatchMatchEmail({matchId:match.id,emailType:'connection_confirmed',recipientType:'supporter',auto:true});
-      await dispatchMatchEmail({matchId:match.id,emailType:'connection_confirmed',recipientType:'challenger',auto:true});
-    } else if (finalStatus === 'challenger_approved') {
-      await dispatchMatchEmail({matchId:match.id,emailType:'approval_received',recipientType:'supporter',auto:true});
-    } else if (finalStatus === 'supporter_approved') {
-      await dispatchMatchEmail({matchId:match.id,emailType:'approval_received',recipientType:'challenger',auto:true});
-    }
-  } catch (emailError) {
-    console.error('[supporter-email-auto] failed', emailError?.message || emailError);
-  }
   return { ...updated, meta: finalMeta, status: finalStatus };
 }
 
@@ -1672,6 +1560,72 @@ app.post('/api/core/outcome', async (req, res) => {
     console.error('core outcome error', error);
     res.status(500).json({ error: error.message || 'outcome failed' });
   }
+});
+
+
+
+// ===== FCL Supporter v0.3: Challenger Story / Consent =====
+function buildChallengeStory({participant, match, latestCheckin, recentActions}){
+  const safe = (v, fallback='') => sanitizeText(v, fallback);
+  const challenge=safe(participant?.challenge,'現在の挑戦');
+  const goal=safe(participant?.goal,'今の挑戦を続ける');
+  const barrier=safe(latestCheckin?.analysis?.barrier,'') || safe(recentActions?.find(x=>safe(x.barrier))?.barrier,'');
+  const currentState=latestCheckin
+    ? (latestCheckin.analysis?.summary || `現在の自己決定度 ${latestCheckin.autonomy_total ?? '不明'}、離脱リスク ${latestCheckin.risk_level || '不明'}`)
+    : '現在の状態を確認中';
+  const progress=(recentActions||[]).slice(0,3).filter(x=>safe(x.action_text,'')).map(x=>`${x.completed?'実行できた':'未実行'}：${safe(x.action_text)}`);
+  const supportNeed = latestCheckin?.risk_level==='high'
+    ? '継続・再開に向けて、無理のない小さな一歩を一緒に整理してほしい。'
+    : barrier
+      ? `「${barrier}」を整理しながら、本人が選べる次の一歩を一緒に考えてほしい。`
+      : '本人が自分で選んだ次の一歩を続けられるよう伴走してほしい。';
+  return {title:'Challenge Story',challenge,goal,past:progress.length?progress.join(' / '):'これまでの行動データはまだ少ない状態です。',current_state:currentState,obstacle:barrier||'現在の主要な障壁はまだ十分に観測されていません。',hope:`「${goal}」を、本人のペースで続けられる状態を目指しています。`,support_need:supportNeed,generated_note:'FCLの観測データから自動生成。診断・因果効果を断定するものではありません。'};
+}
+async function getMatchContext(matchId){
+  const match=(await select('supporter_matches',{id:matchId}))[0];
+  if(!match) return null;
+  const participant=(await select('participants',{id:match.participant_id}))[0]||null;
+  const supporter=(await select('supporters',{id:match.supporter_id}))[0]||null;
+  const checkins=(await select('checkins',{participant_id:match.participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
+  const actions=(await select('action_results',{participant_id:match.participant_id})).sort((a,b)=>new Date(b.created_at||b.completed_at||0)-new Date(a.created_at||a.completed_at||0));
+  return {match,participant,supporter,latestCheckin:checkins[0]||null,recentActions:actions.slice(0,5)};
+}
+async function getConsent(matchId,participantId,consentType='story_share'){
+  return (await select('consent_records',{match_id:matchId,participant_id:participantId,consent_type:consentType})).sort((a,b)=>new Date(b.consented_at||0)-new Date(a.consented_at||0))[0]||null;
+}
+function isStoryShareApproved(consent){ return Boolean(consent?.consented) && !consent?.revoked_at; }
+async function saveConsent({match_id,participant_id,consent_type,share_scope,consented}){
+  const now=new Date().toISOString();
+  const existing=await getConsent(match_id,participant_id,consent_type);
+  const row={match_id,participant_id,consent_type,share_scope:share_scope||'minimal',consented:Boolean(consented),consented_at:Boolean(consented)?now:(existing?.consented_at||null),revoked_at:Boolean(consented)?null:now,version:'v0.3'};
+  return existing?.id ? update('consent_records',existing.id,row) : insert('consent_records',row);
+}
+async function saveChallengeStory({match_id,participant_id,share_scope,story,approved_by_participant=false}){
+  const now=new Date().toISOString();
+  const rows=await select('challenge_stories',{match_id,participant_id});
+  const existing=rows.sort((a,b)=>new Date(b.generated_at||0)-new Date(a.generated_at||0))[0];
+  const row={match_id,participant_id,share_scope:share_scope||'story',story_json:story,story_text:JSON.stringify(story,null,2),approved_by_participant:Boolean(approved_by_participant),approved_at:approved_by_participant?now:null,generated_at:now,version:'v0.3'};
+  return existing?.id ? update('challenge_stories',existing.id,row) : insert('challenge_stories',row);
+}
+async function latestChallengeStory(matchId){
+  const rows=await select('challenge_stories',{match_id:matchId});
+  return rows.sort((a,b)=>new Date(b.generated_at||0)-new Date(a.generated_at||0))[0]||null;
+}
+app.get('/api/matches/:id/story', async (req,res)=>{
+  try{ const ctx=await getMatchContext(req.params.id); if(!ctx) return res.status(404).json({error:'match not found'}); const consent=await getConsent(req.params.id,ctx.match.participant_id,'story_share'); const story=await latestChallengeStory(req.params.id); res.json({ok:true,match_id:req.params.id,consent:consent||{consented:false,share_scope:'minimal'},story:story||null}); }
+  catch(error){res.status(500).json({error:error.message||'story read failed'});}
+});
+app.post('/api/matches/:id/story/consent', async (req,res)=>{
+  try{ const ctx=await getMatchContext(req.params.id); if(!ctx) return res.status(404).json({error:'match not found'}); if(effectiveMatchStatus(ctx.match)==='declined') return res.status(409).json({error:'match is declined'}); const share_scope=['minimal','story','progress'].includes(req.body?.share_scope)?req.body.share_scope:'story'; const consent=await saveConsent({match_id:req.params.id,participant_id:ctx.match.participant_id,consent_type:'story_share',share_scope,consented:req.body?.consented!==false}); await insert('connection_events',{participant_id:ctx.match.participant_id,supporter_id:ctx.match.supporter_id,match_id:req.params.id,event_type:'consent_updated',note:JSON.stringify({consent_type:'story_share',share_scope,consented:consent.consented}),created_at:new Date().toISOString()}); res.json({ok:true,consent}); }
+  catch(error){res.status(500).json({error:error.message||'consent failed'});}
+});
+app.post('/api/matches/:id/story/generate', async (req,res)=>{
+  try{ const ctx=await getMatchContext(req.params.id); if(!ctx) return res.status(404).json({error:'match not found'}); const consent=await getConsent(req.params.id,ctx.match.participant_id,'story_share'); if(!isStoryShareApproved(consent)) return res.status(409).json({error:'本人同意が必要です'}); const story=buildChallengeStory(ctx); const row=await saveChallengeStory({match_id:req.params.id,participant_id:ctx.match.participant_id,share_scope:consent.share_scope,story}); res.json({ok:true,story:row}); }
+  catch(error){res.status(500).json({error:error.message||'story generation failed'});}
+});
+app.post('/api/matches/:id/story/approve', async (req,res)=>{
+  try{ const ctx=await getMatchContext(req.params.id); if(!ctx) return res.status(404).json({error:'match not found'}); const consent=await getConsent(req.params.id,ctx.match.participant_id,'story_share'); if(!isStoryShareApproved(consent)) return res.status(409).json({error:'本人同意が必要です'}); let story=await latestChallengeStory(req.params.id); if(!story) story=await saveChallengeStory({match_id:req.params.id,participant_id:ctx.match.participant_id,share_scope:consent.share_scope,story:buildChallengeStory(ctx)}); const approved=await update('challenge_stories',story.id,{approved_by_participant:true,approved_at:new Date().toISOString()}); await insert('connection_events',{participant_id:ctx.match.participant_id,supporter_id:ctx.match.supporter_id,match_id:req.params.id,event_type:'story_approved',note:'challenger approved the Challenge Story for supporter sharing',created_at:new Date().toISOString()}); res.json({ok:true,story:approved,ready_to_send:true}); }
+  catch(error){res.status(500).json({error:error.message||'story approval failed'});}
 });
 
 export { app };

@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FCL 支援者ダッシュボード</title><link rel="stylesheet" href="style.css"></head><body><main>
+<header><div><span class="eyebrow">FUTURE CHALLENGE LAB</span><h1>支援者ダッシュボード</h1><p>今日、誰を・なぜ支援するかを確認する支援者側の画面です。</p></div><a href="/" style="text-decoration:none">← 挑戦者ページへ</a></header>
+<section class="card"><h2>この画面について</h2><p>支援者候補の承認後、ここで「今日の支援対象」「優先度」「FCLの支援提案」を確認します。支援実行後は、その後の行動やチェックインを観測します。</p><p><strong>Supporter IDについて</strong><br>現在のMVPでは、Supporter IDは<strong>ログインIDではありません</strong>。データベース上の支援者レコードを識別するための<strong>内部管理ID</strong>です。</p><p class="muted">正式なメール・パスワード等による支援者ログイン認証は、次の段階で実装します。</p></section>
+<section class="card"><h2>支援者を確認する（MVP・開発用）</h2><label for="supporterIdInput">支援者の内部ID</label><input id="supporterIdInput" placeholder="開発用のSupporter ID"><button id="supporterDashboardBtn" onclick="loadSupporterDashboard()">今日の支援対象を見る</button><span id="supporterStatus"></span><div id="supporterDashboard" class="dashboard-panel"></div></section>
+</main><script src="supporter-dashboard.js"></script></body></html>

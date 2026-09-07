@@ -100,6 +100,26 @@ function buildAnalysisCards(data){
   `;
 }
 
+function renderSuggestedSupporter(data){
+  const area = document.getElementById('suggestedSupporter');
+  if(!area) return;
+  const selected = data?.optimization?.selected || {};
+  const match = data?.suggestedSupporterMatch || data?.suggested_supporter_match || null;
+  const isSupportRecommendation = ['supporter', 'both'].includes(selected.action_type) || Boolean(match);
+  if(!isSupportRecommendation){
+    area.innerHTML = '';
+    return;
+  }
+
+  const organization = selected.organization_name || match?.supporter?.organization_name || '候補支援先を確認中';
+  const supporterName = selected.supporter_name || match?.supporter?.supporter_name || '支援担当者';
+  const reason = match?.reason || '現在の状態と支援タイミングから候補に選ばれました。';
+  const action = match?.id
+    ? `<button type="button" onclick="requestConnection('${match.id}', this)">この支援先に接続を依頼</button>`
+    : '<p>候補の接続情報を準備しています。チェックインを再表示してください。</p>';
+  area.innerHTML = `<div class="result-card highlight"><span class="section-tag">候補支援先</span><h3>${organization}</h3><p>担当: ${supporterName}</p><p>${reason}</p>${action}</div>`;
+}
+
 async function checkin(){
 if(!participant)return alert('先に挑戦者登録をしてください');
 try { await withLoadingUI(document.getElementById('checkinBtn'), 'AI分析中です。しばらくお待ちください…', async () => {
@@ -113,6 +133,7 @@ try { await withLoadingUI(document.getElementById('checkinBtn'), 'AI分析中で
   const modeLabel={intervention:'AI介入',supporter:'支援者接続',both:'AI介入＋支援者接続'}[sel.action_type]||'最適化候補';
   decisionBanner.innerHTML=`<strong>今回の推奨：${modeLabel}</strong><span>スコア ${(Number(sel.score||0)*100).toFixed(1)}%</span>${sel.organization_name?`<div>候補支援先：${sel.organization_name} / ${sel.supporter_name||''}</div>`:''}<small>${x.optimization?.decision?.exploration?'探索モード：まだデータが少ないため他の選択肢も試します。':'過去データから最も期待値の高い選択肢を提示しています。'}</small>`;
   buildAnalysisCards(x);
+  renderSuggestedSupporter(x);
   if(intervention){document.getElementById('intervention').innerHTML=`<strong>${intervention.variant}：${intervention.intervention_type}</strong><p>${intervention.intervention_text}</p>`;} else {document.getElementById('intervention').innerHTML='<p>今回は支援者接続を優先。次の「支援者マッチング」で候補を確認してください。</p>';}
 }); } catch(error) { showUiError(document.getElementById('decisionBanner'),'分析に失敗しました。もう一度お試しください。'); }
 }
@@ -399,7 +420,10 @@ async function submitCoreCheckin(){
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     }).then(async r => {
-      const json = await r.json();
+      const json = await r.json().catch(() => ({}));
+      // The API supplies a safe, actionable fallback if a transient backend
+      // dependency fails. Show it instead of discarding it behind an alert.
+      if(!r.ok && json?.fallback) return { ok: false, result: json.fallback, error: json.error };
       if(!r.ok) throw new Error(json?.error || 'analysis failed');
       return json;
     });
@@ -408,7 +432,11 @@ async function submitCoreCheckin(){
     renderInsight(data);
     renderSolutions(data);
     document.getElementById('coreNextAction').value = data?.result?.next_action || '';
-  }); } catch(error) { showUiError(document.getElementById('coreInsight'),'分析に失敗しました。もう一度お試しください。'); }
+    if(data.ok === false){
+      const notice = document.getElementById('coreInsight');
+      notice.insertAdjacentHTML('afterbegin', '<p class="analysis-notice">AI接続に失敗したため、基本分析を表示しています。</p>');
+    }
+  }); } catch(error) { showUiError(document.getElementById('coreInsight'),`分析に失敗しました: ${error.message || '通信を確認して、もう一度お試しください。'}`); }
 }
 
 async function submitCoreDecision(){
@@ -475,3 +503,521 @@ async function saveSupportOutcome(matchId,supporterId,btn){
    alert('支援成果を学習データに保存しました。次回の支援者推薦に反映されます。');
  }); } catch(error) { showUiError(btn.closest('.match')?.querySelector(`[data-match-status="${matchId}"]`),'支援成果の保存に失敗しました。'); }
 }
+
+/* ===== FCL Challenger Hub / Supporter Connection Restore ===== */
+
+let selectedMatchId = null;
+
+function challengerStatusLabel(status){
+  return ({
+    pending:'支援者の承認待ち',
+    challenger_approved:'あなたは承認済み・支援者の承認待ち',
+    supporter_approved:'支援者は承認済み・あなたの確認待ち',
+    connected:'接続成立',
+    declined:'見送り',
+    expired:'期限切れ'
+  }[status] || '確認中');
+}
+
+function escapeHtml(value=''){
+  return String(value).replace(/[&<>\"']/g, ch => ({
+    '&':'&amp;',
+    '<':'&lt;',
+    '>':'&gt;',
+    '\"':'&quot;',
+    "'":'&#39;'
+  }[ch]));
+}
+
+function renderChallengerHub(message=''){
+  const box=document.getElementById('challengerHub');
+  if(!box)return;
+
+  const name=participant?.name || '挑戦者';
+  const challenge=participant?.challenge || '挑戦テーマ未設定';
+  const goal=participant?.goal || '目標未設定';
+  const participantId=participant?.id || localStorage.getItem('fcl-participant-id') || '未取得';
+
+  box.innerHTML=`
+    <div class="decision-panel">
+      <h3>👤 ${escapeHtml(name)}さんの挑戦者ページ</h3>
+      <p><strong>登録ID:</strong> ${escapeHtml(participantId)}</p>
+      <p><strong>挑戦:</strong> ${escapeHtml(challenge)}</p>
+      <p><strong>目標:</strong> ${escapeHtml(goal)}</p>
+      <p class="muted">登録情報からFCLが自動で支援者候補を取得します。</p>
+      <button id="myMatchesBtn" type="button" onclick="loadMyMatches()">支援者候補を見る</button>
+      <span id="myMatchStatus">${escapeHtml(message)}</span>
+    </div>
+    <div id="myMatchesList"></div>
+    <div id="selectedMatchPanel"></div>
+  `;
+}
+
+async function loadMyMatches(){
+  if(!participant){
+    alert('先に挑戦者登録をしてください');
+    return;
+  }
+
+  const btn=document.getElementById('myMatchesBtn');
+  const status=document.getElementById('myMatchStatus');
+
+  try{
+    await withLoadingUI(btn,'支援者候補を読み込んでいます…',async()=>{
+      const rows=await api('/api/matches',{participant_id:participant.id});
+      const list=document.getElementById('myMatchesList');
+
+      if(!Array.isArray(rows) || rows.length===0){
+        list.innerHTML=
+          '<div class="result-card">' +
+          '<h3>現在、支援者候補はありません</h3>' +
+          '<p>チェックイン後にもう一度「支援者候補を見る」を押してください。</p>' +
+          '</div>';
+        status.textContent='候補を確認しました。';
+        return;
+      }
+
+      list.innerHTML=rows.map((x,i)=>{
+        const state=challengerStatusLabel(x.status);
+
+        return `<div class="match result-card" style="margin-top:12px;">
+          <span class="section-tag">候補 ${i+1}</span>
+          <h3>${escapeHtml(x.supporter?.organization_name || '支援者')}</h3>
+          <p><strong>${escapeHtml(x.supporter?.supporter_name || '')}</strong> / ${escapeHtml(x.supporter?.support_category || '支援')}</p>
+          <p><strong>マッチ理由:</strong> ${escapeHtml(x.reason || '現在の挑戦内容との適合をもとに推薦')}</p>
+          <p><strong>現在の状態:</strong>
+            <span data-match-status="${escapeHtml(x.id)}">${escapeHtml(state)}</span>
+          </p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" onclick="openMyMatch('${escapeHtml(x.id)}', this)">内容を確認</button>
+            <button type="button" onclick="approveMyMatch('${escapeHtml(x.id)}', this)">この支援者とつながる</button>
+            <button type="button" onclick="declineMyMatch('${escapeHtml(x.id)}', this)">今回は見送る</button>
+          </div>
+        </div>`;
+      }).join('');
+
+      status.textContent='支援者候補を読み込みました。ID入力は不要です。';
+    });
+  }catch(error){
+    if(status)status.textContent='候補の取得に失敗しました。';
+  }
+}
+
+async function openMyMatch(matchId){
+  selectedMatchId=matchId;
+
+  const panel=document.getElementById('selectedMatchPanel');
+  if(!panel)return;
+
+  panel.innerHTML=
+    '<div class="result-card" style="margin-top:14px;">' +
+    '<p>候補の詳細を読み込んでいます…</p>' +
+    '</div>';
+
+  try{
+    const detail=await fetch(
+      `/api/matches/${encodeURIComponent(matchId)}/detail`
+    ).then(async r=>{
+      const x=await r.json();
+      if(!r.ok)throw Error(x.error||'detail failed');
+      return x;
+    });
+
+    const story=await fetch(
+      `/api/matches/${encodeURIComponent(matchId)}/story`
+    ).then(async r=>{
+      const x=await r.json();
+      if(!r.ok)throw Error(x.error||'story failed');
+      return x;
+    });
+
+    const consented=
+      Boolean(story?.consent?.consented) &&
+      !story?.consent?.revoked_at;
+
+    const savedStory=
+      story?.story?.story_json || null;
+
+    panel.innerHTML=`
+      <div class="result-card" style="margin-top:14px;">
+        <span class="section-tag">支援者候補の詳細</span>
+        <h3>${escapeHtml(detail.supporter?.organization_name || '支援者')}</h3>
+        <p><strong>支援者:</strong> ${escapeHtml(detail.supporter?.name || '支援者')}</p>
+        <p><strong>支援カテゴリ:</strong> ${escapeHtml(detail.supporter?.support_category || '支援')}</p>
+        <p><strong>おすすめ理由:</strong> ${escapeHtml(detail.match?.reason || '')}</p>
+        <p><strong>支援頻度の目安:</strong> ${escapeHtml(detail.match?.expected_support_frequency || '1-2回/週')}</p>
+      </div>
+
+      <div class="decision-panel" style="margin-top:14px;">
+        <h3>🔐 共有する情報をあなたが決めます</h3>
+        <p>最初は必要最小限。物語を共有するときだけ、あなたが明示的に許可します。</p>
+
+        <label>
+          <input type="radio" name="storyShareScope" value="minimal"
+            ${!consented || story?.consent?.share_scope==='minimal'?'checked':''}>
+          最小限のみ
+        </label>
+
+        <label>
+          <input type="radio" name="storyShareScope" value="story"
+            ${story?.consent?.share_scope==='story'?'checked':''}>
+          Challenge Storyを共有
+        </label>
+
+        <label>
+          <input type="radio" name="storyShareScope" value="progress"
+            ${story?.consent?.share_scope==='progress'?'checked':''}>
+          Story＋進捗も共有
+        </label>
+
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button type="button" onclick="saveMyStoryConsent(this)">この範囲で同意する</button>
+          ${consented
+            ? '<button type="button" onclick="generateMyStory()">物語を確認する</button>'
+            : ''}
+        </div>
+
+        <span id="storyConsentStatus">
+          ${
+            consented
+              ? '現在の共有同意: '+escapeHtml(story.consent.share_scope)
+              : 'まだ物語共有には同意していません'
+          }
+        </span>
+      </div>
+
+      <div id="myStoryPanel"></div>
+    `;
+
+    if(button){ button.disabled=false; button.textContent=button.dataset.originalText || "内容を確認"; } if(savedStory){
+      renderMyStory(
+        savedStory,
+        Boolean(story?.story?.approved_by_participant)
+      );
+    }
+  }catch(error){
+    panel.innerHTML=
+      `<div class="result-card">
+        <h3>詳細を読み込めませんでした</h3>
+        <p>${escapeHtml(error.message)}</p>
+      </div>`;
+  }
+}
+
+async function saveMyStoryConsent(button){ if(button){ button.disabled=true; button.dataset.originalText=button.textContent; button.textContent="読み込み中..."; } const loadingStatus=document.getElementById("storyConsentStatus"); if(loadingStatus)loadingStatus.textContent="⏳ 共有同意を保存しています...";
+  if(!selectedMatchId)return;
+
+  const scope=
+    document.querySelector('input[name="storyShareScope"]:checked')?.value ||
+    'minimal';
+
+  try{
+    const data=await fetch(
+      `/api/matches/${encodeURIComponent(selectedMatchId)}/story/consent`,
+      {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({
+          share_scope:scope,
+          consented:true
+        })
+      }
+    ).then(async r=>{
+      const x=await r.json();
+      if(!r.ok)throw Error(x.error||'consent failed');
+      return x;
+    });
+
+    const status=document.getElementById('storyConsentStatus');
+
+    if(status){
+      status.textContent=
+        `共有同意を保存しました：${data.consent.share_scope}`;
+    }
+
+    if(button){ button.disabled=false; button.textContent="保存しました"; }
+    const panel=document.getElementById('myStoryPanel');
+
+    if(panel){
+      panel.innerHTML=
+        '<div class="result-card">' +
+        '<p>同意を保存しました。「物語を確認する」を押すと共有内容を確認できます。</p>' +
+        '<button type="button" onclick="generateMyStory()">物語を確認する</button>' +
+        '</div>';
+    }
+  }catch(error){
+    const status=document.getElementById('storyConsentStatus');
+
+    if(status){
+      status.textContent=
+        `同意の保存に失敗しました: ${error.message}`;
+    }
+  }
+}
+
+async function generateMyStory(){
+  if(!selectedMatchId)return;
+
+  try{
+    const data=await fetch(
+      `/api/matches/${encodeURIComponent(selectedMatchId)}/story/generate`,
+      {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body:'{}'
+      }
+    ).then(async r=>{
+      const x=await r.json();
+      if(!r.ok)throw Error(x.error||'story generation failed');
+      return x;
+    });
+
+    renderMyStory(
+      data.story?.story_json || data.story,
+      Boolean(data.story?.approved_by_participant)
+    );
+  }catch(error){
+    if(button){ button.disabled=false; button.textContent="保存しました"; }
+    const panel=document.getElementById('myStoryPanel');
+
+    if(panel){
+      panel.innerHTML=
+        `<div class="result-card">
+          <h3>物語を表示できません</h3>
+          <p>${escapeHtml(error.message)}</p>
+        </div>`;
+    }
+  }
+}
+
+function renderMyStory(story,approved=false){
+  const panel=document.getElementById('myStoryPanel');
+  if(!panel)return;
+
+  panel.innerHTML=`
+    <div class="result-card" style="margin-top:14px;">
+      <span class="section-tag">Challenge Story</span>
+      <h3>${escapeHtml(story.title || 'Challenge Story')}</h3>
+      <p><strong>挑戦:</strong> ${escapeHtml(story.challenge || '')}</p>
+      <p><strong>これまで:</strong> ${escapeHtml(story.past || '')}</p>
+      <p><strong>現在:</strong> ${escapeHtml(story.current_state || '')}</p>
+      <p><strong>壁:</strong> ${escapeHtml(story.obstacle || '')}</p>
+      <p><strong>願い:</strong> ${escapeHtml(story.hope || '')}</p>
+      <p><strong>支援してほしいこと:</strong> ${escapeHtml(story.support_need || '')}</p>
+      <small>${escapeHtml(story.generated_note || '')}</small>
+
+      <div style="margin-top:10px;">
+        ${
+          approved
+            ? '<strong>✅ あなたが物語を確認・承認済みです</strong>'
+            : '<button type="button" onclick="approveMyStory()">この物語を承認して支援者へ共有する</button>'
+        }
+      </div>
+
+      <div id="storyApprovalStatus"></div>
+    </div>
+  `;
+}
+
+async function approveMyStory(){
+  if(!selectedMatchId)return;
+
+  try{
+    const data=await fetch(
+      `/api/matches/${encodeURIComponent(selectedMatchId)}/story/approve`,
+      {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body:'{}'
+      }
+    ).then(async r=>{
+      const x=await r.json();
+      if(!r.ok)throw Error(x.error||'story approval failed');
+      return x;
+    });
+
+    const status=document.getElementById('storyApprovalStatus');
+
+    if(status){
+      status.textContent=
+        data.ready_to_send
+          ? '✅ 物語を承認しました。共有処理へ進めます。'
+          : '✅ 物語を承認しました。';
+    }
+
+    loadMyMatches();
+  }catch(error){
+    const status=document.getElementById('storyApprovalStatus');
+
+    if(status){
+      status.textContent=
+        `❌ 物語の承認に失敗しました: ${error.message}`;
+    }
+  }
+}
+
+async function approveMyMatch(matchId,btn){
+  try{
+    await withLoadingUI(btn,'承認を保存しています…',async()=>{
+      const data=await fetch(
+        `/api/matches/${encodeURIComponent(matchId)}/challenger-approve`,
+        {
+          method:'POST',
+          headers:{'content-type':'application/json'},
+          body:'{}'
+        }
+      ).then(async r=>{
+        const x=await r.json();
+        if(!r.ok)throw Error(x.error||'approval failed');
+        return x;
+      });
+
+      selectedMatchId=matchId;
+
+      const status=document.querySelector(
+        `[data-match-status="${CSS.escape(matchId)}"]`
+      );
+
+      if(status){
+        status.textContent=challengerStatusLabel(data.status);
+      }
+
+      const state=document.getElementById('myMatchStatus');
+
+      if(state){
+        state.textContent=
+          'あなたの承認を保存しました。必要に応じて「内容を確認」から共有範囲を設定できます。';
+      }
+    });
+  }catch(error){
+    const state=document.getElementById('myMatchStatus');
+
+    if(state){
+      state.textContent=
+        `承認を保存できませんでした: ${error.message}`;
+    }
+  }
+}
+
+async function declineMyMatch(matchId,btn){
+  try{
+    await withLoadingUI(btn,'見送りを保存しています…',async()=>{
+      const data=await fetch(
+        `/api/matches/${encodeURIComponent(matchId)}/decline`,
+        {
+          method:'POST',
+          headers:{'content-type':'application/json'},
+          body:JSON.stringify({actor:'challenger'})
+        }
+      ).then(async r=>{
+        const x=await r.json();
+        if(!r.ok)throw Error(x.error||'decline failed');
+        return x;
+      });
+
+      const status=document.querySelector(
+        `[data-match-status="${CSS.escape(matchId)}"]`
+      );
+
+      if(status){
+        status.textContent=challengerStatusLabel(data.status);
+      }
+    });
+  }catch(error){
+    const state=document.getElementById('myMatchStatus');
+
+    if(state){
+      state.textContent=
+        `見送りの保存に失敗しました: ${error.message}`;
+    }
+  }
+}
+
+/* 登録成功後に挑戦者マイページを表示 */
+const _fclSupporterOriginalRegister =
+  typeof register === 'function' ? register : null;
+
+if(_fclSupporterOriginalRegister){
+  register = async function(){
+    await _fclSupporterOriginalRegister();
+
+    renderChallengerHub(
+      '登録が完了しました。まず「支援者候補を見る」を押してください。'
+    );
+  };
+}
+
+/* 既存セッション復元後に挑戦者マイページを表示 */
+const _fclSupporterOriginalRestore =
+  typeof restoreCoreSession === 'function'
+    ? restoreCoreSession
+    : null;
+
+if(_fclSupporterOriginalRestore){
+  _fclSupporterOriginalRestore()
+    .then(()=>{
+      if(participant){
+        renderChallengerHub(
+          '前回の登録情報を読み込みました。'
+        );
+      }
+    })
+    .catch(()=>{});
+}
+
+/* ===== Challenger Hub click/detail fix ===== */
+
+
+/* ===== FCL Loading Feedback Wrapper ===== */
+
+const _fclOriginalOpenMyMatch = openMyMatch;
+
+openMyMatch = async function(matchId, button){
+  if(button){
+    button.disabled = true;
+    button.dataset.originalText = button.textContent;
+    button.textContent = '読み込み中...';
+  }
+
+  try{
+    return await _fclOriginalOpenMyMatch(matchId, button);
+  }finally{
+    if(button){
+      button.disabled = false;
+      button.textContent = button.dataset.originalText || '内容を確認';
+    }
+  }
+};
+
+const _fclOriginalSaveMyStoryConsent = saveMyStoryConsent;
+
+saveMyStoryConsent = async function(button){
+  const targetButton =
+    button ||
+    (document.activeElement &&
+     document.activeElement.tagName === 'BUTTON'
+       ? document.activeElement
+       : null);
+
+  if(targetButton){
+    targetButton.disabled = true;
+    targetButton.dataset.originalText = targetButton.textContent;
+    targetButton.textContent = '読み込み中...';
+  }
+
+  const status = document.getElementById('storyConsentStatus');
+
+  if(status){
+    status.textContent = '⏳ 共有同意を保存しています...';
+  }
+
+  try{
+    return await _fclOriginalSaveMyStoryConsent(targetButton);
+  }finally{
+    if(targetButton){
+      targetButton.disabled = false;
+      targetButton.textContent =
+        targetButton.dataset.originalText || 'この範囲で同意する';
+    }
+  }
+};
