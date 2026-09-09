@@ -63,7 +63,7 @@
           target.textContent = '✅ 確認しました';
           const box = target.parentElement?.querySelector('.fcl-action-status');
           if (box) {
-            box.textContent = '✅ 支援者候補の詳細を表示しました。';
+            box.textContent = '✅ 支援者候補の詳細を表示しました。下へスクロールしてください。';
           }
         }
 

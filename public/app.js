@@ -1,4 +1,4 @@
-let participant=null, intervention=null;
+﻿let participant=null, intervention=null;
 
 // --- loading UX helper (UI-only; does not touch API/data logic) ---
 // Disables the given button, swaps its label to "処理中…", shows a small
@@ -147,7 +147,7 @@ async function saveAction(){
 async function registerSupporter(){
   try { await withLoadingUI(document.getElementById('registerSupporterBtn'), '登録処理中です。しばらくお待ちください…', async () => {
     const x=await api('/api/supporters/register',{organization_name:org.value,supporter_name:supporter.value,email:supportEmail.value,support_category:category.value,strengths:strengths.value.split(',').map(x=>x.trim()).filter(Boolean),timing_tags:timing.value.split(',').map(x=>x.trim()).filter(Boolean),description:desc.value});
-    supportStatus.textContent=` 登録しました: ${x.supporter_name}`;
+    localStorage.setItem('fcl-supporter-id',x.id); document.getElementById('supporterIdInput').value=x.id; supportStatus.textContent=' 登録しました: '+x.supporter_name;
   }); } catch(error) { showUiError(document.getElementById('supportStatus')); }
 }
 // NOTE: index.html's button calls showSupporterCandidates(), which did not exist
@@ -168,14 +168,7 @@ async function approveMatch(id,actor,btn){
     const card=btn.closest('.match'); const status=card?.querySelector(`[data-match-status="${id}"]`); if(status)status.textContent=`状態: ${data.status}`;
   }); } catch(error) { showUiError(btn.closest('.match')?.querySelector(`[data-match-status="${id}"]`),'承認を保存できませんでした。'); }
 }
-async function requestConnection(id, btn){
-  try { await withLoadingUI(btn, '接続処理中です。しばらくお待ちください…', async () => {
-    const r=await fetch('/api/matches/'+id+'/request',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({note:'Future Challenge Labからの接続依頼'})});
-    if(!r.ok)return alert('接続依頼に失敗しました');
-    alert('接続依頼を記録しました。支援後の結果も入力するとAIが次回の推薦を改善します。');
-  }); } catch(error) { showUiError(btn.closest('.match')?.querySelector(`[data-match-status="${id}"]`),'接続に失敗しました。'); }
-}
-function buildDashboardCards(data){
+async function requestConnection(id,btn){ if(!id)return; const card=btn?.closest(".match"); let feedback=card?.querySelector(".connection-request-status"); if(!feedback&&card){ feedback=document.createElement("div"); feedback.className="connection-request-status"; feedback.style.marginTop="10px"; feedback.style.padding="10px 14px"; feedback.style.borderRadius="8px"; feedback.style.background="#f3f6fa"; feedback.style.fontWeight="600"; card.appendChild(feedback); } if(btn){btn.disabled=true;btn.textContent="⏳ 接続申請中...";} if(feedback)feedback.textContent="⏳ 支援者へ接続申請を送信しています..."; try{ const r=await fetch("/api/matches/"+encodeURIComponent(id)+"/request",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({note:"Future Challenge Labからの接続依頼"})}); const d=await r.json(); if(!r.ok)throw Error(d.error||"接続申請に失敗しました"); const a=await fetch("/api/matches/"+encodeURIComponent(id)+"/challenger-approve",{method:"POST",headers:{"content-type":"application/json"},body:"{}"}); const ad=await a.json(); if(!a.ok&&!String(ad.error||"").includes("already"))throw Error(ad.error||"挑戦者承認に失敗しました"); if(btn){btn.textContent="✅ 支援者の承認待ち";btn.disabled=true;} if(feedback)feedback.textContent="✅ 接続申請を送りました。現在は「支援者の承認待ち」です。"; }catch(error){ if(btn){btn.disabled=false;btn.textContent="この支援者とつながる";} if(feedback)feedback.textContent="❌ 接続申請に失敗しました: "+error.message; } } function buildDashboardCards(data){
   const counts = data?.counts || {};
   const highRisk = (data?.policy?.recent || []).filter(item => item.context?.risk_score >= 70).length;
   const continuing = Math.max(0, (counts.participants ?? 0) - (counts.restarts ?? 0));
@@ -273,7 +266,7 @@ async function dashboard(){
 }
 
 async function loadSupporterDashboard(){
-  const supporterId = document.getElementById('supporterIdInput').value.trim();
+  const supporterId = document.getElementById('supporterIdInput').value.trim() || localStorage.getItem('fcl-supporter-id') || '';
   if(!supporterId){ return alert('supporter_id を入力してください'); }
   await withLoadingUI(document.getElementById('supporterDashboardBtn'), '支援者データ取得中です。しばらくお待ちください…', async () => {
     const data = await fetch(`/api/supporter/dashboard?supporter_id=${encodeURIComponent(supporterId)}`).then(r => r.json());
@@ -590,7 +583,7 @@ async function loadMyMatches(){
           </p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button type="button" onclick="openMyMatch('${escapeHtml(x.id)}', this)">内容を確認</button>
-            <button type="button" onclick="approveMyMatch('${escapeHtml(x.id)}', this)">この支援者とつながる</button>
+            <button type="button" onclick="requestConnection('${escapeHtml(x.id)}', this)">この支援者とつながる</button>
             <button type="button" onclick="declineMyMatch('${escapeHtml(x.id)}', this)">今回は見送る</button>
           </div>
         </div>`;
@@ -689,7 +682,7 @@ async function openMyMatch(matchId){
       <div id="myStoryPanel"></div>
     `;
 
-    if(button){ button.disabled=false; button.textContent=button.dataset.originalText || "内容を確認"; } if(savedStory){
+    if(savedStory){
       renderMyStory(
         savedStory,
         Boolean(story?.story?.approved_by_participant)

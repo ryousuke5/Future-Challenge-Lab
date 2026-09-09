@@ -1,4 +1,4 @@
-import 'dotenv/config';
+﻿import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
@@ -881,12 +881,6 @@ function stripUnsupportedColumns(table, row = {}) {
     delete compatible.accepting_new_matches;
   }
   if (table === 'supporter_matches') {
-    delete compatible.meta;
-    delete compatible.challenger_approved_at;
-    delete compatible.supporter_approved_at;
-    delete compatible.connected_at;
-    delete compatible.declined_at;
-    delete compatible.expired_at;
     compatible.status = toCompatibleMatchStatus(compatible.status || 'pending');
   }
   return compatible;
@@ -1192,6 +1186,7 @@ async function updateMatchApprovalStatus(matchId, actor, action){
   }
 
   patches[actorKey] = now;
+  if (nextState === 'connected' && previousState !== 'connected') { patches.connected_at = now; }
   patches.meta.approvals = approvals;
 
   const transitionedToConnected = previousState !== 'connected' && finalStatus === 'connected';
@@ -1628,7 +1623,7 @@ app.post('/api/matches/:id/story/approve', async (req,res)=>{
   catch(error){res.status(500).json({error:error.message||'story approval failed'});}
 });
 
-export { app };
+app.get("/api/supporter/dashboard-lite",async(req,res)=>{try{const supporter_id=req.query.supporter_id;if(!supporter_id)return res.status(400).json({error:"invalid supporter_id"});const supporter=(await select("supporters",{id:supporter_id}))[0];if(!supporter)return res.status(404).json({error:"supporter not found"});const matches=(await select("supporter_matches",{supporter_id}));const targets=[];for(const match of matches){const participant=(await select("participants",{id:match.participant_id}))[0];const checkins=(await select("checkins",{participant_id:match.participant_id}));checkins.sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));const latest=checkins[0]||null;targets.push({match_id:match.id,participant_id:match.participant_id,participant_name:participant?.name||"未登録",challenge:participant?.challenge||"",goal:participant?.goal||"",match_status:effectiveMatchStatus(match),risk_level:latest?.risk_level||"unknown",risk_score:latest?.risk_score??null,autonomy_total:latest?.autonomy_total??null,challenger_approved:!!match.challenger_approved_at,supporter_approved:!!match.supporter_approved_at})}const connected=matches.filter(m=>effectiveMatchStatus(m)==="connected").length;const pending=matches.filter(m=>["pending","challenger_approved","supporter_approved"].includes(effectiveMatchStatus(m))).length;res.json({supporter:{id:supporter.id,supporter_name:supporter.supporter_name,organization_name:supporter.organization_name,capacity:Number(supporter.capacity??5),accepting_new_matches:supporter.accepting_new_matches!==false,active_connections:connected},summary:{total_support_count:matches.length,active_connections:connected,pending_matches:pending,support_capacity:Number(supporter.capacity??5)},targets})}catch(error){res.status(500).json({error:error.message||"supporter dashboard lite failed"})}});export { app };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   app.listen(port,()=>console.log(`FCL connected MVP: http://localhost:${port}`));
