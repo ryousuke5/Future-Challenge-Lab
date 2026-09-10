@@ -841,13 +841,17 @@ app.post('/api/supporters/register',async(req,res)=>{
   catch(e){res.status(500).json({error:e.message});}
 });
 
-function matchScore(p,s,last){
+function matchScore(p,s,last,supportOutcomes=[]){
   const text=`${p.challenge||''} ${p.goal||''}`.toLowerCase();
   let score=40; const reason=[];
   for(const tag of (s.strengths||[])) if(text.includes(String(tag).toLowerCase())){score+=15;reason.push(`強み「${tag}」が挑戦内容と近い`);}
   if(last && last.risk_level==='high' && (s.timing_tags||[]).some(t=>['離脱前','停滞時','再開時','伴走'].includes(t))){score+=20;reason.push('支援タイミングが現在地に適合');}
   if(last?.analysis?.resumed && (s.timing_tags||[]).includes('再開時')){score+=15;reason.push('再開直後の支援に適合');}
-  return {score:Math.min(score,100),reason:reason.join('。')||'挑戦分野と支援内容の近さを基礎スコアとして算出'};
+    const outcomes=supportOutcomes.filter(o=>o.supporter_id===s.id);
+    const successCount=outcomes.filter(o=>['restarted','action_completed','connected_and_progressed','positive'].includes(o.outcome)).length;
+    const trials=outcomes.length;
+    if(trials>0){const successRate=(successCount+1)/(trials+2);const outcomeBoost=Math.round((successRate-0.5)*20);score+=outcomeBoost;reason.push(`過去の支援成果を反映（${successCount}/${trials}件）`);}
+  return {score:Math.min(Math.max(score,0),100),reason:reason.join('。')||'挑戦分野と支援内容の近さを基礎スコアとして算出'};
 }
 
 function normalizeMatchStatus(status){
@@ -988,13 +992,14 @@ async function getSupporterCandidates(participant_id){
   const checkins=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
   const last=checkins[0] || null;
   const supporters=(await select('supporters')).filter(s=>s.active!==false);
+    const supportOutcomes=await selectOptional('supporter_outcomes');
 
   const candidates=supporters.map(s=>({
     supporter_id:s.id,
     supporter_name:s.supporter_name,
     organization_name:s.organization_name,
     support_category:s.support_category,
-    ...matchScore(participant,s,last),
+    ...matchScore(participant,s,last,supportOutcomes),
     recommendation_type_code: priorityData.recommendation_type_code,
     recommended_support_type: priorityData.recommended_support_type,
     recommendation_reason: priorityData.recommendation_reason,
@@ -1024,7 +1029,8 @@ app.post('/api/matches',async(req,res)=>{
     }
     const ss = allSupporters.filter(s => (Number(s.capacity ?? 5) > (activeCounts.get(s.id) || 0)));
     const last=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0];
-    const ranked=ss.map(s=>({s,...matchScore(ps||{},s,last)})).sort((a,b)=>b.score-a.score).slice(0,5);
+    const supportOutcomes=await selectOptional('supporter_outcomes');
+    const ranked=ss.map(s=>({s,...matchScore(ps||{},s,last,supportOutcomes)})).sort((a,b)=>b.score-a.score).slice(0,5);
     const rows=[];
     for(const x of ranked){
       const existing = (await select('supporter_matches',{participant_id, supporter_id: x.s.id})).find(m => !['connected','declined','expired'].includes(effectiveMatchStatus(m)));
@@ -1449,7 +1455,7 @@ app.get('/api/supporter/outcomes/:supporter_id', async (req, res) => {
     const supportEvents=(await select('connection_events')).filter(x=>x.supporter_id===supporter_id && x.event_type==='support_execution');
     const summary = {
       total_support_count: outcomes.length,
-      observed_execution_rate: supportEvents.length ? Number(((supportEvents.length / Math.max(1, outcomes.length || supportEvents.length)) * 100).toFixed(1)) : 0,
+      observed_execution_rate: supportEvents.length ? Number(((outcomes.length / supportEvents.length) * 100).toFixed(1)) : 0,
       recent_support_outcomes: outcomes.slice(-5)
     };
     res.json({ ok: true, outcomes, summary });
