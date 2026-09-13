@@ -841,7 +841,36 @@ app.post('/api/supporters/register',async(req,res)=>{
   catch(e){res.status(500).json({error:e.message});}
 });
 
-function matchScore(p,s,last,supportOutcomes=[]){
+function buildSimilarStateEvidence(supporterId,currentCheckin,supportOutcomes,allCheckins){
+  const currentRisk=bucketRisk(Number(currentCheckin?.risk_score ?? 0));
+  const currentAutonomy=bucketAutonomy(Number(currentCheckin?.autonomy_total ?? 0));
+  let trials=0;
+  let success_count=0;
+
+  for(const outcome of supportOutcomes.filter(o=>o.supporter_id===supporterId && o.participant_id)){
+    const outcomeDate=safeDate(outcome.created_at);
+    if(!outcomeDate) continue;
+
+    const historicalCheckin=allCheckins
+      .filter(c=>c.participant_id===outcome.participant_id && safeDate(c.checked_in_at) && safeDate(c.checked_in_at).getTime()<=outcomeDate.getTime())
+      .sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0];
+
+    if(!historicalCheckin) continue;
+
+    const riskSame=bucketRisk(Number(historicalCheckin.risk_score ?? 0))===currentRisk;
+    const autonomySame=bucketAutonomy(Number(historicalCheckin.autonomy_total ?? 0))===currentAutonomy;
+
+    if(!riskSame || !autonomySame) continue;
+
+    trials++;
+    if(['restarted','action_completed','connected_and_progressed','positive'].includes(outcome.outcome)){
+      success_count++;
+    }
+  }
+
+  return {trials,success_count};
+}
+function matchScore(p,s,last,supportOutcomes=[],similarStateEvidence=null){
   const text=`${p.challenge||''} ${p.goal||''}`.toLowerCase();
   let score=40; const reason=[];
   for(const tag of (s.strengths||[])) if(text.includes(String(tag).toLowerCase())){score+=15;reason.push(`強み「${tag}」が挑戦内容と近い`);}
@@ -851,6 +880,14 @@ function matchScore(p,s,last,supportOutcomes=[]){
     const successCount=outcomes.filter(o=>['restarted','action_completed','connected_and_progressed','positive'].includes(o.outcome)).length;
     const trials=outcomes.length;
     if(trials>0){const successRate=(successCount+1)/(trials+2);const outcomeBoost=Math.round((successRate-0.5)*20);score+=outcomeBoost;reason.push(`過去の支援成果を反映（${successCount}/${trials}件）`);}
+  const similarTrials=Number(similarStateEvidence?.trials||0);
+  const similarSuccessCount=Number(similarStateEvidence?.success_count||0);
+  if(similarTrials>0){
+    const similarSuccessRate=(similarSuccessCount+1)/(similarTrials+2);
+    const similarBoost=Math.round((similarSuccessRate-0.5)*10);
+    score+=similarBoost;
+    reason.push(`類似状態での支援成果を反映（${similarSuccessCount}/${similarTrials}件）`);
+  }
   return {score:Math.min(Math.max(score,0),100),reason:reason.join('。')||'挑戦分野と支援内容の近さを基礎スコアとして算出'};
 }
 
@@ -993,19 +1030,28 @@ async function getSupporterCandidates(participant_id){
   const last=checkins[0] || null;
   const supporters=(await select('supporters')).filter(s=>s.active!==false);
     const supportOutcomes=await selectOptional('supporter_outcomes');
+  const allCheckins=await select('checkins');
 
-  const candidates=supporters.map(s=>({
+  const rawCandidates=supporters.map(s=>({
     supporter_id:s.id,
     supporter_name:s.supporter_name,
     organization_name:s.organization_name,
     support_category:s.support_category,
-    ...matchScore(participant,s,last,supportOutcomes),
+    email:s.email || '',
+    ...matchScore(participant,s,last,supportOutcomes,buildSimilarStateEvidence(s.id,last,supportOutcomes,allCheckins)),
     recommendation_type_code: priorityData.recommendation_type_code,
     recommended_support_type: priorityData.recommended_support_type,
     recommendation_reason: priorityData.recommendation_reason,
     suggested_message: priorityData.suggested_message
-  })).sort((a,b)=>b.score-a.score).slice(0,5);
+  })).sort((a,b)=>b.score-a.score);
 
+  const seenSupporters=new Set();
+  const candidates=rawCandidates.filter(candidate=>{
+    const key=`${candidate.supporter_name}|${candidate.organization_name}|${candidate.support_category}`.trim().toLowerCase();
+    if(seenSupporters.has(key)) return false;
+    seenSupporters.add(key);
+    return true;
+  }).slice(0,5);
   return {
     status: priorityData.priority === 'low' && priorityData.action_completion_rate >= 0.7 ? 'not_required' : 'ok',
     priority: priorityData.priority,
@@ -1634,3 +1680,9 @@ app.get("/api/supporter/dashboard-lite",async(req,res)=>{try{const supporter_id=
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   app.listen(port,()=>console.log(`FCL connected MVP: http://localhost:${port}`));
 }
+
+
+
+
+
+
