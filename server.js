@@ -1358,14 +1358,14 @@ app.post('/api/supporter-match', async (req, res) => {
 
 app.post('/api/supporter/execute', async (req, res) => {
   try {
-    const { participant_id, supporter_id, recommendation_type, recommendation_reason, suggested_message, approved, checkin_id } = req.body || {};
+    const { participant_id, supporter_id, match_id, recommendation_type, recommendation_reason, suggested_message, approved, checkin_id } = req.body || {};
     if (!participant_id || !supporter_id) return res.status(400).json({ error: 'invalid participant_id or supporter_id' });
     if (!approved) return res.status(400).json({ error: 'supporter approval required' });
 
     const checkins=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
     const latest = checkin_id ? (await select('checkins',{id:checkin_id}))[0] || checkins[0] : checkins[0];
     const existingAssignment = latest ? (await select('intervention_assignments',{participant_id,checkin_id:latest.id}))[0] : null;
-    const executionEvents=(await select('connection_events')).filter(event => event.participant_id===participant_id && event.supporter_id===supporter_id && event.event_type==='support_execution');
+    const executionEvents=(await select('connection_events')).filter(event => event.participant_id===participant_id && event.supporter_id===supporter_id && event.match_id===match_id && event.event_type==='support_execution');
     const duplicateEvent=executionEvents.find(event => (event.note||'') === (suggested_message || 'supporter follow-up executed'));
     if(duplicateEvent){
       const assignment=(await select('intervention_assignments',{participant_id})).find(row => row.meta?.support_execution && row.meta?.supporter_id===supporter_id && (!latest || row.checkin_id===latest.id)) || existingAssignment;
@@ -1391,7 +1391,7 @@ app.post('/api/supporter/execute', async (req, res) => {
     const executionEvent = await insert('connection_events', {
       participant_id,
       supporter_id,
-      match_id: null,
+      match_id: match_id || null,
       event_type: 'support_execution',
       note: suggested_message || 'supporter follow-up executed',
       created_at: new Date().toISOString()
@@ -1680,6 +1680,8 @@ app.get("/api/supporter/dashboard-lite",async(req,res)=>{try{const supporter_id=
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   app.listen(port,()=>console.log(`FCL connected MVP: http://localhost:${port}`));
 }
+
+
 
 
 
