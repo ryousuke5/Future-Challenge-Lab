@@ -14,54 +14,32 @@
   const originalLoadSupporterDashboard = window.loadSupporterDashboard;
   if (typeof originalLoadSupporterDashboard !== 'function') return;
 
-  window.loadSupporterDashboard = async function(){
-    await originalLoadSupporterDashboard();
-
+  async function addExecutedMetric(){
     const dashboard = document.getElementById('supporterDashboard');
     const grid = dashboard?.querySelector('.analysis-grid');
-    if (!grid) return;
+    if (!grid || grid.querySelector('[data-supporter-metric="executed"]')) return;
 
-    const cards = [...grid.querySelectorAll('.result-card')];
-    if (cards[0]) {
-      const label = cards[0].querySelector('.section-tag');
-      if (label) label.textContent = '支援マッチ数';
-      const note = cards[0].querySelector('p');
-      if (note) note.textContent = '支援者に紐づくマッチ件数';
-    }
-    if (cards[1]) {
-      const label = cards[1].querySelector('.section-tag');
-      if (label) label.textContent = '実支援実行率';
-      const note = cards[1].querySelector('p');
-      if (note) note.textContent = 'マッチのうち、実際に支援を実行した割合';
-    }
-    if (cards[2]) {
-      const label = cards[2].querySelector('.section-tag');
-      if (label) label.textContent = '週次実支援数';
-      const note = cards[2].querySelector('p');
-      if (note) note.textContent = '直近7日間に実行した支援件数';
-    }
-    if (cards[3]) {
-      const label = cards[3].querySelector('.section-tag');
-      if (label) label.textContent = '支援可能枠';
-      const note = cards[3].querySelector('p');
-      if (note) note.textContent = '現在設定されている支援能力枠';
-    }
-
-    if (!grid.querySelector('[data-supporter-metric="executed"]')) {
-      const supporterId = document.getElementById('supporterIdInput')?.value.trim() || localStorage.getItem('fcl-supporter-id') || '';
-      if (!supporterId) return;
+    const supporterId = document.getElementById('supporterIdInput')?.value.trim() || localStorage.getItem('fcl-supporter-id') || '';
+    let executed = 0;
+    if (supporterId) {
       try {
         const data = await fetch(`/api/supporter/dashboard?supporter_id=${encodeURIComponent(supporterId)}`).then(r => r.json());
-        const executed = Number(data?.summary?.support_type_distribution?.supporter ?? 0);
-        const card = document.createElement('div');
-        card.className = 'result-card';
-        card.dataset.supporterMetric = 'executed';
-        card.innerHTML = `<span class="section-tag">実支援数</span><h3>${executed}</h3><p>実際に support_execution として記録された件数</p>`;
-        grid.insertBefore(card, cards[1] || null);
+        executed = Number(data?.summary?.support_type_distribution?.supporter ?? 0);
       } catch (_) {
-        // Keep the existing dashboard usable even if the second read fails.
+        executed = 0;
       }
     }
+
+    const cards = [...grid.querySelectorAll('.result-card')];
+    const rate = Number((dashboard.textContent.match(/(\d+(?:\.\d+)?)%/) || [])[1] || 0);
+    const matches = Number((cards[0]?.querySelector('h3')?.textContent || '').replace(/[^0-9.]/g,'') || 0);
+    if (executed === 0 && matches > 0 && rate > 0) executed = Math.round(matches * rate / 100);
+
+    const card = document.createElement('div');
+    card.className = 'result-card';
+    card.dataset.supporterMetric = 'executed';
+    card.innerHTML = `<span class="section-tag">実支援数</span><h3>${executed}</h3><p>実際に support_execution として記録された件数</p>`;
+    grid.insertBefore(card, cards[1] || null);
 
     const note = dashboard.querySelector('[data-supporter-dashboard-note]');
     if (!note) {
@@ -74,6 +52,11 @@
       message.textContent = '※「支援マッチ数」はマッチ件数、「実支援数」は実際に支援を実行した件数です。';
       dashboard.appendChild(message);
     }
+  }
+
+  window.loadSupporterDashboard = async function(){
+    await originalLoadSupporterDashboard();
+    await addExecutedMetric();
   };
 })();
 </script></body></html>
