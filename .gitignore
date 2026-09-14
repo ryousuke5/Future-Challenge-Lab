@@ -2,3 +2,19 @@ node_modules/
 .env
 .env.*
 !.env.example
+
+# FCL temporary backups and test logs
+*.backup*
+*.before-*
+*.broken-*
+server.v03-backup.js
+server.js.encoding-backup
+supporter-test.log
+
+# Additional FCL temporary backups
+public/*backup*.js
+public/*backup*.html
+public/*broken*.js
+public/*check*.js
+server.*backup*.js
+server.corrupted-backup.js
