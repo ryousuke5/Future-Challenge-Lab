@@ -8,4 +8,72 @@
 <section class="card challenger-hub-card"><h2>6. 挑戦者マイページ：支援者とつながる</h2><p>ここでは <strong>participant ID / supporter ID / match ID の入力は不要</strong>です。</p><p>あなたの登録情報からFCLが自動で候補を取得し、画面上のボタンだけで「確認 → 同意 → 物語 → 承認」と進めます。</p><div id="challengerHub"></div></section>
 <section class="card"><h2>7. Supporter Dashboard</h2><div class="grid"><input id="supporterIdInput" placeholder="Supporter ID"><button id="supporterDashboardBtn" onclick="loadSupporterDashboard()">支援者ダッシュボードを表示</button></div><div id="supporterDashboard" class="dashboard-panel"></div></section>
 <section class="card"><h2>8. 研究ダッシュボード</h2><button id="dashboardBtn" onclick="dashboard()">最新データを見る</button><div id="dash" class="dashboard-panel"></div></section>
-</main><script src="app.js"></script>  <script src="/loading-feedback.js"></script>`r`n</body></html>
+</main><script src="app.js"></script>  <script src="/loading-feedback.js"></script>
+<script>
+(() => {
+  const originalLoadSupporterDashboard = window.loadSupporterDashboard;
+  if (typeof originalLoadSupporterDashboard !== 'function') return;
+
+  window.loadSupporterDashboard = async function(){
+    await originalLoadSupporterDashboard();
+
+    const dashboard = document.getElementById('supporterDashboard');
+    const grid = dashboard?.querySelector('.analysis-grid');
+    if (!grid) return;
+
+    const cards = [...grid.querySelectorAll('.result-card')];
+    if (cards[0]) {
+      const label = cards[0].querySelector('.section-tag');
+      if (label) label.textContent = '支援マッチ数';
+      const note = cards[0].querySelector('p');
+      if (note) note.textContent = '支援者に紐づくマッチ件数';
+    }
+    if (cards[1]) {
+      const label = cards[1].querySelector('.section-tag');
+      if (label) label.textContent = '実支援実行率';
+      const note = cards[1].querySelector('p');
+      if (note) note.textContent = 'マッチのうち、実際に支援を実行した割合';
+    }
+    if (cards[2]) {
+      const label = cards[2].querySelector('.section-tag');
+      if (label) label.textContent = '週次実支援数';
+      const note = cards[2].querySelector('p');
+      if (note) note.textContent = '直近7日間に実行した支援件数';
+    }
+    if (cards[3]) {
+      const label = cards[3].querySelector('.section-tag');
+      if (label) label.textContent = '支援可能枠';
+      const note = cards[3].querySelector('p');
+      if (note) note.textContent = '現在設定されている支援能力枠';
+    }
+
+    if (!grid.querySelector('[data-supporter-metric="executed"]')) {
+      const supporterId = document.getElementById('supporterIdInput')?.value.trim() || localStorage.getItem('fcl-supporter-id') || '';
+      if (!supporterId) return;
+      try {
+        const data = await fetch(`/api/supporter/dashboard?supporter_id=${encodeURIComponent(supporterId)}`).then(r => r.json());
+        const executed = Number(data?.summary?.support_type_distribution?.supporter ?? 0);
+        const card = document.createElement('div');
+        card.className = 'result-card';
+        card.dataset.supporterMetric = 'executed';
+        card.innerHTML = `<span class="section-tag">実支援数</span><h3>${executed}</h3><p>実際に support_execution として記録された件数</p>`;
+        grid.insertBefore(card, cards[1] || null);
+      } catch (_) {
+        // Keep the existing dashboard usable even if the second read fails.
+      }
+    }
+
+    const note = dashboard.querySelector('[data-supporter-dashboard-note]');
+    if (!note) {
+      const message = document.createElement('p');
+      message.dataset.supporterDashboardNote = 'true';
+      message.style.marginTop = '12px';
+      message.style.padding = '10px 14px';
+      message.style.borderRadius = '8px';
+      message.style.background = '#f7f8fa';
+      message.textContent = '※「支援マッチ数」はマッチ件数、「実支援数」は実際に支援を実行した件数です。';
+      dashboard.appendChild(message);
+    }
+  };
+})();
+</script></body></html>
