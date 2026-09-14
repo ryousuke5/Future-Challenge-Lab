@@ -830,11 +830,27 @@ app.post('/api/actions',async(req,res)=>{
 
 app.post('/api/supporter-outcomes',async(req,res)=>{
   try{
-    const row=await insert('supporter_outcomes',{participant_id:req.body.participant_id,supporter_id:req.body.supporter_id,match_id:req.body.match_id||null,outcome:req.body.outcome||'positive',outcome_score:Number(req.body.outcome_score??1),note:req.body.note||'',created_at:new Date().toISOString()});
-    await insert('model_learning_events',{participant_id:req.body.participant_id,features:{action_type:'supporter',supporter_id:req.body.supporter_id,match_id:req.body.match_id||null},label:{outcome:row.outcome,outcome_score:row.outcome_score}});
+    const {participant_id,supporter_id,match_id,outcome,outcome_score,note}=req.body||{};
+    if(!participant_id||!supporter_id||!match_id){
+      return res.status(400).json({error:'participant_id, supporter_id, and match_id are required'});
+    }
+    const row=await insert('supporter_outcomes',{
+      participant_id,
+      supporter_id,
+      match_id,
+      outcome:outcome||'positive',
+      outcome_score:Number(outcome_score??1),
+      note:note||'',
+      created_at:new Date().toISOString()
+    });
+    await insert('model_learning_events',{
+      participant_id,
+      features:{action_type:'supporter',supporter_id,match_id},
+      label:{outcome:row.outcome,outcome_score:row.outcome_score}
+    });
     res.json(row);
   }catch(e){res.status(500).json({error:e.message});}
-});
+});;
 
 app.post('/api/supporters/register',async(req,res)=>{
   try{ const row=await insert('supporters',{organization_name:req.body.organization_name,supporter_name:req.body.supporter_name,email:req.body.email||'',support_category:req.body.support_category,strengths:Array.isArray(req.body.strengths)?req.body.strengths:[],timing_tags:Array.isArray(req.body.timing_tags)?req.body.timing_tags:[],description:req.body.description||'',active:true,capacity:Number(req.body.capacity ?? 5),accepting_new_matches:req.body.accepting_new_matches !== false}); res.json(row); }
