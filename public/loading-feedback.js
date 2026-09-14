@@ -125,21 +125,22 @@
   if (typeof originalSupporterDashboard === 'function') {
     window.loadSupporterDashboard = async function() {
       await originalSupporterDashboard.apply(this, arguments);
+      await new Promise(resolve => setTimeout(resolve, 50));
 
       const dashboard = document.getElementById('supporterDashboard');
       const grid = dashboard?.querySelector('.analysis-grid');
-      if (!grid || grid.querySelector('[data-supporter-metric="executed"]')) return;
+      if (!grid) return;
 
       const cards = [...grid.querySelectorAll('.result-card')];
-      const supporterId = document.getElementById('supporterIdInput')?.value.trim() || localStorage.getItem('fcl-supporter-id') || '';
       let executed = null;
+      const supporterId = document.getElementById('supporterIdInput')?.value.trim() || localStorage.getItem('fcl-supporter-id') || '';
 
       if (supporterId) {
         try {
           const response = await fetch(`/api/supporter/dashboard?supporter_id=${encodeURIComponent(supporterId)}`);
           const data = await response.json();
-          executed = Number(data?.summary?.support_type_distribution?.supporter);
-          if (!Number.isFinite(executed)) executed = null;
+          const value = Number(data?.summary?.support_type_distribution?.supporter);
+          if (Number.isFinite(value)) executed = value;
         } catch (_) {}
       }
 
@@ -149,11 +150,15 @@
         executed = Math.round(matchCount * executionRate / 100);
       }
 
-      const card = document.createElement('div');
-      card.className = 'result-card';
-      card.dataset.supporterMetric = 'executed';
+      let card = grid.querySelector('[data-supporter-metric="executed"]');
+      if (!card) {
+        card = cards[4] || document.createElement('div');
+        card.className = 'result-card';
+        card.dataset.supporterMetric = 'executed';
+        if (!card.parentElement) grid.appendChild(card);
+      }
+
       card.innerHTML = `<span class="section-tag">実支援数</span><h3>${executed}</h3><p>実際に支援を実行した件数</p>`;
-      grid.insertBefore(card, cards[1] || null);
     };
   }
 })();
