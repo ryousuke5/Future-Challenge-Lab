@@ -90,28 +90,30 @@
       if (!grid) return;
 
       const cards = [...grid.querySelectorAll('.result-card')];
-      if (cards[0]) {
-        const label = cards[0].querySelector('.section-tag');
+      const metricCards = cards.filter(card => !card.dataset.supporterMetric);
+
+      if (metricCards[0]) {
+        const label = metricCards[0].querySelector('.section-tag');
         if (label) label.textContent = '支援マッチ数';
-        const note = cards[0].querySelector('p');
+        const note = metricCards[0].querySelector('p');
         if (note) note.textContent = '支援者に紐づくマッチ件数';
       }
-      if (cards[1]) {
-        const label = cards[1].querySelector('.section-tag');
+      if (metricCards[1]) {
+        const label = metricCards[1].querySelector('.section-tag');
         if (label) label.textContent = '実支援実行率';
-        const note = cards[1].querySelector('p');
+        const note = metricCards[1].querySelector('p');
         if (note) note.textContent = 'マッチのうち、実際に支援を実行した割合';
       }
-      if (cards[2]) {
-        const label = cards[2].querySelector('.section-tag');
+      if (metricCards[2]) {
+        const label = metricCards[2].querySelector('.section-tag');
         if (label) label.textContent = '週次実支援数';
-        const note = cards[2].querySelector('p');
+        const note = metricCards[2].querySelector('p');
         if (note) note.textContent = '直近7日間に実行した支援件数';
       }
-      if (cards[3]) {
-        const label = cards[3].querySelector('.section-tag');
+      if (metricCards[3]) {
+        const label = metricCards[3].querySelector('.section-tag');
         if (label) label.textContent = '支援可能枠';
-        const note = cards[3].querySelector('p');
+        const note = metricCards[3].querySelector('p');
         if (note) note.textContent = '現在設定されている支援能力枠';
       }
 
@@ -127,8 +129,8 @@
       }
 
       if (executed === null) {
-        const matchCount = Number((cards[0]?.querySelector('h3')?.textContent || '0').replace(/[^0-9.]/g, '')) || 0;
-        const executionRate = Number((cards[1]?.querySelector('h3')?.textContent || '0').replace(/[^0-9.]/g, '')) || 0;
+        const matchCount = Number((metricCards[0]?.querySelector('h3')?.textContent || '0').replace(/[^0-9.]/g, '')) || 0;
+        const executionRate = Number((metricCards[1]?.querySelector('h3')?.textContent || '0').replace(/[^0-9.]/g, '')) || 0;
         executed = Math.round(matchCount * executionRate / 100);
       }
 
