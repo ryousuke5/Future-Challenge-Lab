@@ -120,4 +120,40 @@
       }
     };
   }
+
+  const originalSupporterDashboard = window.loadSupporterDashboard;
+  if (typeof originalSupporterDashboard === 'function') {
+    window.loadSupporterDashboard = async function() {
+      await originalSupporterDashboard.apply(this, arguments);
+
+      const dashboard = document.getElementById('supporterDashboard');
+      const grid = dashboard?.querySelector('.analysis-grid');
+      if (!grid || grid.querySelector('[data-supporter-metric="executed"]')) return;
+
+      const cards = [...grid.querySelectorAll('.result-card')];
+      const supporterId = document.getElementById('supporterIdInput')?.value.trim() || localStorage.getItem('fcl-supporter-id') || '';
+      let executed = null;
+
+      if (supporterId) {
+        try {
+          const response = await fetch(`/api/supporter/dashboard?supporter_id=${encodeURIComponent(supporterId)}`);
+          const data = await response.json();
+          executed = Number(data?.summary?.support_type_distribution?.supporter);
+          if (!Number.isFinite(executed)) executed = null;
+        } catch (_) {}
+      }
+
+      if (executed === null) {
+        const matchCount = Number((cards[0]?.querySelector('h3')?.textContent || '0').replace(/[^0-9.]/g, '')) || 0;
+        const executionRate = Number((cards[1]?.querySelector('h3')?.textContent || '0').replace(/[^0-9.]/g, '')) || 0;
+        executed = Math.round(matchCount * executionRate / 100);
+      }
+
+      const card = document.createElement('div');
+      card.className = 'result-card';
+      card.dataset.supporterMetric = 'executed';
+      card.innerHTML = `<span class="section-tag">実支援数</span><h3>${executed}</h3><p>実際に支援を実行した件数</p>`;
+      grid.insertBefore(card, cards[1] || null);
+    };
+  }
 })();
