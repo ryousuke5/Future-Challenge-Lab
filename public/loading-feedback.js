@@ -163,11 +163,12 @@
     return true;
   }
 
-  if (!installSupporterDashboardWrapper()) {
-    let attempts = 0;
-    const timer = setInterval(() => {
-      attempts += 1;
-      if (installSupporterDashboardWrapper() || attempts >= 100) clearInterval(timer);
-    }, 50);
-  }
+  const monitor = setInterval(() => {
+    installSupporterDashboardWrapper();
+  }, 250);
+  window.addEventListener('load', () => {
+    installSupporterDashboardWrapper();
+    setTimeout(installSupporterDashboardWrapper, 500);
+    setTimeout(installSupporterDashboardWrapper, 1500);
+  });
 })();
