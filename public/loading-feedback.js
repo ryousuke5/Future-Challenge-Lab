@@ -79,10 +79,10 @@
     };
   }
 
-  const originalSupporterDashboard = window.loadSupporterDashboard;
-  if (typeof originalSupporterDashboard === 'function') {
-    let observer = null;
-    let refreshTimer = null;
+  function installSupporterDashboardWrapper() {
+    const current = window.loadSupporterDashboard;
+    if (typeof current !== 'function') return false;
+    if (current.__fclSupporterDashboardWrapped) return true;
 
     const refreshMetrics = async function() {
       const dashboard = document.getElementById('supporterDashboard');
@@ -154,19 +154,20 @@
       note.textContent = '※「支援マッチ数」はマッチ件数、「実支援数」は実際に支援を実行した件数です。';
     };
 
-    window.loadSupporterDashboard = async function() {
-      if (observer) observer.disconnect();
-      await originalSupporterDashboard.apply(this, arguments);
+    const wrapped = async function() {
+      await current.apply(this, arguments);
       await refreshMetrics();
-
-      const dashboard = document.getElementById('supporterDashboard');
-      if (!dashboard) return;
-
-      observer = new MutationObserver(() => {
-        clearTimeout(refreshTimer);
-        refreshTimer = setTimeout(() => refreshMetrics(), 30);
-      });
-      observer.observe(dashboard, { childList: true, subtree: true });
     };
+    wrapped.__fclSupporterDashboardWrapped = true;
+    window.loadSupporterDashboard = wrapped;
+    return true;
+  }
+
+  if (!installSupporterDashboardWrapper()) {
+    let attempts = 0;
+    const timer = setInterval(() => {
+      attempts += 1;
+      if (installSupporterDashboardWrapper() || attempts >= 100) clearInterval(timer);
+    }, 50);
   }
 })();
