@@ -1,12 +1,12 @@
-(() => {
+﻿(() => {
   let lastClickedButton = null;
 
   function showStatus(button, text, type) {
     if (!button) return;
     button.textContent =
-      type === 'loading' ? '⏳ 読み込み中...' :
-      type === 'success' ? '✅ 完了' :
-      '❌ 失敗';
+      type === 'loading' ? '竢ｳ 隱ｭ縺ｿ霎ｼ縺ｿ荳ｭ...' :
+      type === 'success' ? '笨・螳御ｺ・ :
+      '笶・螟ｱ謨・;
     let box = button.parentElement?.querySelector('.fcl-action-status');
     if (!box) {
       box = document.createElement('div');
@@ -25,13 +25,13 @@
     const button = event.target.closest('button');
     if (!button) return;
     const text = button.textContent.trim();
-    if (text === '内容を確認') {
+    if (text === '蜀・ｮｹ繧堤｢ｺ隱・) {
       lastClickedButton = button;
-      showStatus(button, '⏳ 支援者候補の詳細を読み込んでいます...', 'loading');
+      showStatus(button, '竢ｳ 謾ｯ謠ｴ閠・呵｣懊・隧ｳ邏ｰ繧定ｪｭ縺ｿ霎ｼ繧薙〒縺・∪縺・..', 'loading');
     }
-    if (text === 'この範囲で同意する') {
+    if (text === '縺薙・遽・峇縺ｧ蜷梧э縺吶ｋ') {
       lastClickedButton = button;
-      showStatus(button, '⏳ 共有設定を保存しています...', 'loading');
+      showStatus(button, '竢ｳ 蜈ｱ譛芽ｨｭ螳壹ｒ菫晏ｭ倥＠縺ｦ縺・∪縺・..', 'loading');
     }
   }, true);
 
@@ -42,15 +42,15 @@
       try {
         const result = await originalOpenMyMatch.apply(this, arguments);
         if (target) {
-          target.textContent = '✅ 確認しました';
+          target.textContent = '笨・遒ｺ隱阪＠縺ｾ縺励◆';
           const box = target.parentElement?.querySelector('.fcl-action-status');
-          if (box) box.textContent = '✅ 支援者候補の詳細を表示しました。下へスクロールしてください。';
+          if (box) box.textContent = '笨・謾ｯ謠ｴ閠・呵｣懊・隧ｳ邏ｰ繧定｡ｨ遉ｺ縺励∪縺励◆縲ゆｸ九∈繧ｹ繧ｯ繝ｭ繝ｼ繝ｫ縺励※縺上□縺輔＞縲・;
         }
         return result;
       } catch (error) {
         if (target) {
-          target.textContent = '内容を確認';
-          showStatus(target, '❌ 詳細の読み込みに失敗しました。', 'error');
+          target.textContent = '蜀・ｮｹ繧堤｢ｺ隱・;
+          showStatus(target, '笶・隧ｳ邏ｰ縺ｮ隱ｭ縺ｿ霎ｼ縺ｿ縺ｫ螟ｱ謨励＠縺ｾ縺励◆縲・, 'error');
         }
         throw error;
       }
@@ -64,15 +64,15 @@
       try {
         const result = await originalSaveMyStoryConsent.apply(this, arguments);
         if (target) {
-          target.textContent = '✅ 保存しました';
+          target.textContent = '笨・菫晏ｭ倥＠縺ｾ縺励◆';
           const box = target.parentElement?.querySelector('.fcl-action-status');
-          if (box) box.textContent = '✅ 共有設定を保存しました。次に「物語を確認する」へ進めます。';
+          if (box) box.textContent = '笨・蜈ｱ譛芽ｨｭ螳壹ｒ菫晏ｭ倥＠縺ｾ縺励◆縲よｬ｡縺ｫ縲檎黄隱槭ｒ遒ｺ隱阪☆繧九阪∈騾ｲ繧√∪縺吶・;
         }
         return result;
       } catch (error) {
         if (target) {
-          target.textContent = 'この範囲で同意する';
-          showStatus(target, '❌ 共有設定の保存に失敗しました。', 'error');
+          target.textContent = '縺薙・遽・峇縺ｧ蜷梧э縺吶ｋ';
+          showStatus(target, '笶・蜈ｱ譛芽ｨｭ螳壹・菫晏ｭ倥↓螟ｱ謨励＠縺ｾ縺励◆縲・, 'error');
         }
         throw error;
       }
@@ -82,6 +82,7 @@
   function installSupporterDashboardWrapper() {
     const current = window.loadSupporterDashboard;
     if (typeof current !== 'function') return false;
+    return true;
     if (current.__fclSupporterDashboardWrapped) return true;
 
     const refreshMetrics = async function() {
@@ -94,27 +95,27 @@
 
       if (metricCards[0]) {
         const label = metricCards[0].querySelector('.section-tag');
-        if (label) label.textContent = '支援マッチ数';
+        if (label) label.textContent = '謾ｯ謠ｴ繝槭ャ繝∵焚';
         const note = metricCards[0].querySelector('p');
-        if (note) note.textContent = '支援者に紐づくマッチ件数';
+        if (note) note.textContent = '謾ｯ謠ｴ閠・↓邏舌▼縺上・繝・メ莉ｶ謨ｰ';
       }
       if (metricCards[1]) {
         const label = metricCards[1].querySelector('.section-tag');
-        if (label) label.textContent = '実支援実行率';
+        if (label) label.textContent = '螳滓髪謠ｴ螳溯｡檎紫';
         const note = metricCards[1].querySelector('p');
-        if (note) note.textContent = 'マッチのうち、実際に支援を実行した割合';
+        if (note) note.textContent = '繝槭ャ繝√・縺・■縲∝ｮ滄圀縺ｫ謾ｯ謠ｴ繧貞ｮ溯｡後＠縺溷牡蜷・;
       }
       if (metricCards[2]) {
         const label = metricCards[2].querySelector('.section-tag');
-        if (label) label.textContent = '週次実支援数';
+        if (label) label.textContent = '騾ｱ谺｡螳滓髪謠ｴ謨ｰ';
         const note = metricCards[2].querySelector('p');
-        if (note) note.textContent = '直近7日間に実行した支援件数';
+        if (note) note.textContent = '逶ｴ霑・譌･髢薙↓螳溯｡後＠縺滓髪謠ｴ莉ｶ謨ｰ';
       }
       if (metricCards[3]) {
         const label = metricCards[3].querySelector('.section-tag');
-        if (label) label.textContent = '支援可能枠';
+        if (label) label.textContent = '謾ｯ謠ｴ蜿ｯ閭ｽ譫';
         const note = metricCards[3].querySelector('p');
-        if (note) note.textContent = '現在設定されている支援能力枠';
+        if (note) note.textContent = '迴ｾ蝨ｨ險ｭ螳壹＆繧後※縺・ｋ謾ｯ謠ｴ閭ｽ蜉帶棧';
       }
 
       const supporterId = document.getElementById('supporterIdInput')?.value.trim() || localStorage.getItem('fcl-supporter-id') || '';
@@ -141,7 +142,7 @@
         card.dataset.supporterMetric = 'executed';
         grid.appendChild(card);
       }
-      card.innerHTML = `<span class="section-tag">実支援数</span><h3>${executed}</h3><p>実際に支援を実行した件数</p>`;
+      card.innerHTML = `<span class="section-tag">螳滓髪謠ｴ謨ｰ</span><h3>${executed}</h3><p>螳滄圀縺ｫ謾ｯ謠ｴ繧貞ｮ溯｡後＠縺滉ｻｶ謨ｰ</p>`;
 
       let note = dashboard.querySelector('[data-supporter-dashboard-note]');
       if (!note) {
@@ -153,7 +154,7 @@
         note.style.background = '#f7f8fa';
         dashboard.appendChild(note);
       }
-      note.textContent = '※「支援マッチ数」はマッチ件数、「実支援数」は実際に支援を実行した件数です。';
+      note.textContent = '窶ｻ縲梧髪謠ｴ繝槭ャ繝∵焚縲阪・繝槭ャ繝∽ｻｶ謨ｰ縲√悟ｮ滓髪謠ｴ謨ｰ縲阪・螳滄圀縺ｫ謾ｯ謠ｴ繧貞ｮ溯｡後＠縺滉ｻｶ謨ｰ縺ｧ縺吶・;
     };
 
     const wrapped = async function() {
