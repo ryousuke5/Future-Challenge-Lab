@@ -287,10 +287,11 @@ async function loadSupporterDashboard(){
 
     document.getElementById('supporterDashboard').innerHTML = `
       <div class='analysis-grid'>
-        <div class='result-card'><span class='section-tag'>総支援数</span><h3>${summary.total_support_count ?? 0}</h3></div>
-        <div class='result-card'><span class='section-tag'>観測実行率</span><h3>${summary.observed_execution_rate ?? 0}%</h3></div>
-        <div class='result-card'><span class='section-tag'>週次支援数</span><h3>${summary.weekly_support_count ?? 0}</h3></div>
-        <div class='result-card'><span class='section-tag'>支援能力</span><h3>${summary.support_capacity ?? 0}</h3></div>
+        <div class='result-card'><span class='section-tag'>支援マッチ数</span><h3>${summary.total_support_count ?? 0}</h3></div>
+          <div class='result-card'><span class='section-tag'>実支援数</span><h3>${summary.support_type_distribution?.supporter ?? 0}</h3><p>実際に支援を実行した件数</p></div>
+        <div class='result-card'><span class='section-tag'>実支援実行率</span><h3>${summary.observed_execution_rate ?? 0}%</h3></div>
+        <div class='result-card'><span class='section-tag'>週次実支援数</span><h3>${summary.weekly_support_count ?? 0}</h3></div>
+        <div class='result-card'><span class='section-tag'>支援可能枠</span><h3>${summary.support_capacity ?? 0}</h3></div>
       </div>
       <div style='margin-top:16px'>${targets}</div>
     `;
@@ -1014,3 +1015,6 @@ saveMyStoryConsent = async function(button){
     }
   }
 };
+
+
+
