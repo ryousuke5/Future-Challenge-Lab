@@ -770,6 +770,13 @@ async function generateMyStory(){
       data.story?.story_json || data.story,
       Boolean(data.story?.approved_by_participant)
     );
+
+    const notice=document.createElement('div');
+    notice.className='result-card highlight';
+    notice.style.marginTop='14px';
+    notice.innerHTML='<strong>支援者とつながるには、上にスクロールして戻り「この支援者とつながる」をクリックしてください。</strong>';
+    const panel=document.getElementById('myStoryPanel');
+    if(panel) panel.appendChild(notice);
   }catch(error){
     if(button){ button.disabled=false; button.textContent="保存しました"; }
     const panel=document.getElementById('myStoryPanel');
@@ -1015,6 +1022,7 @@ saveMyStoryConsent = async function(button){
     }
   }
 };
+
 
 
 
