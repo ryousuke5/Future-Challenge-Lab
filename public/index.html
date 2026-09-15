@@ -8,25 +8,4 @@
 <section class="card challenger-hub-card"><h2>6. 挑戦者マイページ：支援者とつながる</h2><p>ここでは <strong>participant ID / supporter ID / match ID の入力は不要</strong>です。</p><p>あなたの登録情報からFCLが自動で候補を取得し、画面上のボタンだけで「確認 → 同意 → 物語 → 承認」と進めます。</p><div id="challengerHub"></div></section>
 <section class="card"><h2>7. Supporter Dashboard</h2><div class="grid"><input id="supporterIdInput" placeholder="Supporter ID"><button id="supporterDashboardBtn" onclick="loadSupporterDashboard()">支援者ダッシュボードを表示</button></div><div id="supporterDashboard" class="dashboard-panel"></div></section>
 <section class="card"><h2>8. 研究ダッシュボード</h2><button id="dashboardBtn" onclick="dashboard()">最新データを見る</button><div id="dash" class="dashboard-panel"></div></section>
-</main><script src="app.js"></script><script src="/loading-feedback.js"></script>
-<script>
-(function(){
-  async function forceSupporterMetrics(){
-    const dashboard=document.getElementById('supporterDashboard');
-    const grid=dashboard?.querySelector('.analysis-grid');
-    if(!grid)return;
-    const all=[...grid.querySelectorAll('.result-card')];
-    const metricCards=all.filter(card=>!card.dataset.supporterMetric);
-    const labels=[['支援マッチ数','支援者に紐づくマッチ件数'],['実支援実行率','マッチのうち、実際に支援を実行した割合'],['週次実支援数','直近7日間に実行した支援件数'],['支援可能枠','現在設定されている支援能力枠']];
-    labels.forEach((item,i)=>{const card=metricCards[i];if(!card)return;const label=card.querySelector('.section-tag');const note=card.querySelector('p');if(label)label.textContent=item[0];if(note)note.textContent=item[1];});
-    const supporterId=document.getElementById('supporterIdInput')?.value.trim()||localStorage.getItem('fcl-supporter-id')||'';
-    let executed=0;
-    if(supporterId){try{const data=await fetch('/api/supporter/dashboard?supporter_id='+encodeURIComponent(supporterId)).then(r=>r.json());executed=Number(data?.summary?.support_type_distribution?.supporter||0);}catch(e){}}
-    let card=grid.querySelector('[data-supporter-metric="executed"]');
-    if(!card){card=document.createElement('div');card.className='result-card';card.dataset.supporterMetric='executed';grid.appendChild(card);}
-    card.innerHTML='<span class="section-tag">実支援数</span><h3>'+executed+'</h3><p>実際に支援を実行した件数</p>';
-  }
-  document.addEventListener('click',function(e){const b=e.target.closest('#supporterDashboardBtn');if(b){setTimeout(forceSupporterMetrics,100);setTimeout(forceSupporterMetrics,500);setTimeout(forceSupporterMetrics,1200);}},true);
-  setInterval(forceSupporterMetrics,1500);
-})();
-</script></body></html>
+</main><script src="app.js"></script><script src="/loading-feedback.js"></script></body></html>
