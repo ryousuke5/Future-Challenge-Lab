@@ -12,19 +12,16 @@
     .join-points{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:22px}
     .join-point{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:16px}
     .join-point strong{display:block;margin-bottom:7px}
-    .join-step{counter-reset:steps;display:grid;gap:10px}
+    .join-step{display:grid;gap:10px}
     .join-step div{padding:14px 16px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc}
     .join-step strong{display:block;margin-bottom:5px}
     .join-form{max-width:720px}
     .join-note{font-size:13px;color:#64748b;line-height:1.7}
-    .join-success{display:none;margin-top:14px;padding:16px;border-radius:14px;background:#f0fdf4;border:1px solid #bbf7d0}
+    .join-success{display:none;margin-top:14px;padding:16px;border-radius:14px;background:#f0fdf4;border:1px solid #bbf7d0;line-height:1.7}
+    .join-success .next{margin-top:14px;padding-top:14px;border-top:1px solid #bbf7d0}
     .join-error{display:none;margin-top:14px;padding:16px;border-radius:14px;background:#fff1f2;border:1px solid #fecdd3}
-    .join-days{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:14px}
-    .join-day{padding:14px 16px;border:1px solid #e2e8f0;border-radius:14px;background:#fff}
-    .join-day strong{display:block;margin-bottom:5px}
-    .join-footer-note{margin-top:14px;padding:14px 16px;border-radius:14px;background:#f8fafc;border:1px solid #e2e8f0;font-size:13px;color:#64748b;line-height:1.7}
     .back-link{display:inline-block;margin-bottom:16px}
-    @media(max-width:700px){.join-points{grid-template-columns:1fr}.join-days{grid-template-columns:1fr}.join-hero{padding:24px}}
+    @media(max-width:700px){.join-points{grid-template-columns:1fr}.join-hero{padding:24px}}
   </style>
 </head>
 <body>
@@ -43,27 +40,25 @@
   </section>
 
   <section class="card">
+    <h2>7日間の流れ</h2>
+    <div class="join-step">
+      <div><strong>Day 1｜現在地を知る</strong><span>挑戦内容を登録して、最初のチェックインをします。</span></div>
+      <div><strong>Day 2｜小さく続ける</strong><span>今日できる最小の一歩を1つ実行します。</span></div>
+      <div><strong>Day 3｜止まりそうな理由を見る</strong><span>負担・迷い・環境など、続けにくさを記録します。</span></div>
+      <div><strong>Day 4｜支援を試す</strong><span>必要に応じてAIや支援者との接続を試します。</span></div>
+      <div><strong>Day 5｜行動結果を残す</strong><span>実行できたか、何が壁だったかを記録します。</span></div>
+      <div><strong>Day 6｜変化を見る</strong><span>これまでの状態と行動を振り返ります。</span></div>
+      <div><strong>Day 7｜次の一歩を決める</strong><span>7日間の記録をもとに、次に続ける行動を自分で選びます。</span></div>
+    </div>
+  </section>
+
+  <section class="card">
     <h2>こんな人を募集しています</h2>
     <div class="join-step">
       <div><strong>「始めたけど続かない」</strong><span>やりたいことはあるのに、途中で止まりそう。</span></div>
       <div><strong>「一人だと方向が分からなくなる」</strong><span>何を次にやればいいか整理したい。</span></div>
       <div><strong>「今の挑戦を客観的に見たい」</strong><span>自分の状態と変化を記録してみたい。</span></div>
     </div>
-  </section>
-
-  <section class="card">
-    <h2>7日間の流れ</h2>
-    <p>毎日すべてを完璧にやる必要はありません。短い記録から始めて、最後に「何が続けやすかったか」を振り返ります。</p>
-    <div class="join-days">
-      <div class="join-day"><strong>Day 1｜現在地を知る</strong><span>挑戦と目標を登録し、最初のチェックインをします。</span></div>
-      <div class="join-day"><strong>Day 2｜小さく続ける</strong><span>今日の状態を記録し、最小の一歩を選びます。</span></div>
-      <div class="join-day"><strong>Day 3｜止まりそうな理由を見る</strong><span>負担や障壁を振り返り、次の行動を調整します。</span></div>
-      <div class="join-day"><strong>Day 4｜支援を試す</strong><span>必要なら支援者候補との接続を試します。</span></div>
-      <div class="join-day"><strong>Day 5｜行動結果を残す</strong><span>できたこと・できなかったことを記録します。</span></div>
-      <div class="join-day"><strong>Day 6｜変化を見る</strong><span>これまでの状態と行動を振り返ります。</span></div>
-      <div class="join-day"><strong>Day 7｜次の一歩を決める</strong><span>7日間を振り返り、これから続ける方法を整理します。</span></div>
-    </div>
-    <div class="join-footer-note">FCLは開発中の実験サービスです。分析結果は参考情報であり、参加者自身が次の行動を選ぶことを前提としています。</div>
   </section>
 
   <section class="card join-form">
@@ -124,8 +119,9 @@ form.addEventListener('submit',async(e)=>{
     if(!r.ok)throw new Error(x.error||'登録に失敗しました');
     localStorage.setItem('fcl-participant-id',x.id);
     success.style.display='block';
-    success.innerHTML='<strong>登録完了しました。</strong><br>登録ID: '+x.id+'<br><br><a href="/">FCL本体へ進む →</a>';
+    success.innerHTML='<strong>登録完了しました。</strong><br>登録ID: '+x.id+'<div class="next"><strong>次にやること</strong><br>① 「FCL本体へ進む」を押す<br>② 今日の5問に回答する<br>③ AI分析を確認する<br>④ 今日の次の一歩を1つ実行する<br><br><a href="/">FCL本体へ進む →</a></div>';
     form.reset();
+    success.scrollIntoView({behavior:'smooth',block:'center'});
   }catch(err){
     error.style.display='block';
     error.textContent=err.message||'登録に失敗しました。もう一度お試しください。';
