@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: free
     buildCommand: npm ci
-    startCommand: npm start
+    startCommand: node server.js & node email-worker.js
     healthCheckPath: /api/health
     autoDeployTrigger: commit
     envVars:
@@ -12,3 +12,15 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_EMAIL_MODEL
+        value: gpt-4o-mini
+      - key: RESEND_API_KEY
+        sync: false
+      - key: FCL_FROM_EMAIL
+        sync: false
+      - key: FCL_PUBLIC_URL
+        sync: false
+      - key: EMAIL_WORKER_POLL_MS
+        value: "15000"
