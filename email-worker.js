@@ -11,16 +11,22 @@ const model = process.env.OPENAI_EMAIL_MODEL || 'gpt-4o-mini';
 const pollMs = Number(process.env.EMAIL_WORKER_POLL_MS || 15000);
 
 if (!supabaseUrl || !serviceRoleKey) {
-  console.error('[email-worker] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are required');
-  process.exit(1);
-}
-if (!resendApiKey || !fromEmail || !openAiApiKey) {
-  console.error('[email-worker] RESEND_API_KEY / FCL_FROM_EMAIL / OPENAI_API_KEY are required. Worker will stop so emails are not sent without AI generation.');
-  process.exit(1);
+  console.error('[email-worker] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are required; worker disabled');
 }
 
-const supabase = createClient(supabaseUrl, serviceRoleKey);
+const supabase = supabaseUrl && serviceRoleKey
+  ? createClient(supabaseUrl, serviceRoleKey)
+  : null;
 let running = false;
+let lastConfigError = '';
+
+function emailConfigError() {
+  if (!supabase) return 'Supabase is not configured';
+  if (!resendApiKey) return 'RESEND_API_KEY is not configured';
+  if (!openAiApiKey) return 'OPENAI_API_KEY is not configured';
+  if (!fromEmail) return 'FCL_FROM_EMAIL is not configured';
+  return '';
+}
 
 function escapeHtml(value = '') {
   return String(value)
@@ -152,7 +158,7 @@ async function sendEmail({ to, email, idempotencyKey }) {
 }
 
 async function recordEmailSent({ event, match, recipientRole, recipientEmail, email, resendId }) {
-  await supabase.from('connection_events').insert({
+  const { error } = await supabase.from('connection_events').insert({
     participant_id: match.participant_id,
     supporter_id: match.supporter_id,
     match_id: match.id,
@@ -168,6 +174,7 @@ async function recordEmailSent({ event, match, recipientRole, recipientEmail, em
     }),
     created_at: new Date().toISOString()
   });
+  if (error) throw error;
 }
 
 async function processMatchEvent(event) {
@@ -218,6 +225,19 @@ async function poll() {
   if (running) return;
   running = true;
   try {
+    const configError = emailConfigError();
+    if (configError) {
+      if (configError !== lastConfigError) {
+        console.warn(`[email-worker] waiting for configuration: ${configError}`);
+        lastConfigError = configError;
+      }
+      return;
+    }
+    if (lastConfigError) {
+      console.log('[email-worker] email configuration is ready');
+      lastConfigError = '';
+    }
+
     const { data: events, error } = await supabase
       .from('connection_events')
       .select('*')
