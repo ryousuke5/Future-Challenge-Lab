@@ -81,13 +81,25 @@ const form=document.getElementById('joinForm');
 const btn=document.getElementById('joinBtn');
 const success=document.getElementById('success');
 const error=document.getElementById('error');
+const nameInput=document.getElementById('name');
+const emailInput=document.getElementById('email');
+const challengeInput=document.getElementById('challenge');
+const goalInput=document.getElementById('goal');
+
 form.addEventListener('submit',async(e)=>{
   e.preventDefault();
-  success.style.display='none'; error.style.display='none';
+  success.style.display='none';
+  error.style.display='none';
   const original=btn.textContent;
-  btn.disabled=true; btn.textContent='登録中…';
+  btn.disabled=true;
+  btn.textContent='登録中…';
   try{
-    const payload={name:name.value.trim(),email:email.value.trim(),challenge:challenge.value.trim(),goal:goal.value.trim()};
+    const payload={
+      name:nameInput.value.trim(),
+      email:emailInput.value.trim(),
+      challenge:challengeInput.value.trim(),
+      goal:goalInput.value.trim()
+    };
     const r=await fetch('/api/participants',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
     const x=await r.json();
     if(!r.ok)throw new Error(x.error||'登録に失敗しました');
@@ -96,8 +108,12 @@ form.addEventListener('submit',async(e)=>{
     success.innerHTML='<strong>登録完了しました。</strong><br>登録ID: '+x.id+'<br><br><a href="/">FCL本体へ進む →</a>';
     form.reset();
   }catch(err){
-    error.style.display='block'; error.textContent=err.message||'登録に失敗しました。もう一度お試しください。';
-  }finally{btn.disabled=false;btn.textContent=original;}
+    error.style.display='block';
+    error.textContent=err.message||'登録に失敗しました。もう一度お試しください。';
+  }finally{
+    btn.disabled=false;
+    btn.textContent=original;
+  }
 });
 </script>
 </body>
