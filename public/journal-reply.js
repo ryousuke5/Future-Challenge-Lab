@@ -91,7 +91,6 @@ function buildHumanJournalReply(result, outcome = null){
     '今日も一歩。お疲れさまでした。'
   ];
 
-  // Keep replies warm and varied without repeating the analytical outputs.
   const seedSource = `${insight}|${state}|${outcomeStatus}`;
   const seed = Array.from(seedSource).reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
   const pick = (pool, offset = 0) => pool[(seed + offset) % pool.length];
@@ -113,6 +112,12 @@ function renderJournalReply(result, decision = null, outcome = null){
   if(!panel) return;
 
   const replyText = buildHumanJournalReply(result, outcome);
+  const paragraphs = replyText
+    .split(/\n\s*\n/)
+    .map(text => text.trim())
+    .filter(Boolean)
+    .map(text => `<p>${journalReplyEscape(text)}</p>`)
+    .join('');
 
   panel.innerHTML = `
     <div class="journal-reply-box">
@@ -120,7 +125,7 @@ function renderJournalReply(result, decision = null, outcome = null){
         <span class="section-tag">FCL RESPONSE</span>
         <h3>あなたの日誌への返信</h3>
       </div>
-      <div class="journal-reply-body human-journal-reply">${journalReplyEscape(replyText).replace(/\n/g,'<br><br>')}</div>
+      <div class="journal-reply-body human-journal-reply">${paragraphs}</div>
     </div>
   `;
 }
