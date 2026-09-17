@@ -13,6 +13,7 @@
   function updateApprovalLabels(){
     const root=document.getElementById('matches');
     if(!root)return;
+    root.querySelectorAll('button[onclick*="requestConnection"]').forEach(btn=>{btn.textContent='この支援者に支援をお願いする';});
     root.querySelectorAll('button[onclick*="approveMatch"]').forEach(btn=>{
       const action=btn.getAttribute('onclick')||'';
       if(action.includes("'challenger'")) btn.textContent='この支援者との接続を承認';
