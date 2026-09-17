@@ -10,6 +10,10 @@ const publicUrl = (process.env.FCL_PUBLIC_URL || 'http://localhost:3000').replac
 const model = process.env.OPENAI_EMAIL_MODEL || 'gpt-4o-mini';
 const pollMs = Number(process.env.EMAIL_WORKER_POLL_MS || 15000);
 
+// Only process connection events created after this worker instance starts.
+// This prevents old, previously-unsent events from being bulk-sent after a deploy/restart.
+const workerStartedAt = new Date().toISOString();
+
 if (!supabaseUrl || !serviceRoleKey) {
   console.error('[email-worker] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are required; worker disabled');
 }
@@ -263,6 +267,7 @@ async function poll() {
       .from('connection_events')
       .select('*')
       .eq('event_type', 'connection_confirmed')
+      .gt('created_at', workerStartedAt)
       .order('created_at', { ascending: true })
       .limit(50);
     if (error) throw error;
@@ -281,6 +286,6 @@ async function poll() {
   }
 }
 
-console.log(`[email-worker] started; poll=${pollMs}ms model=${model} fallback=enabled`);
+console.log(`[email-worker] started; poll=${pollMs}ms model=${model} only_new_events_after=${workerStartedAt}`);
 await poll();
 setInterval(poll, pollMs);
