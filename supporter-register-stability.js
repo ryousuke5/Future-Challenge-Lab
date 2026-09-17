@@ -17,7 +17,7 @@ function asArray(value) {
 
 function registerWithStableSupporterId(req, res, fallbackHandlers) {
   if (!supabase) {
-    return originalPost.call(req.app, '/api/supporters/register', ...fallbackHandlers);
+    return fallbackHandlers[0]?.(req, res);
   }
 
   void (async () => {
@@ -27,7 +27,7 @@ function registerWithStableSupporterId(req, res, fallbackHandlers) {
 
       // Without an email address there is no stable identity key yet.
       if (!email) {
-        return originalPost.call(req.app, '/api/supporters/register', ...fallbackHandlers);
+        return fallbackHandlers[0]?.(req, res);
       }
 
       const { data: existingRows, error: existingError } = await supabase
