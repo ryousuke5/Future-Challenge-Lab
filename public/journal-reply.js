@@ -118,7 +118,7 @@ function renderJournalReply(result, decision = null, outcome = null){
     <div class="journal-reply-box">
       <div class="journal-reply-heading">
         <span class="section-tag">FCL RESPONSE</span>
-        <h3>人生OSアップデート日誌への返信</h3>
+        <h3>あなたの日誌への返信</h3>
       </div>
       <div class="journal-reply-body human-journal-reply">${journalReplyEscape(replyText).replace(/\n/g,'<br><br>')}</div>
     </div>
