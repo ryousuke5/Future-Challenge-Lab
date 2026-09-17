@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
+import crypto from 'node:crypto';
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -45,6 +46,13 @@ function normalizeEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
 }
 
+function createAccessToken(matchId, role) {
+  if (!serviceRoleKey) return '';
+  const payload = Buffer.from(JSON.stringify({ match_id: matchId, role })).toString('base64url');
+  const signature = crypto.createHmac('sha256', serviceRoleKey).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+
 async function getRows(table, filters = {}) {
   let query = supabase.from(table).select('*');
   for (const [key, value] of Object.entries(filters)) query = query.eq(key, value);
@@ -68,11 +76,12 @@ async function hasSent(matchId, recipientRole) {
 function buildFallbackEmail({ recipientRole, participant, supporter, matchId }) {
   const recipientName = recipientRole === 'challenger' ? (participant?.name || '挑戦者') : (supporter?.supporter_name || '支援者');
   const otherName = recipientRole === 'challenger' ? (supporter?.supporter_name || '支援者') : (participant?.name || '挑戦者');
-  const detailUrl = `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(matchId)}`;
+  const token = createAccessToken(matchId, recipientRole);
+  const detailUrl = `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(matchId)}&token=${encodeURIComponent(token)}`;
   const subject = 'FCL｜支援のつながりが成立しました';
   const body = recipientRole === 'challenger'
-    ? `${recipientName}さん\n\nFCLで、支援者として${otherName}さんとの接続が成立しました。\n\n挑戦内容：${participant?.challenge || '未登録'}\n目標：${participant?.goal || '未登録'}\n\nまずはお互いの状況を話し、次の一歩を一緒に整理してみてください。\n\n詳細：${detailUrl}\n\nFuture Challenge Lab`
-    : `${recipientName}さん\n\nFCLで、挑戦者${otherName}さんとの支援接続が成立しました。\n\n挑戦内容：${participant?.challenge || '未登録'}\n目標：${participant?.goal || '未登録'}\n\nまずは現在の状況を聞き、次の一歩を一緒に整理してください。\n\n詳細：${detailUrl}\n\nFuture Challenge Lab`;
+    ? `${recipientName}さん\n\nFCLで、支援者として${otherName}さんとの接続が成立しました。\n\n挑戦内容：${participant?.challenge || '未登録'}\n目標：${participant?.goal || '未登録'}\n\nまずはFCLの接続ページで現在の状況を共有し、次の一歩を一緒に整理してみてください。\n\nFCLで開く：${detailUrl}\n\nFuture Challenge Lab`
+    : `${recipientName}さん\n\nFCLで、挑戦者${otherName}さんとの支援接続が成立しました。\n\n挑戦内容：${participant?.challenge || '未登録'}\n目標：${participant?.goal || '未登録'}\n\nまずはFCLの接続ページで現在の状況を聞き、次の一歩を一緒に整理してください。\n\nFCLで開く：${detailUrl}\n\nFuture Challenge Lab`;
   return { subject, body, detailUrl, source: 'fallback' };
 }
 
@@ -89,7 +98,7 @@ async function generateEmail({ recipientRole, participant, supporter, matchId })
   const prompt = `
 FCL（Future Challenge Lab）の支援接続が成立しました。
 以下の情報だけを使って、日本語の短いメールを作ってください。
-目的は「双方がつながったことを知らせ、最初の会話につなげる」ことです。
+目的は「双方がつながったことを知らせ、FCLの接続ページで最初の会話につなげる」ことです。
 押しつけず、安心感のある自然な文面にしてください。
 営業色、誇張、断定的な評価、個人情報の推測は禁止です。
 本文は400字以内を目安にしてください。
@@ -102,7 +111,7 @@ FCL（Future Challenge Lab）の支援接続が成立しました。
 挑戦者の目標: ${participant?.goal || '未登録'}
 支援者の支援分野: ${supporter?.support_category || '未登録'}
 支援者の強み: ${Array.isArray(supporter?.strengths) ? supporter.strengths.join('、') : ''}
-詳細URL: ${detailUrl}
+FCL接続ページURL: ${detailUrl}
 
 次のJSONだけを返してください。
 {"subject":"...","body":"..."}
@@ -193,7 +202,7 @@ async function recordEmailSent({ event, match, recipientRole, recipientEmail, em
       subject: email.subject,
       resend_id: resendId || null,
       source_event_id: event.id,
-      detail_url: email.detailUrl,
+      detail_url: `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}`,
       generation_source: email.source || 'unknown',
       ai_error: email.ai_error || null
     }),
