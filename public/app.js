@@ -137,7 +137,7 @@ async function match(){
   if(!participant)return alert('先に挑戦者登録をしてください');
   await withLoadingUI(document.getElementById('matchBtn'), 'マッチング処理中です。しばらくお待ちください…', async () => {
     const r=await api('/api/matches',{participant_id:participant.id});
-    matches.innerHTML=r.map(x=>`<div class="match"><strong>${x.supporter?.organization_name||'支援者'}</strong> / ${x.supporter?.supporter_name||''}<div>マッチ度 ${x.score}点</div><p>${x.reason}</p><div data-match-status="${x.id}">状態: ${x.status||'pending'}</div><button onclick="requestConnection('${x.id}', this)">接続を依頼</button><button onclick="approveMatch('${x.id}','challenger',this)">この支援者との接続を承認</button><button onclick="approveMatch('${x.id}','supporter',this)">この挑戦者への支援を承認</button><button onclick="saveSupportOutcome('${x.id}','${x.supporter?.id||''}', this)">支援後：前進した</button></div>`).join('')||'<p>現在候補がありません。支援パートナーを登録してください。</p>';
+    matches.innerHTML=r.map(x=>`<div class="match"><strong>${x.supporter?.organization_name||'支援者'}</strong> / ${x.supporter?.supporter_name||''}<div>マッチ度 ${x.score}点</div><p>${x.reason}</p><div data-match-status="${x.id}">状態: ${x.status||'pending'}</div><button onclick="requestConnection('${x.id}', this)">この支援者に支援をお願いする</button><button onclick="approveMatch('${x.id}','supporter',this)">この挑戦者への支援を承認</button><button onclick="saveSupportOutcome('${x.id}','${x.supporter?.id||''}', this)">支援後：前進した</button></div>`).join('')||'<p>現在候補がありません。支援パートナーを登録してください。</p>';
   });
 }
 async function approveMatch(id,actor,btn){
@@ -151,7 +151,7 @@ async function requestConnection(id, btn){
   try { await withLoadingUI(btn, '接続処理中です。しばらくお待ちください…', async () => {
     const r=await fetch('/api/matches/'+id+'/request',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({note:'Future Challenge Labからの接続依頼'})});
     if(!r.ok)return alert('接続依頼に失敗しました');
-    alert('接続依頼を記録しました。支援後の結果も入力するとAIが次回の推薦を改善します。');
+    alert('支援依頼を送信しました。支援者が確認・承認すると接続が成立します。');
   }); } catch(error) { showUiError(btn.closest('.match')?.querySelector(`[data-match-status="${id}"]`),'接続に失敗しました。'); }
 }
 function buildDashboardCards(data){
