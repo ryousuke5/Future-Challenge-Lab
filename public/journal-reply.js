@@ -7,36 +7,112 @@ function journalReplyEscape(value){
     .replace(/'/g,'&#39;');
 }
 
+function cleanJournalText(value){
+  return String(value ?? '')
+    .replace(/^(現在地|今日の気づき|FCLの学習結果|今回の解決策|次の一歩|学習結果)：?/,'')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
+function buildHumanJournalReply(result, outcome = null){
+  const r = result || {};
+  const outcomeStatus = outcome?.outcome_status || '';
+  const insight = cleanJournalText(r.insight);
+  const state = cleanJournalText(r.state);
+
+  const openingByOutcome = {
+    completed: [
+      '今日も一日、お疲れさまでした。',
+      '今日もちゃんと前に進めています。',
+      '今日の記録、読みました。お疲れさまです。'
+    ],
+    partial: [
+      '今日もお疲れさまでした。',
+      '今日の記録、読みました。',
+      '今日も一日、よくやりました。'
+    ],
+    not_completed: [
+      '今日もお疲れさまでした。',
+      '今日は思うようにいかない日だったかもしれませんね。',
+      '今日の記録、ちゃんと受け取りました。'
+    ],
+    not_started: [
+      '今日もお疲れさまでした。',
+      '今日の記録、読みました。',
+      'ここまで書き残せたことも、ちゃんと一歩です。'
+    ]
+  };
+
+  const middleByOutcome = {
+    completed: [
+      'できたことは、そのまま素直に喜んでいいと思います。小さくても、続けた一日はちゃんと積み重なっています。',
+      '毎日すべてを完璧にする必要はありません。今日できたことが、明日の自分を助けてくれます。'
+    ],
+    partial: [
+      '全部できなかったとしても大丈夫です。続けられた部分には、ちゃんと意味があります。',
+      '今日は全部を取り切る日ではなかっただけ。できたところを残して、また明日につなげれば十分です。'
+    ],
+    not_completed: [
+      'できなかった日は、失敗として片づけなくて大丈夫です。そういう日も含めて、自分のペースを知る材料になります。',
+      'うまくいかない日があるのは自然なことです。今日の自分を責めるより、明日また戻ってこられれば十分です。'
+    ],
+    not_started: [
+      'まだ動けていなくても、焦らなくて大丈夫です。始める日は、いつでもここから作れます。',
+      '今日は準備の日だったのかもしれません。大きく動かなくても、次につながる一日です。'
+    ]
+  };
+
+  const closingByOutcome = {
+    completed: [
+      '今日の自分に、ひとまず「よくやった」と言ってあげてください。',
+      'この調子で、明日も無理のない一歩でいきましょう。'
+    ],
+    partial: [
+      '明日はまた、できるところからで大丈夫です。',
+      '焦らず、自分のペースで続けていきましょう。'
+    ],
+    not_completed: [
+      '今日は休んでもいい。明日、また一歩戻ってくれば大丈夫です。',
+      '続けることは、毎日完璧にやることではありません。また明日で大丈夫です。'
+    ],
+    not_started: [
+      '明日は3分でもいいので、できそうなところから始めてみましょう。',
+      'まずは小さく。動き出せたら、それで十分です。'
+    ]
+  };
+
+  const openingPool = openingByOutcome[outcomeStatus] || ['今日もお疲れさまでした。','今日の記録、読みました。'];
+  const middlePool = middleByOutcome[outcomeStatus] || [
+    '今日できたことも、できなかったことも、どちらも今の自分の大切な記録です。',
+    '毎日完璧である必要はありません。続けようとしていること自体に意味があります。'
+  ];
+  const closingPool = closingByOutcome[outcomeStatus] || [
+    'また明日、自分のペースでいきましょう。',
+    '今日も一歩。お疲れさまでした。'
+  ];
+
+  // Keep replies warm and varied without repeating the analytical outputs.
+  const seedSource = `${insight}|${state}|${outcomeStatus}`;
+  const seed = Array.from(seedSource).reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
+  const pick = (pool, offset = 0) => pool[(seed + offset) % pool.length];
+
+  const personalizedLine = insight && !/観測|学習|解決策|次の一歩|状態を整理/.test(insight)
+    ? `今日の記録から、${insight.replace(/[。．]$/,'')}という部分も、ちゃんと伝わってきました。`
+    : '';
+
+  return [
+    pick(openingPool, 0),
+    personalizedLine,
+    pick(middlePool, 1),
+    pick(closingPool, 2)
+  ].filter(Boolean).join('\n\n');
+}
+
 function renderJournalReply(result, decision = null, outcome = null){
   const panel = document.getElementById('journalReply');
   if(!panel) return;
 
-  const r = result || {};
-  const supportPattern = r.personal_support_pattern || {};
-  const solutions = Array.isArray(r.solutions) ? r.solutions.slice(0,3) : [];
-  const selectedOption = decision?.selected_option || r.recommended_option || solutions[0]?.id || 'A';
-  const nextAction = decision?.next_action || r.next_action || '今日の最初の一歩を3分だけ始める';
-
-  const outcomeLabel = {
-    completed: '実行できた',
-    partial: '一部実行できた',
-    not_completed: '実行できなかった',
-    not_started: 'まだ開始していない'
-  }[outcome?.outcome_status] || null;
-
-  const replyText = [
-    '今日の日誌を確認しました。',
-    `現在地：${r.state || '現在の状態を観測中です。'}`,
-    `今日の気づき：${r.insight || '今の状況を整理しながら、次の一歩を小さくすることが重要です。'}`,
-    `FCLの学習結果：${supportPattern.statement || 'まだ観測データが少ないため、複数の方法を試しながら学習します。'}`,
-    `今回の解決策：${solutions.find(s => s.id === selectedOption)?.title || '選んだ解決策を進める'}`,
-    `次の一歩：${nextAction}`,
-    outcomeLabel ? `行動結果：${outcomeLabel}` : ''
-  ].filter(Boolean).join('\n');
-
-  const solutionHtml = solutions.length
-    ? `<ul class="journal-reply-list">${solutions.map(s => `<li><strong>${journalReplyEscape(s.id)}：</strong>${journalReplyEscape(s.title)}${s.description ? ` — ${journalReplyEscape(s.description)}` : ''}</li>`).join('')}</ul>`
-    : '<p>解決策は現在の観測データから整理中です。</p>';
+  const replyText = buildHumanJournalReply(result, outcome);
 
   panel.innerHTML = `
     <div class="journal-reply-box">
@@ -44,26 +120,7 @@ function renderJournalReply(result, decision = null, outcome = null){
         <span class="section-tag">FCL RESPONSE</span>
         <h3>人生OSアップデート日誌への返信</h3>
       </div>
-      <div class="journal-reply-body">${journalReplyEscape(replyText).replace(/\n/g,'<br>')}</div>
-      <div class="journal-reply-grid">
-        <div class="result-card">
-          <span class="section-tag">学習結果</span>
-          <p>${journalReplyEscape(supportPattern.statement || '観測データが少ないため、まだ学習途中です。')}</p>
-        </div>
-        <div class="result-card">
-          <span class="section-tag">今回の気づき</span>
-          <p>${journalReplyEscape(r.insight || '今の状況を整理し、次の一歩を小さくします。')}</p>
-        </div>
-      </div>
-      <div class="result-card journal-reply-solution">
-        <span class="section-tag">解決策候補</span>
-        ${solutionHtml}
-      </div>
-      <div class="result-card journal-reply-next">
-        <span class="section-tag">次の一歩</span>
-        <h3>${journalReplyEscape(nextAction)}</h3>
-        <p class="journal-reply-note">※これは現在までの観測データから作った仮説です。行動結果が増えるほど、本人に合う支援方法を学習できます。</p>
-      </div>
+      <div class="journal-reply-body human-journal-reply">${journalReplyEscape(replyText).replace(/\n/g,'<br><br>')}</div>
     </div>
   `;
 }
