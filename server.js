@@ -993,8 +993,14 @@ app.post('/api/matches',async(req,res)=>{
 });
 
 app.post('/api/matches/:id/request',async(req,res)=>{
-  try{ const m=(await select('supporter_matches',{id:req.params.id}))[0]; if(!m) return res.status(404).json({error:'match not found'}); const updated=await update('supporter_matches',m.id,{status:'pending',updated_at:new Date().toISOString()}); await insert('connection_events',{participant_id:m.participant_id,supporter_id:m.supporter_id,match_id:m.id,event_type:'connection_requested',note:req.body.note||''}); res.json(updated); }
-  catch(e){res.status(500).json({error:e.message});}
+  try{
+    const m=(await select('supporter_matches',{id:req.params.id}))[0];
+    if(!m) return res.status(404).json({error:'match not found'});
+    if(['declined','expired'].includes(effectiveMatchStatus(m))) return res.status(409).json({error:'match is not active'});
+    if(approvalSnapshot(m).challenger) return res.status(409).json({error:'connection request already recorded'});
+    const updated=await updateMatchApprovalStatus(m.id,'challenger','request',req.body?.note||'Future Challenge Labからの接続依頼');
+    res.json(updated);
+  }catch(e){res.status(500).json({error:e.message});}
 });
 
 app.get('/api/matches/:id/detail', async (req, res) => {
@@ -1073,7 +1079,7 @@ app.post('/api/matches/:id/send-email', async (req, res) => {
   }
 });
 
-async function updateMatchApprovalStatus(matchId, actor, action){
+async function updateMatchApprovalStatus(matchId, actor, action, note=''){
   const match = (await select('supporter_matches',{id:matchId}))[0];
   if (!match) throw new Error('match not found');
   const currentStatus = effectiveMatchStatus(match);
@@ -1134,7 +1140,7 @@ async function updateMatchApprovalStatus(matchId, actor, action){
       supporter_id: match.supporter_id,
       match_id: match.id,
       event_type: 'connection_confirmed',
-      note: 'challenger and supporter approved the connection',
+      note: 'challenger requested connection and supporter approved the support',
       created_at: now
     });
   } else if (finalStatus !== 'connected') {
@@ -1142,8 +1148,8 @@ async function updateMatchApprovalStatus(matchId, actor, action){
       participant_id: match.participant_id,
       supporter_id: match.supporter_id,
       match_id: match.id,
-      event_type: 'approval_received',
-      note: `${actor} approved the match`,
+      event_type: action === 'request' ? 'connection_requested' : 'approval_received',
+      note: action === 'request' ? note : actor + ' approved the match',
       created_at: now
     });
   }
