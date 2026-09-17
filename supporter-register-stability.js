@@ -1,7 +1,9 @@
 import express from 'express';
 import { createClient } from '@supabase/supabase-js';
+import { registerMatchMessageRoutes } from './match-messages.js';
 
 const originalPost = express.application.post;
+const originalListen = express.application.listen;
 const hasSupabase = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 const supabase = hasSupabase
   ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -109,4 +111,12 @@ express.application.post = function patchedPost(path, ...handlers) {
     return originalPost.call(this, path, (req, res) => registerWithStableSupporterId(req, res, handlers));
   }
   return originalPost.call(this, path, ...handlers);
+};
+
+express.application.listen = function patchedListen(...args) {
+  if (!this.__fclMatchMessagesRegistered) {
+    registerMatchMessageRoutes(this);
+    this.__fclMatchMessagesRegistered = true;
+  }
+  return originalListen.apply(this, args);
 };
