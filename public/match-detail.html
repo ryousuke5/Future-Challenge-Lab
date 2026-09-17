@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>FCL｜支援接続ページ</title>
+  <style>
+    :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#1f2937;background:#f6f7f9}
+    *{box-sizing:border-box}
+    body{margin:0;background:#f6f7f9}
+    main{max-width:880px;margin:0 auto;padding:28px 16px 56px}
+    .hero,.card{background:#fff;border:1px solid #e5e7eb;border-radius:18px;box-shadow:0 8px 30px rgba(15,23,42,.05)}
+    .hero{padding:24px;margin-bottom:16px}
+    .eyebrow{font-size:12px;letter-spacing:.12em;color:#64748b;font-weight:700}
+    h1{font-size:28px;margin:8px 0 10px}
+    h2{font-size:20px;margin:0 0 12px}
+    h3{font-size:17px;margin:0 0 8px}
+    p{line-height:1.7;margin:6px 0}
+    .status{display:inline-flex;padding:6px 10px;border-radius:999px;background:#eef2ff;color:#3730a3;font-weight:700;font-size:13px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .card{padding:20px;margin-bottom:16px}
+    .info{background:#f8fafc;border-radius:12px;padding:14px}
+    .label{font-size:12px;color:#64748b;font-weight:700;margin-bottom:4px}
+    .messages{display:flex;flex-direction:column;gap:10px;min-height:120px;max-height:520px;overflow:auto;padding:4px}
+    .message{max-width:78%;padding:12px 14px;border-radius:14px;background:#f1f5f9;align-self:flex-start}
+    .message.mine{align-self:flex-end;background:#e0e7ff}
+    .message-meta{font-size:11px;color:#64748b;margin-bottom:5px}
+    .composer{display:grid;gap:10px;margin-top:14px}
+    textarea{width:100%;min-height:110px;padding:12px;border:1px solid #cbd5e1;border-radius:12px;font:inherit;resize:vertical}
+    button{border:0;border-radius:12px;padding:11px 16px;font-weight:700;cursor:pointer;background:#111827;color:#fff}
+    button:disabled{opacity:.6;cursor:wait}
+    .toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+    .muted{color:#64748b;font-size:13px}
+    .error{padding:12px;border-radius:12px;background:#fef2f2;color:#991b1b;margin-bottom:14px}
+    .success{color:#166534;font-size:13px}
+    @media (max-width:700px){.grid{grid-template-columns:1fr}.message{max-width:90%}}
+  </style>
+</head>
+<body>
+<main>
+  <section class="hero">
+    <div class="eyebrow">FUTURE CHALLENGE LAB</div>
+    <h1>支援接続ページ</h1>
+    <span id="matchStatus" class="status">接続状態を確認中…</span>
+    <p id="heroText" class="muted">挑戦者と支援者が、次の一歩を一緒に整理するためのページです。</p>
+  </section>
+
+  <div id="errorBox" class="error" hidden></div>
+
+  <section class="card">
+    <h2>今回の挑戦</h2>
+    <div class="grid">
+      <div class="info"><div class="label">挑戦内容</div><div id="challenge">読み込み中…</div></div>
+      <div class="info"><div class="label">目標</div><div id="goal">読み込み中…</div></div>
+      <div class="info"><div class="label">挑戦者</div><div id="participant">読み込み中…</div></div>
+      <div class="info"><div class="label">支援者</div><div id="supporter">読み込み中…</div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="toolbar">
+      <div>
+        <h2>FCLでのやりとり</h2>
+        <div id="viewerRole" class="muted">あなたの役割を確認中…</div>
+      </div>
+      <button id="refreshBtn" type="button">更新</button>
+    </div>
+    <div id="noToken" class="error" hidden>
+      このページはメールに記載された「FCLを開く」リンクから開いてください。安全な接続用リンクが必要です。
+    </div>
+    <div id="messages" class="messages"></div>
+    <div id="emptyMessages" class="muted" hidden>まだメッセージはありません。最初の一言を送ってみましょう。</div>
+    <div id="composer" class="composer" hidden>
+      <textarea id="messageInput" maxlength="4000" placeholder="今の状況や、次の一歩についてメッセージを書いてください"></textarea>
+      <button id="sendBtn" type="button">メッセージを送る</button>
+      <div id="sendStatus" class="success"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>次の一歩</h2>
+    <p class="muted">まずは「今どこで止まっているか」「何が一番気になっているか」「今日できる最小の一歩」を話してみてください。</p>
+  </section>
+</main>
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  const matchId = params.get('match_id');
+  const token = params.get('token');
+  const $ = (id) => document.getElementById(id);
+  let viewerRole = null;
+
+  function showError(message){ const box=$('errorBox'); box.textContent=message; box.hidden=false; }
+  function clearError(){ $('errorBox').hidden=true; $('errorBox').textContent=''; }
+  function escapeHtml(value){return String(value ?? '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');}
+  function roleLabel(role){ return role === 'challenger' ? '挑戦者' : role === 'supporter' ? '支援者' : ''; }
+  async function getJson(url, options){
+    const res = await fetch(url, options);
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(data.error || '通信に失敗しました');
+    return data;
+  }
+
+  async function loadDetail(){
+    if(!matchId) throw new Error('match_idがありません');
+    const data = await getJson(`/api/matches/${encodeURIComponent(matchId)}/detail`);
+    $('challenge').textContent = data.participant?.challenge || '未登録';
+    $('goal').textContent = data.participant?.goal || '未登録';
+    $('participant').textContent = data.participant?.name || '挑戦者';
+    $('supporter').textContent = data.supporter?.name || '支援者';
+    const status = data.match?.status || 'pending';
+    $('matchStatus').textContent = status === 'connected' ? '接続成立' : status;
+  }
+
+  async function loadMessages(){
+    if(!token){
+      $('noToken').hidden=false;
+      $('composer').hidden=true;
+      $('viewerRole').textContent='安全な接続用リンクが必要です';
+      return;
+    }
+    const data = await getJson(`/api/matches/${encodeURIComponent(matchId)}/messages?token=${encodeURIComponent(token)}`);
+    viewerRole = data.viewer_role;
+    $('viewerRole').textContent = `あなた：${roleLabel(viewerRole)}`;
+    $('composer').hidden=false;
+    $('noToken').hidden=true;
+
+    const list = $('messages');
+    list.innerHTML = '';
+    const messages = data.messages || [];
+    $('emptyMessages').hidden = messages.length > 0;
+    for(const item of messages){
+      const mine = item.sender_role === viewerRole;
+      const node = document.createElement('div');
+      node.className = `message${mine ? ' mine' : ''}`;
+      const when = new Date(item.created_at || Date.now()).toLocaleString('ja-JP');
+      node.innerHTML = `<div class="message-meta">${escapeHtml(roleLabel(item.sender_role))} ・ ${escapeHtml(when)}</div><div>${escapeHtml(item.body).replaceAll('\n','<br>')}</div>`;
+      list.appendChild(node);
+    }
+    list.scrollTop = list.scrollHeight;
+  }
+
+  async function refresh(){
+    clearError();
+    try{ await loadDetail(); await loadMessages(); }
+    catch(error){ showError(error.message || '読み込みに失敗しました'); }
+  }
+
+  $('refreshBtn').addEventListener('click', refresh);
+  $('sendBtn').addEventListener('click', async () => {
+    const btn=$('sendBtn');
+    const input=$('messageInput');
+    const body=input.value.trim();
+    $('sendStatus').textContent='';
+    if(!body) { $('sendStatus').textContent='メッセージを入力してください。'; return; }
+    btn.disabled=true;
+    btn.textContent='送信中…';
+    try{
+      await getJson(`/api/matches/${encodeURIComponent(matchId)}/messages`, {
+        method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({token,body})
+      });
+      input.value='';
+      $('sendStatus').textContent='送信しました。相手にも通知されます。';
+      await loadMessages();
+    }catch(error){ $('sendStatus').textContent=error.message || '送信に失敗しました'; }
+    finally{ btn.disabled=false; btn.textContent='メッセージを送る'; }
+  });
+
+  refresh();
+  setInterval(() => { if(document.visibilityState === 'visible') loadMessages().catch(()=>{}); }, 10000);
+})();
+</script>
+</body>
+</html>
