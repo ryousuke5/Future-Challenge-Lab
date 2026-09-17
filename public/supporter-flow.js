@@ -68,6 +68,31 @@
       </div>`;
   }
 
+  /* FCL support-status separation: 2026-09-18 */
+
+  async function loadCurrentSupportCount(supporterId, targets){
+    const connectedTargets = (targets || []).filter(item => item.match_status === 'connected');
+    if(!connectedTargets.length) return 0;
+    try{
+      const history = await fetchJson(`/api/supporter/outcomes/${encodeURIComponent(supporterId)}`);
+      const latestByMatch = new Map();
+      for(const outcome of (history.outcomes || [])){
+        if(!outcome.match_id) continue;
+        const previous = latestByMatch.get(outcome.match_id);
+        if(!previous || new Date(outcome.created_at || 0) > new Date(previous.created_at || 0)){
+          latestByMatch.set(outcome.match_id, outcome);
+        }
+      }
+      return connectedTargets.filter(item => {
+        const latest = latestByMatch.get(item.match_id);
+        return !latest || latest.outcome === 'needs_follow_up';
+      }).length;
+    }catch(error){
+      console.warn('current support count unavailable', error);
+      return 0;
+    }
+  }
+
   function renderTarget(item){
     const matchId = esc(item.match_id);
     const participantId = esc(item.participant_id);
@@ -154,7 +179,7 @@
       </article>`;
   }
 
-  function renderDashboard(data, supporterId){
+  function renderDashboard(data, supporterId, currentSupportCount){
     const summary = data.summary || {};
     const supporter = data.supporter || {};
     const targets = data.targets || [];
@@ -168,11 +193,12 @@
           <h3>${esc(supporter.supporter_name || '支援者')} の支援画面</h3>
           <p>${esc(supporter.organization_name || '')}</p>
         </div>
-        <div class="supporter-capacity">支援可能数：${Number(summary.support_capacity ?? 0)} / 接続中：${Number(summary.active_connections ?? 0)}</div>
+        <div class="supporter-capacity">支援可能数：${Number(summary.support_capacity ?? 0)} / 接続成立：${Number(summary.active_connections ?? 0)} / 現在支援中：${Number(currentSupportCount ?? 0)}</div>
       </div>
       <div class="analysis-grid">
         <div class="result-card"><span class="section-tag">支援候補</span><h3>${Number(summary.pending_matches ?? 0)}</h3><p>回答待ち・確認中のマッチ</p></div>
-        <div class="result-card"><span class="section-tag">接続中</span><h3>${Number(summary.active_connections ?? 0)}</h3><p>現在つながっている挑戦者</p></div>
+        <div class="result-card"><span class="section-tag">接続成立</span><h3>${Number(summary.active_connections ?? 0)}</h3><p>双方の承認が成立したマッチ</p></div>
+        <div class="result-card"><span class="section-tag">現在支援中</span><h3>${Number(currentSupportCount ?? 0)}</h3><p>接続成立後、支援が進行中のマッチ</p></div>
         <div class="result-card"><span class="section-tag">今週の支援</span><h3>${Number(summary.weekly_support_count ?? 0)}</h3><p>直近7日間の支援記録</p></div>
       </div>
       <div class="supporter-dashboard-note">
@@ -229,7 +255,8 @@
     const restore = loading(btn, '取得中…');
     try{
       const data = await fetchJson(`/api/supporter/dashboard?supporter_id=${encodeURIComponent(supporterId)}`);
-      renderDashboard(data, supporterId);
+      const currentSupportCount = await loadCurrentSupportCount(supporterId, data.targets || []);
+      renderDashboard(data, supporterId, currentSupportCount);
       const status = document.getElementById('supporterDashboardStatus');
       if(status) status.textContent = ' 支援者画面を更新しました。';
     } catch(error){
