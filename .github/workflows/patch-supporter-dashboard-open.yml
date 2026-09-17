@@ -34,7 +34,8 @@ jobs:
 
           html = Path('public/index.html')
           text = html.read_text(encoding='utf-8')
-          old1 = 'onclick="loadSupporterDashboard()" hidden>支援者画面を開く'</n          new1 = 'onclick="openSupporterDashboard()" hidden>支援者画面を開く'
+          old1 = 'onclick="loadSupporterDashboard()" hidden>支援者画面を開く'
+          new1 = 'onclick="openSupporterDashboard()" hidden>支援者画面を開く'
           if old1 in text:
               text = text.replace(old1, new1, 1)
           old2 = 'id="supporterDashboardBtn" onclick="loadSupporterDashboard()"'
@@ -44,12 +45,13 @@ jobs:
           text = text.replace(old2, new2, 1)
           html.write_text(text, encoding='utf-8')
 
-          cleanup = Path('.github/workflows/patch-supporter-dashboard-open.yml')
           subprocess.run(['git', 'config', 'user.name', 'FCL Automation'], check=True)
           subprocess.run(['git', 'config', 'user.email', 'actions@github.com'], check=True)
           subprocess.run(['git', 'add', 'public/supporter-flow.js', 'public/index.html'], check=True)
           subprocess.run(['git', 'commit', '-m', 'fix: make supporter dashboard button visibly open'], check=True)
           subprocess.run(['git', 'push'], check=True)
+
+          cleanup = Path('.github/workflows/patch-supporter-dashboard-open.yml')
           cleanup.unlink()
           subprocess.run(['git', 'add', str(cleanup)], check=True)
           subprocess.run(['git', 'commit', '-m', 'chore: remove dashboard patch workflow'], check=True)
