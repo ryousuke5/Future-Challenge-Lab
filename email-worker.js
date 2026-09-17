@@ -23,7 +23,6 @@ let lastConfigError = '';
 function emailConfigError() {
   if (!supabase) return 'Supabase is not configured';
   if (!resendApiKey) return 'RESEND_API_KEY is not configured';
-  if (!openAiApiKey) return 'OPENAI_API_KEY is not configured';
   if (!fromEmail) return 'FCL_FROM_EMAIL is not configured';
   return '';
 }
@@ -62,12 +61,26 @@ async function hasSent(matchId, recipientRole) {
   });
 }
 
+function buildFallbackEmail({ recipientRole, participant, supporter, matchId }) {
+  const recipientName = recipientRole === 'challenger' ? (participant?.name || '挑戦者') : (supporter?.supporter_name || '支援者');
+  const otherName = recipientRole === 'challenger' ? (supporter?.supporter_name || '支援者') : (participant?.name || '挑戦者');
+  const detailUrl = `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(matchId)}`;
+  const subject = 'FCL｜支援のつながりが成立しました';
+  const body = recipientRole === 'challenger'
+    ? `${recipientName}さん\n\nFCLで、支援者として${otherName}さんとの接続が成立しました。\n\n挑戦内容：${participant?.challenge || '未登録'}\n目標：${participant?.goal || '未登録'}\n\nまずはお互いの状況を話し、次の一歩を一緒に整理してみてください。\n\n詳細：${detailUrl}\n\nFuture Challenge Lab`
+    : `${recipientName}さん\n\nFCLで、挑戦者${otherName}さんとの支援接続が成立しました。\n\n挑戦内容：${participant?.challenge || '未登録'}\n目標：${participant?.goal || '未登録'}\n\nまずは現在の状況を聞き、次の一歩を一緒に整理してください。\n\n詳細：${detailUrl}\n\nFuture Challenge Lab`;
+  return { subject, body, detailUrl, source: 'fallback' };
+}
+
 async function generateEmail({ recipientRole, participant, supporter, matchId }) {
+  const fallback = buildFallbackEmail({ recipientRole, participant, supporter, matchId });
+  if (!openAiApiKey) return fallback;
+
   const recipientName = recipientRole === 'challenger' ? (participant?.name || '挑戦者') : (supporter?.supporter_name || '支援者');
   const otherName = recipientRole === 'challenger' ? (supporter?.supporter_name || '支援者') : (participant?.name || '挑戦者');
   const roleLabel = recipientRole === 'challenger' ? '挑戦者' : '支援者';
   const otherRoleLabel = recipientRole === 'challenger' ? '支援者' : '挑戦者';
-  const detailUrl = `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(matchId)}`;
+  const detailUrl = fallback.detailUrl;
 
   const prompt = `
 FCL（Future Challenge Lab）の支援接続が成立しました。
@@ -91,44 +104,50 @@ FCL（Future Challenge Lab）の支援接続が成立しました。
 {"subject":"...","body":"..."}
 `.trim();
 
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${openAiApiKey}`
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.4,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: 'あなたはFCLのメール作成アシスタントです。与えられた事実だけで、丁寧で簡潔な日本語メールを作成してください。' },
-        { role: 'user', content: prompt }
-      ]
-    })
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenAI ${response.status}: ${errorText}`);
-  }
-
-  const json = await response.json();
-  const raw = json?.choices?.[0]?.message?.content;
-  if (!raw) throw new Error('OpenAI returned no email content');
-
-  let parsed;
   try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error('OpenAI email JSON parse failed');
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${openAiApiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.4,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: 'あなたはFCLのメール作成アシスタントです。与えられた事実だけで、丁寧で簡潔な日本語メールを作成してください。' },
+          { role: 'user', content: prompt }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.warn(`[email-worker] OpenAI unavailable (${response.status}); using fallback template`);
+      return { ...fallback, ai_error: `OpenAI ${response.status}: ${errorText}` };
+    }
+
+    const json = await response.json();
+    const raw = json?.choices?.[0]?.message?.content;
+    if (!raw) throw new Error('OpenAI returned no email content');
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error('OpenAI email JSON parse failed');
+    }
+
+    const subject = String(parsed?.subject || '').trim();
+    const body = String(parsed?.body || '').trim();
+    if (!subject || !body) throw new Error('AI email subject/body is empty');
+
+    return { subject, body, detailUrl, source: 'openai' };
+  } catch (error) {
+    console.warn(`[email-worker] OpenAI email generation failed; using fallback template: ${error?.message || error}`);
+    return { ...fallback, ai_error: error?.message || String(error) };
   }
-
-  const subject = String(parsed?.subject || '').trim();
-  const body = String(parsed?.body || '').trim();
-  if (!subject || !body) throw new Error('AI email subject/body is empty');
-
-  return { subject, body, detailUrl };
 }
 
 async function sendEmail({ to, email, idempotencyKey }) {
@@ -170,7 +189,9 @@ async function recordEmailSent({ event, match, recipientRole, recipientEmail, em
       subject: email.subject,
       resend_id: resendId || null,
       source_event_id: event.id,
-      detail_url: email.detailUrl
+      detail_url: email.detailUrl,
+      generation_source: email.source || 'unknown',
+      ai_error: email.ai_error || null
     }),
     created_at: new Date().toISOString()
   });
@@ -217,7 +238,7 @@ async function processMatchEvent(event) {
       email,
       resendId: resend?.id || null
     });
-    console.log(`[email-worker] sent connection_confirmed to ${recipient.role} for match ${match.id}`);
+    console.log(`[email-worker] sent connection_confirmed to ${recipient.role} for match ${match.id} via ${email.source}`);
   }
 }
 
@@ -260,6 +281,6 @@ async function poll() {
   }
 }
 
-console.log(`[email-worker] started; poll=${pollMs}ms model=${model}`);
+console.log(`[email-worker] started; poll=${pollMs}ms model=${model} fallback=enabled`);
 await poll();
 setInterval(poll, pollMs);
