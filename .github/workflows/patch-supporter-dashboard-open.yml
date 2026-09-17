@@ -1,0 +1,56 @@
+name: Patch supporter dashboard open behavior
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Patch dashboard open behavior
+        shell: python
+        run: |
+          from pathlib import Path
+          import subprocess
+
+          flow = Path('public/supporter-flow.js')
+          text = flow.read_text(encoding='utf-8')
+          marker = '/* FCL supporter dashboard open behavior: 2026-09-18 */'
+          if marker not in text:
+              anchor = "  window.submitSupporterResponse = async function(matchId, participantId, btn){"
+              insert = """  /* FCL supporter dashboard open behavior: 2026-09-18 */\n  window.openSupporterDashboard = async function(){\n    await window.loadSupporterDashboard();\n    document.getElementById('supporter-dashboard-section')?.scrollIntoView({ behavior:'smooth', block:'start' });\n  };\n\n"""
+              if anchor not in text:
+                  raise SystemExit('Supporter response anchor not found.')
+              text = text.replace(anchor, insert + anchor, 1)
+              flow.write_text(text, encoding='utf-8')
+
+          html = Path('public/index.html')
+          text = html.read_text(encoding='utf-8')
+          old1 = 'onclick="loadSupporterDashboard()" hidden>支援者画面を開く'</n          new1 = 'onclick="openSupporterDashboard()" hidden>支援者画面を開く'
+          if old1 in text:
+              text = text.replace(old1, new1, 1)
+          old2 = 'id="supporterDashboardBtn" onclick="loadSupporterDashboard()"'
+          new2 = 'id="supporterDashboardBtn" onclick="openSupporterDashboard()"'
+          if old2 not in text:
+              raise SystemExit('Section 7 dashboard button anchor not found.')
+          text = text.replace(old2, new2, 1)
+          html.write_text(text, encoding='utf-8')
+
+          cleanup = Path('.github/workflows/patch-supporter-dashboard-open.yml')
+          subprocess.run(['git', 'config', 'user.name', 'FCL Automation'], check=True)
+          subprocess.run(['git', 'config', 'user.email', 'actions@github.com'], check=True)
+          subprocess.run(['git', 'add', 'public/supporter-flow.js', 'public/index.html'], check=True)
+          subprocess.run(['git', 'commit', '-m', 'fix: make supporter dashboard button visibly open'], check=True)
+          subprocess.run(['git', 'push'], check=True)
+          cleanup.unlink()
+          subprocess.run(['git', 'add', str(cleanup)], check=True)
+          subprocess.run(['git', 'commit', '-m', 'chore: remove dashboard patch workflow'], check=True)
+          subprocess.run(['git', 'push'], check=True)
