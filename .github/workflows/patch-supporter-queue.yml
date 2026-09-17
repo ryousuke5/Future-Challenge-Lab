@@ -1,0 +1,61 @@
+name: Patch supporter answer-waiting queue
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply supporter queue patch
+        shell: python
+        run: |
+          from pathlib import Path
+          import subprocess
+
+          marker = '/* FCL supporter answer-waiting priority: 2026-09-18 */'
+
+          flow = Path('public/supporter-flow.js')
+          text = flow.read_text(encoding='utf-8')
+          if marker not in text:
+              text = text.replace(
+                  '  /* FCL support-status separation: 2026-09-18 */\n',
+                  '  /* FCL support-status separation: 2026-09-18 */\n  /* FCL supporter answer-waiting priority: 2026-09-18 */\n',
+                  1,
+              )
+
+          old_cards = '''      <div class="analysis-grid">\n        <div class="result-card"><span class="section-tag">支援候補</span><h3>${Number(summary.pending_matches ?? 0)}</h3><p>回答待ち・確認中のマッチ</p></div>\n        <div class="result-card"><span class="section-tag">接続成立</span><h3>${Number(summary.active_connections ?? 0)}</h3><p>双方の承認が成立したマッチ</p></div>\n        <div class="result-card"><span class="section-tag">現在支援中</span><h3>${Number(currentSupportCount ?? 0)}</h3><p>接続成立後、支援が進行中のマッチ</p></div>\n        <div class="result-card"><span class="section-tag">今週の支援</span><h3>${Number(summary.weekly_support_count ?? 0)}</h3><p>直近7日間の支援記録</p></div>\n      </div>\n'''
+          new_cards = '''      <div class="analysis-grid">\n        <div class="result-card"><span class="section-tag">回答待ち</span><h3>${Number(summary.pending_matches ?? 0)}</h3><p>優先して対応するマッチ</p></div>\n        <div class="result-card"><span class="section-tag">接続成立</span><h3>${Number(summary.active_connections ?? 0)}</h3><p>双方の承認が成立したマッチ</p></div>\n        <div class="result-card"><span class="section-tag">現在支援中</span><h3>${Number(currentSupportCount ?? 0)}</h3><p>接続成立後、支援が進行中のマッチ</p></div>\n        <div class="result-card"><span class="section-tag">今週の支援</span><h3>${Number(summary.weekly_support_count ?? 0)}</h3><p>直近7日間の支援記録</p></div>\n      </div>\n'''
+          if old_cards not in text:
+              raise SystemExit('Supporter summary cards anchor not found.')
+          text = text.replace(old_cards, new_cards, 1)
+          flow.write_text(text, encoding='utf-8')
+
+          server = Path('server.js')
+          text = server.read_text(encoding='utf-8')
+          old_pending = "const pendingCount = matches.filter(x => ['pending','challenger_approved','supporter_approved'].includes(x.status)).length;"
+          new_pending = "const pendingCount = matches.filter(x => ['pending','challenger_approved','supporter_approved'].includes(effectiveMatchStatus(x))).length;"
+          if old_pending not in text:
+              raise SystemExit('Pending count anchor not found.')
+          text = text.replace(old_pending, new_pending, 1)
+
+          old_targets = "targets: targets.slice(0, 10)"
+          new_targets = "targets: targets.slice().sort((a,b) => ({ pending:0, challenger_approved:1, supporter_approved:2, connected:3, declined:4, expired:5 }[a.match_status] ?? 9) - ({ pending:0, challenger_approved:1, supporter_approved:2, connected:3, declined:4, expired:5 }[b.match_status] ?? 9) || ({ high:0, medium:1, low:2 }[a.priority] ?? 9) - ({ high:0, medium:1, low:2 }[b.priority] ?? 9)).slice(0, 10)"
+          if old_targets not in text:
+              raise SystemExit('Target queue anchor not found.')
+          text = text.replace(old_targets, new_targets, 1)
+          server.write_text(text, encoding='utf-8')
+
+          subprocess.run(['git', 'config', 'user.name', 'FCL Automation'], check=True)
+          subprocess.run(['git', 'config', 'user.email', 'actions@github.com'], check=True)
+          subprocess.run(['git', 'add', 'server.js', 'public/supporter-flow.js'], check=True)
+          subprocess.run(['git', 'commit', '-m', 'feat: prioritize supporter answer-waiting matches'], check=True)
+          subprocess.run(['git', 'push'], check=True)
