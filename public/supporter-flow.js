@@ -69,6 +69,7 @@
   }
 
   /* FCL support-status separation: 2026-09-18 */
+  /* FCL supporter answer-waiting priority: 2026-09-18 */
 
   async function loadCurrentSupportCount(supporterId, targets){
     const connectedTargets = (targets || []).filter(item => item.match_status === 'connected');
@@ -196,7 +197,7 @@
         <div class="supporter-capacity">支援可能数：${Number(summary.support_capacity ?? 0)} / 接続成立：${Number(summary.active_connections ?? 0)} / 現在支援中：${Number(currentSupportCount ?? 0)}</div>
       </div>
       <div class="analysis-grid">
-        <div class="result-card"><span class="section-tag">支援候補</span><h3>${Number(summary.pending_matches ?? 0)}</h3><p>回答待ち・確認中のマッチ</p></div>
+        <div class="result-card"><span class="section-tag">回答待ち</span><h3>${Number(summary.pending_matches ?? 0)}</h3><p>優先して対応するマッチ</p></div>
         <div class="result-card"><span class="section-tag">接続成立</span><h3>${Number(summary.active_connections ?? 0)}</h3><p>双方の承認が成立したマッチ</p></div>
         <div class="result-card"><span class="section-tag">現在支援中</span><h3>${Number(currentSupportCount ?? 0)}</h3><p>接続成立後、支援が進行中のマッチ</p></div>
         <div class="result-card"><span class="section-tag">今週の支援</span><h3>${Number(summary.weekly_support_count ?? 0)}</h3><p>直近7日間の支援記録</p></div>

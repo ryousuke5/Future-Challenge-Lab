@@ -1344,7 +1344,7 @@ app.get('/api/supporter/dashboard', async (req, res) => {
       return d > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     }).length;
     const connectedCount = matches.filter(x => x.status === 'connected').length;
-    const pendingCount = matches.filter(x => ['pending','challenger_approved','supporter_approved'].includes(x.status)).length;
+    const pendingCount = matches.filter(x => ['pending','challenger_approved','supporter_approved'].includes(effectiveMatchStatus(x))).length;
     const observedExecutionRate = executionEvents.length ? ((executionEvents.length / Math.max(1, matches.length || executionEvents.length)) * 100) : 0;
 
     res.json({
@@ -1373,7 +1373,7 @@ app.get('/api/supporter/dashboard', async (req, res) => {
         new_matching_enabled: supporter.accepting_new_matches !== false
       },
       recent_outcomes: outcomes.slice(-5),
-      targets: targets.slice(0, 10)
+      targets: targets.slice().sort((a,b) => ({ pending:0, challenger_approved:1, supporter_approved:2, connected:3, declined:4, expired:5 }[a.match_status] ?? 9) - ({ pending:0, challenger_approved:1, supporter_approved:2, connected:3, declined:4, expired:5 }[b.match_status] ?? 9) || ({ high:0, medium:1, low:2 }[a.priority] ?? 9) - ({ high:0, medium:1, low:2 }[b.priority] ?? 9)).slice(0, 10)
     });
   } catch (error) {
     res.status(500).json({ error: error.message || 'supporter dashboard failed' });
