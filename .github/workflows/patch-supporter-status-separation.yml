@@ -1,0 +1,65 @@
+name: Patch supporter status separation
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply supporter status separation patch
+        shell: python
+        run: |
+          from pathlib import Path
+          import subprocess
+
+          path = Path('public/supporter-flow.js')
+          text = path.read_text(encoding='utf-8')
+          marker = '/* FCL support-status separation: 2026-09-18 */'
+          if marker in text:
+              print('Patch already applied. Nothing to do.')
+              raise SystemExit(0)
+
+          old_helper = """  function renderTarget(item){\n"""
+          new_helper = """  /* FCL support-status separation: 2026-09-18 */\n\n  async function loadCurrentSupportCount(supporterId, targets){\n    const connectedTargets = (targets || []).filter(item => item.match_status === 'connected');\n    if(!connectedTargets.length) return 0;\n    try{\n      const history = await fetchJson(`/api/supporter/outcomes/${encodeURIComponent(supporterId)}`);\n      const latestByMatch = new Map();\n      for(const outcome of (history.outcomes || [])){\n        if(!outcome.match_id) continue;\n        const previous = latestByMatch.get(outcome.match_id);\n        if(!previous || new Date(outcome.created_at || 0) > new Date(previous.created_at || 0)){\n          latestByMatch.set(outcome.match_id, outcome);\n        }\n      }\n      return connectedTargets.filter(item => {\n        const latest = latestByMatch.get(item.match_id);\n        return !latest || latest.outcome === 'needs_follow_up';\n      }).length;\n    }catch(error){\n      console.warn('current support count unavailable', error);\n      return 0;\n    }\n  }\n\n  function renderTarget(item){\n"""
+          if old_helper not in text:
+              raise SystemExit('Target function anchor not found.')
+          text = text.replace(old_helper, new_helper, 1)
+
+          old_signature = "  function renderDashboard(data, supporterId){\n"
+          new_signature = "  function renderDashboard(data, supporterId, currentSupportCount){\n"
+          if old_signature not in text:
+              raise SystemExit('renderDashboard anchor not found.')
+          text = text.replace(old_signature, new_signature, 1)
+
+          old_header = """        <div class=\"supporter-capacity\">支援可能数：${Number(summary.support_capacity ?? 0)} / 接続中：${Number(summary.active_connections ?? 0)}</div>\n"""
+          new_header = """        <div class=\"supporter-capacity\">支援可能数：${Number(summary.support_capacity ?? 0)} / 接続成立：${Number(summary.active_connections ?? 0)} / 現在支援中：${Number(currentSupportCount ?? 0)}</div>\n"""
+          if old_header not in text:
+              raise SystemExit('Header anchor not found.')
+          text = text.replace(old_header, new_header, 1)
+
+          old_cards = """      <div class=\"analysis-grid\">\n        <div class=\"result-card\"><span class=\"section-tag\">支援候補</span><h3>${Number(summary.pending_matches ?? 0)}</h3><p>回答待ち・確認中のマッチ</p></div>\n        <div class=\"result-card\"><span class=\"section-tag\">接続中</span><h3>${Number(summary.active_connections ?? 0)}</h3><p>現在つながっている挑戦者</p></div>\n        <div class=\"result-card\"><span class=\"section-tag\">今週の支援</span><h3>${Number(summary.weekly_support_count ?? 0)}</h3><p>直近7日間の支援記録</p></div>\n      </div>\n"""
+          new_cards = """      <div class=\"analysis-grid\">\n        <div class=\"result-card\"><span class=\"section-tag\">支援候補</span><h3>${Number(summary.pending_matches ?? 0)}</h3><p>回答待ち・確認中のマッチ</p></div>\n        <div class=\"result-card\"><span class=\"section-tag\">接続成立</span><h3>${Number(summary.active_connections ?? 0)}</h3><p>双方の承認が成立したマッチ</p></div>\n        <div class=\"result-card\"><span class=\"section-tag\">現在支援中</span><h3>${Number(currentSupportCount ?? 0)}</h3><p>接続成立後、支援が進行中のマッチ</p></div>\n        <div class=\"result-card\"><span class=\"section-tag\">今週の支援</span><h3>${Number(summary.weekly_support_count ?? 0)}</h3><p>直近7日間の支援記録</p></div>\n      </div>\n"""
+          if old_cards not in text:
+              raise SystemExit('Summary cards anchor not found.')
+          text = text.replace(old_cards, new_cards, 1)
+
+          old_load = """      const data = await fetchJson(`/api/supporter/dashboard?supporter_id=${encodeURIComponent(supporterId)}`);\n      renderDashboard(data, supporterId);\n"""
+          new_load = """      const data = await fetchJson(`/api/supporter/dashboard?supporter_id=${encodeURIComponent(supporterId)}`);\n      const currentSupportCount = await loadCurrentSupportCount(supporterId, data.targets || []);\n      renderDashboard(data, supporterId, currentSupportCount);\n"""
+          if old_load not in text:
+              raise SystemExit('Dashboard load anchor not found.')
+          text = text.replace(old_load, new_load, 1)
+
+          path.write_text(text, encoding='utf-8')
+          subprocess.run(['git', 'config', 'user.name', 'FCL Automation'], check=True)
+          subprocess.run(['git', 'config', 'user.email', 'actions@github.com'], check=True)
+          subprocess.run(['git', 'add', 'public/supporter-flow.js'], check=True)
+          subprocess.run(['git', 'commit', '-m', 'feat: separate connected and current support status'], check=True)
+          subprocess.run(['git', 'push'], check=True)
