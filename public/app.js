@@ -137,7 +137,7 @@ async function match(){
   if(!participant)return alert('先に挑戦者登録をしてください');
   await withLoadingUI(document.getElementById('matchBtn'), 'マッチング処理中です。しばらくお待ちください…', async () => {
     const r=await api('/api/matches',{participant_id:participant.id});
-    matches.innerHTML=r.map(x=>`<div class="match"><strong>${x.supporter?.organization_name||'支援者'}</strong> / ${x.supporter?.supporter_name||''}<div>マッチ度 ${x.score}点</div><p>${x.reason}</p><div data-match-status="${x.id}">状態: ${x.status||'pending'}</div><button onclick="requestConnection('${x.id}', this)">接続を依頼</button><button onclick="approveMatch('${x.id}','challenger',this)">挑戦者として承認</button><button onclick="approveMatch('${x.id}','supporter',this)">支援者として承認</button><button onclick="saveSupportOutcome('${x.id}','${x.supporter?.id||''}', this)">支援後：前進した</button></div>`).join('')||'<p>現在候補がありません。支援パートナーを登録してください。</p>';
+    matches.innerHTML=r.map(x=>`<div class="match"><strong>${x.supporter?.organization_name||'支援者'}</strong> / ${x.supporter?.supporter_name||''}<div>マッチ度 ${x.score}点</div><p>${x.reason}</p><div data-match-status="${x.id}">状態: ${x.status||'pending'}</div><button onclick="requestConnection('${x.id}', this)">接続を依頼</button><button onclick="approveMatch('${x.id}','challenger',this)">この支援者との接続を承認</button><button onclick="approveMatch('${x.id}','supporter',this)">この挑戦者への支援を承認</button><button onclick="saveSupportOutcome('${x.id}','${x.supporter?.id||''}', this)">支援後：前進した</button></div>`).join('')||'<p>現在候補がありません。支援パートナーを登録してください。</p>';
   });
 }
 async function approveMatch(id,actor,btn){
