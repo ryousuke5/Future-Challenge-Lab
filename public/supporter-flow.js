@@ -266,6 +266,12 @@
     } finally { restore(); }
   };
 
+  /* FCL supporter dashboard open behavior: 2026-09-18 */
+  window.openSupporterDashboard = async function(){
+    await window.loadSupporterDashboard();
+    document.getElementById('supporter-dashboard-section')?.scrollIntoView({ behavior:'smooth', block:'start' });
+  };
+
   window.submitSupporterResponse = async function(matchId, participantId, btn){
     const root = document.querySelector(`[data-match-id="${CSS.escape(matchId)}"]`);
     const canSupport = root?.querySelector(`input[name="support-can-${CSS.escape(matchId)}"]:checked`)?.value;
