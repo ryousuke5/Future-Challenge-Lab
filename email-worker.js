@@ -225,6 +225,7 @@ async function processMatchEvent(event) {
   const participant = participants.find(x => x.id === match.participant_id);
   const supporter = supporters.find(x => x.id === match.supporter_id);
   if (!participant || !supporter) throw new Error(`match ${match.id}: participant/supporter not found`);
+  if (participant.archived_at || supporter.archived_at) return;
 
   const recipients = [
     { role: 'challenger', email: normalizeEmail(participant.email) },
