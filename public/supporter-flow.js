@@ -97,6 +97,7 @@
     const matchId = esc(item.match_id);
     const participantId = esc(item.participant_id);
     const connected = item.match_status === 'connected';
+    const accessUrl = item.access_url || '';
     return `
       <article class="supporter-target" data-match-id="${matchId}">
         <div class="supporter-target-top">
@@ -160,6 +161,7 @@
           <span class="supporter-inline-status" data-response-status="${matchId}"></span>
         </div>
 
+        ${accessUrl && connected ? '<div class="support-target-actions"><a href="' + accessUrl.replaceAll('"','&quot;') + '"><button type="button" class="secondary-btn">接続ページを開く</button></a></div>' : ''}
         <div class="supporter-outcome-box ${connected ? '' : 'is-muted'}">
           <h4>支援後の記録</h4>
           <p class="supporter-help">接続後に、何が起きたかを簡単に記録してください。FCLの次回マッチング改善に使います。</p>
