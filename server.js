@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
 import { pathToFileURL } from 'node:url';
+import { createAccessToken } from './match-messages.js';
 
 const app = express();
 app.use(cors());
@@ -784,6 +785,133 @@ app.get('/api/users/:user_id', async (req,res)=>{
       supporter:latestSupporter
     });
   }catch(e){res.status(500).json({error:e.message});}
+});
+
+
+app.get('/api/users/:user_id/overview', async (req, res) => {
+  try {
+    const userId = String(req.params.user_id || '').trim();
+    if (!userId) return res.status(400).json({ error: 'user_id is required' });
+
+    const user = (await select('fcl_users', { id: userId }))[0];
+    if (!user) return res.status(404).json({ error: 'user not found' });
+
+    const [participants, supporters, matches, checkins] = await Promise.all([
+      select('participants', { user_id: userId }),
+      select('supporters', { user_id: userId }),
+      select('supporter_matches'),
+      select('checkins')
+    ]);
+
+    const participantIds = new Set(participants.map(row => row.id));
+    const supporterIds = new Set(supporters.map(row => row.id));
+    const participantMap = new Map(participants.map(row => [row.id, row]));
+    const supporterMap = new Map(supporters.map(row => [row.id, row]));
+    const participantCheckins = new Map();
+
+    for (const checkin of checkins) {
+      if (!participantIds.has(checkin.participant_id)) continue;
+      const current = participantCheckins.get(checkin.participant_id);
+      if (!current || new Date(checkin.checked_in_at || 0) > new Date(current.checked_in_at || 0)) {
+        participantCheckins.set(checkin.participant_id, checkin);
+      }
+    }
+
+    const publicUrl = (process.env.FCL_PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+    const visibleMatches = [];
+
+    for (const match of matches) {
+      const status = effectiveMatchStatus(match);
+      if (participantIds.has(match.participant_id)) {
+        const participant = participantMap.get(match.participant_id);
+        const supporter = (await select('supporters', { id: match.supporter_id }))[0] || {};
+        const token = status === 'connected' ? createAccessToken(match.id, 'challenger') : '';
+        visibleMatches.push({
+          match_id: match.id,
+          role: 'challenger',
+          role_label: '挑戦者',
+          status,
+          challenge: participant?.challenge || '未登録',
+          goal: participant?.goal || '未登録',
+          counterpart_name: supporter?.supporter_name || '支援者',
+          counterpart_organization: supporter?.organization_name || '',
+          updated_at: match.updated_at || match.created_at || null,
+          latest_checkin: participantCheckins.get(match.participant_id) || null,
+          access_url: token
+            ? `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(token)}`
+            : null
+        });
+      }
+
+      if (supporterIds.has(match.supporter_id)) {
+        const participant = participantMap.get(match.participant_id) || (await select('participants', { id: match.participant_id }))[0] || {};
+        const supporter = supporterMap.get(match.supporter_id);
+        const token = status === 'connected' ? createAccessToken(match.id, 'supporter') : '';
+        visibleMatches.push({
+          match_id: match.id,
+          role: 'supporter',
+          role_label: '支援者',
+          status,
+          challenge: participant?.challenge || '未登録',
+          goal: participant?.goal || '未登録',
+          counterpart_name: participant?.name || '挑戦者',
+          counterpart_organization: '',
+          supporter_name: supporter?.supporter_name || '支援者',
+          updated_at: match.updated_at || match.created_at || null,
+          latest_checkin: participantCheckins.get(match.participant_id) || null,
+          access_url: token
+            ? `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(token)}`
+            : null
+        });
+      }
+    }
+
+    visibleMatches.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+
+    const connectedCount = visibleMatches.filter(row => row.status === 'connected').length;
+    const pendingCount = visibleMatches.filter(row => ['pending', 'challenger_approved', 'supporter_approved'].includes(row.status)).length;
+
+    res.json({
+      user_id: user.id,
+      roles: {
+        challenger: participants.length > 0,
+        supporter: supporters.length > 0
+      },
+      challenger: {
+        records: participants.map(row => ({
+          id: row.id,
+          name: row.name || '',
+          challenge: row.challenge || '',
+          goal: row.goal || '',
+          created_at: row.created_at || null,
+          latest_checkin: participantCheckins.get(row.id) || null
+        }))
+      },
+      supporter: {
+        records: supporters.map(row => ({
+          id: row.id,
+          organization_name: row.organization_name || '',
+          supporter_name: row.supporter_name || '',
+          support_category: row.support_category || '',
+          active: row.active !== false,
+          capacity: Number(row.capacity ?? 5),
+          accepting_new_matches: row.accepting_new_matches !== false,
+          created_at: row.created_at || null
+        }))
+      },
+      summary: {
+        participant_records: participants.length,
+        supporter_records: supporters.length,
+        total_connections: visibleMatches.length,
+        connected_connections: connectedCount,
+        pending_connections: pendingCount
+      },
+      matches: visibleMatches
+    });
+  } catch (error) {
+    console.error('user overview error', error);
+    res.status(500).json({ error: error.message || 'user overview failed' });
+  }
 });
 
 app.get('/api/core/history/:participant_id',async(req,res)=>{
