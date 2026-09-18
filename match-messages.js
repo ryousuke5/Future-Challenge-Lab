@@ -227,17 +227,54 @@ export function registerMatchMessageRoutes(app) {
       });
 
       let notificationEmailId = null;
+      let notificationStatus = 'skipped';
+      let notificationError = null;
       try {
         notificationEmailId = await sendMessageNotification({
           match: authz.match,
           senderRole: authz.auth.role,
           body
         });
+        notificationStatus = notificationEmailId ? 'sent' : 'skipped';
+        await supabase.from('connection_events').insert({
+          participant_id: authz.match.participant_id,
+          supporter_id: authz.match.supporter_id,
+          match_id: authz.match.id,
+          event_type: notificationEmailId ? 'message_email_sent' : 'message_email_skipped',
+          note: JSON.stringify({
+            sender_role: authz.auth.role,
+            recipient_role: authz.auth.role === 'challenger' ? 'supporter' : 'challenger',
+            message_id: message.id,
+            resend_id: notificationEmailId
+          }),
+          created_at: new Date().toISOString()
+        });
       } catch (emailError) {
-        console.error('[match-messages] notification email failed', emailError?.message || emailError);
+        notificationStatus = 'failed';
+        notificationError = emailError?.message || String(emailError);
+        console.error('[match-messages] notification email failed', notificationError);
+        await supabase.from('connection_events').insert({
+          participant_id: authz.match.participant_id,
+          supporter_id: authz.match.supporter_id,
+          match_id: authz.match.id,
+          event_type: 'message_email_failed',
+          note: JSON.stringify({
+            sender_role: authz.auth.role,
+            recipient_role: authz.auth.role === 'challenger' ? 'supporter' : 'challenger',
+            message_id: message.id,
+            error: notificationError
+          }),
+          created_at: new Date().toISOString()
+        });
       }
 
-      res.status(201).json({ ok: true, message, notification_email_id: notificationEmailId });
+      res.status(201).json({
+        ok: true,
+        message,
+        notification_email_id: notificationEmailId,
+        notification_status: notificationStatus,
+        notification_error: notificationError
+      });
     } catch (error) {
       console.error('[match-messages] send failed', error);
       res.status(500).json({ error: error.message || 'message send failed' });
