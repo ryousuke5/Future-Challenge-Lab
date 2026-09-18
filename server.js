@@ -55,7 +55,7 @@ function uniqueProductionContacts(rows = []){
   const byEmail=new Map();
   for(const row of rows){
     const email=normalizeContactEmail(row?.email);
-    if(!email || isTestEmail(email)) continue;
+    if(!email || isTestEmail(email) || row?.archived_at) continue;
     const current=byEmail.get(email);
     const currentTime=new Date(current?.created_at || 0).getTime();
     const rowTime=new Date(row?.created_at || 0).getTime();
@@ -196,7 +196,11 @@ function bucketAutonomy(score){ return score<=9?'low':score<=16?'medium':'high';
 function posterior(successes, trials, alpha=1, beta=1){ return (successes+alpha)/(trials+alpha+beta); }
 async function optimizeAction({participant_id, checkin}){
   const [allI, allA, supporters, supportOutcomes, participant] = await Promise.all([
-    select('intervention_assignments'), select('action_results'), select('supporters'), select('supporter_outcomes'), select('participants',{id:participant_id})
+    select('intervention_assignments'),
+    select('action_results'),
+    uniqueProductionContacts(await select('supporters')),
+    select('supporter_outcomes'),
+    select('participants',{id:participant_id})
   ]);
   const currentParticipant = participant[0] || {};
   const challengeText=`${currentParticipant.challenge||''} ${currentParticipant.goal||''}`.toLowerCase();
@@ -769,8 +773,8 @@ app.get('/api/users/:user_id', async (req,res)=>{
     const user=(await select('fcl_users',{id:userId}))[0];
     if(!user) return res.status(404).json({error:'user not found'});
     const [participants,supporters]=await Promise.all([
-      select('participants',{user_id:userId}),
-      select('supporters',{user_id:userId})
+      (await select('participants',{user_id:userId})).filter(x => !x.archived_at),
+      (await select('supporters',{user_id:userId})).filter(x => !x.archived_at)
     ]);
     const latestParticipant=participants.slice().sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0] || null;
     const latestSupporter=supporters.slice().sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0] || null;
@@ -797,8 +801,8 @@ app.get('/api/users/:user_id/overview', async (req, res) => {
     if (!user) return res.status(404).json({ error: 'user not found' });
 
     const [participants, supporters, matches, checkins] = await Promise.all([
-      select('participants', { user_id: userId }),
-      select('supporters', { user_id: userId }),
+      (await select('participants', { user_id: userId })).filter(x => !x.archived_at),
+      (await select('supporters', { user_id: userId })).filter(x => !x.archived_at),
       select('supporter_matches'),
       select('checkins')
     ]);
@@ -1208,6 +1212,8 @@ app.post('/api/matches',async(req,res)=>{
   try{
     const participant_id = req.body.participant_id || req.body.challenger_id;
     const ps=(await select('participants',{id:participant_id}))[0];
+    if(ps?.archived_at) return res.status(410).json({error:'この登録は終了しています。'});
+    if(!ps) return res.status(404).json({error:'participant not found'});
     const allSupporters = uniqueProductionContacts((await select('supporters')).filter(s => s.active !== false && s.accepting_new_matches !== false));
     const allMatches = (await select('supporter_matches')).filter(m => !['connected','declined','expired'].includes(effectiveMatchStatus(m)));
     const activeCounts = new Map();
@@ -1586,6 +1592,7 @@ app.get('/api/supporter/dashboard', async (req, res) => {
     const targets=[];
     for (const match of matches) {
       const participant=(await select('participants',{id:match.participant_id}))[0];
+      if(!participant || participant.archived_at) continue;
       const checkins=(await select('checkins',{participant_id:match.participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
       const latest=checkins[0] || null;
       const priority = await buildSupporterPriority(match.participant_id);
