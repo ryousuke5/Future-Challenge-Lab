@@ -146,7 +146,22 @@ async function match(){
   if(!participant)return alert('先に挑戦者登録をしてください');
   await withLoadingUI(document.getElementById('matchBtn'), 'マッチング処理中です。しばらくお待ちください…', async () => {
     const r=await api('/api/matches',{participant_id:participant.id});
-    matches.innerHTML=r.map(x=>`<div class="match"><strong>${x.supporter?.organization_name||'支援者'}</strong> / ${x.supporter?.supporter_name||''}<div>マッチ度 ${x.score}点</div><p>${x.reason}</p><div data-match-status="${x.id}">状態: ${x.status||'pending'}</div><button onclick="requestConnection('${x.id}', this)">この支援者に支援をお願いする</button><button onclick="approveMatch('${x.id}','supporter',this)">この挑戦者への支援を承認</button><button onclick="saveSupportOutcome('${x.id}','${x.supporter?.id||''}', this)">支援後：前進した</button></div>`).join('')||'<p>現在候補がありません。支援パートナーを登録してください。</p>';
+    matches.innerHTML=r.map(x=>{
+      const status=x.status||'pending';
+      const requestDone=['requested','challenger_approved','supporter_approved','connected'].includes(status);
+      const connected=status==='connected';
+      const accessUrl=x.access_url||'';
+      let actionHtml='';
+      if(connected && accessUrl){
+        actionHtml=`<a href="${accessUrl.replaceAll('"','&quot;')}" class="secondary-btn">接続ページを開く</a>`;
+      } else if(requestDone){
+        const label=status==='supporter_approved' ? '支援者承認済み・接続待ち' : '接続依頼済み';
+        actionHtml=`<button type="button" disabled>${label}</button>`;
+      } else {
+        actionHtml=`<button type="button" onclick="requestConnection('${x.id}', this)">この支援者に支援をお願いする</button>`;
+      }
+      return `<div class="match"><strong>${x.supporter?.organization_name||'支援者'}</strong> / ${x.supporter?.supporter_name||''}<div>マッチ度 ${x.score}点</div><p>${x.reason}</p><div data-match-status="${x.id}">状態: ${status}</div>${actionHtml}</div>`;
+    }).join('')||'<p>現在候補がありません。支援パートナーを登録してください。</p>';
   });
 }
 async function approveMatch(id,actor,btn){
@@ -159,9 +174,14 @@ async function approveMatch(id,actor,btn){
 async function requestConnection(id, btn){
   try { await withLoadingUI(btn, '接続処理中です。しばらくお待ちください…', async () => {
     const r=await fetch('/api/matches/'+id+'/request',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({note:'Future Challenge Labからの接続依頼'})});
-    if(!r.ok)return alert('接続依頼に失敗しました');
-    alert('支援依頼を送信しました。支援者が確認・承認すると接続が成立します。');
-  }); } catch(error) { showUiError(btn.closest('.match')?.querySelector(`[data-match-status="${id}"]`),'接続に失敗しました。'); }
+    const data=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(data.error||'接続依頼に失敗しました');
+    const statusEl=btn.closest('.match')?.querySelector(`[data-match-status="${id}"]`);
+    if(statusEl) statusEl.textContent=`状態: ${data.status||'requested'}`;
+    btn.disabled=true;
+    btn.textContent=data.already_requested?'接続依頼済み':'接続依頼を送信しました';
+    alert(data.already_requested?'この支援者への接続依頼はすでに送信済みです。':'支援依頼を送信しました。支援者が確認・承認すると接続が成立します。');
+  }); } catch(error) { showUiError(btn.closest('.match')?.querySelector(`[data-match-status="${id}"]`),error.message||'接続に失敗しました。'); }
 }
 function buildDashboardCards(data){
   const counts = data?.counts || {};
