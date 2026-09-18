@@ -178,7 +178,7 @@ async function sendEmail({ to, email, idempotencyKey }) {
       to: [to],
       subject: email.subject,
       text: email.body,
-      html: `<div style="font-family:Arial,sans-serif;line-height:1.7;white-space:pre-wrap">${escapeHtml(email.body)}</div>`
+      html: `<div style="font-family:Arial,sans-serif;line-height:1.7"><div style="white-space:pre-wrap">${escapeHtml(email.body)}</div><p style="margin-top:24px"><a href="${escapeHtml(email.detailUrl || publicUrl)}" style="display:inline-block;padding:12px 18px;background:#111;color:#fff;text-decoration:none;border-radius:6px">FCLの接続ページを開く</a></p></div>`
     })
   });
 
