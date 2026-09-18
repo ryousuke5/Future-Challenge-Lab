@@ -11,9 +11,8 @@ const publicUrl = (process.env.FCL_PUBLIC_URL || 'http://localhost:3000').replac
 const model = process.env.OPENAI_EMAIL_MODEL || 'gpt-4o-mini';
 const pollMs = Number(process.env.EMAIL_WORKER_POLL_MS || 15000);
 
-// Only process connection events created after this worker instance starts.
-// This prevents old, previously-unsent events from being bulk-sent after a deploy/restart.
-const workerStartedAt = new Date().toISOString();
+// Re-check recent connection events after restart so changed recipient addresses can be delivered.
+const emailEventLookbackMs = Number(process.env.EMAIL_WORKER_LOOKBACK_MS || 7 * 24 * 60 * 60 * 1000);
 
 if (!supabaseUrl || !serviceRoleKey) {
   console.error('[email-worker] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are required; worker disabled');
@@ -278,9 +277,9 @@ async function poll() {
       .from('connection_events')
       .select('*')
       .eq('event_type', 'connection_confirmed')
-      .gt('created_at', workerStartedAt)
+      .gte('created_at', new Date(Date.now() - emailEventLookbackMs).toISOString())
       .order('created_at', { ascending: true })
-      .limit(50);
+      .limit(100);
     if (error) throw error;
 
     for (const event of events || []) {
@@ -297,6 +296,6 @@ async function poll() {
   }
 }
 
-console.log(`[email-worker] started; poll=${pollMs}ms model=${model} only_new_events_after=${workerStartedAt}`);
+console.log(`[email-worker] started; poll=${pollMs}ms model=${model} lookback_ms=${emailEventLookbackMs}`);
 await poll();
 setInterval(poll, pollMs);
