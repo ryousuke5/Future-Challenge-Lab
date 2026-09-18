@@ -61,12 +61,14 @@ async function getRows(table, filters = {}) {
   return data || [];
 }
 
-async function hasSent(matchId, recipientRole) {
+async function hasSent(matchId, recipientRole, recipientEmail) {
   const events = await getRows('connection_events', { match_id: matchId, event_type: 'email_sent' });
   return events.some(event => {
     try {
       const note = JSON.parse(event.note || '{}');
-      return note.email_type === 'connection_confirmed' && note.recipient_role === recipientRole;
+      return note.email_type === 'connection_confirmed'
+        && note.recipient_role === recipientRole
+        && normalizeEmail(note.recipient) === normalizeEmail(recipientEmail);
     } catch {
       return false;
     }
@@ -235,7 +237,7 @@ async function processMatchEvent(event) {
       console.warn(`[email-worker] ${match.id} ${recipient.role}: no valid email; skipping`);
       continue;
     }
-    if (await hasSent(match.id, recipient.role)) continue;
+    if (await hasSent(match.id, recipient.role, recipient.email)) continue;
 
     const email = await generateEmail({ recipientRole: recipient.role, participant, supporter, matchId: match.id });
     const resend = await sendEmail({
