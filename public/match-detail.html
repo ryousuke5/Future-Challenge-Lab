@@ -156,11 +156,17 @@
     btn.disabled=true;
     btn.textContent='送信中…';
     try{
-      await getJson(`/api/matches/${encodeURIComponent(matchId)}/messages`, {
+      const result = await getJson(`/api/matches/${encodeURIComponent(matchId)}/messages`, {
         method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({token,body})
       });
       input.value='';
-      $('sendStatus').textContent='送信しました。相手にも通知されます。';
+      if(result.notification_status === 'sent'){
+        $('sendStatus').textContent='送信しました。相手にメール通知も送信しました。';
+      }else if(result.notification_status === 'failed'){
+        $('sendStatus').textContent='メッセージは保存されましたが、相手へのメール通知に失敗しました。';
+      }else{
+        $('sendStatus').textContent='メッセージは保存されました。メール通知は送信されていません。';
+      }
       await loadMessages();
     }catch(error){ $('sendStatus').textContent=error.message || '送信に失敗しました'; }
     finally{ btn.disabled=false; btn.textContent='メッセージを送る'; }
