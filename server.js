@@ -12,7 +12,7 @@ app.use(express.static('public'));
 const port = process.env.PORT || 3000;
 const hasSupabase = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 const supabase = hasSupabase ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY) : null;
-const memory = { participants: [], checkins: [], interventions: [], intervention_assignments: [], action_results: [], supporters: [], supporter_matches: [], connection_events: [], intervention_outcomes: [], model_learning_events: [], intervention_policy_decisions: [], supporter_outcomes: [] };
+const memory = { fcl_users: [], participants: [], checkins: [], interventions: [], intervention_assignments: [], action_results: [], supporters: [], supporter_matches: [], connection_events: [], intervention_outcomes: [], model_learning_events: [], intervention_policy_decisions: [], supporter_outcomes: [] };
 const supporterApprovalState = new Map();
 
 function readSupporterApprovalState(matchId){
@@ -64,6 +64,43 @@ function uniqueProductionContacts(rows = []){
   }
   return [...byEmail.values()];
 }
+async function getOrCreateFclUser(email){
+  const normalized = normalizeContactEmail(email);
+  if(!normalized) return null;
+
+  const q = db('fcl_users');
+  if(q){
+    const now = new Date().toISOString();
+    const { data, error } = await q
+      .upsert(
+        { email: normalized, email_normalized: normalized, updated_at: now },
+        { onConflict: 'email_normalized' }
+      )
+      .select('*')
+      .single();
+    if(error){
+      logSupabaseError({ table:'fcl_users', operation:'upsert', error });
+      throw error;
+    }
+    return data;
+  }
+
+  const existing = memory.fcl_users.find(x => x.email_normalized === normalized);
+  if(existing){
+    existing.updated_at = new Date().toISOString();
+    return existing;
+  }
+  const row = {
+    id: uuid(),
+    email: normalized,
+    email_normalized: normalized,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+  memory.fcl_users.push(row);
+  return row;
+}
+
 function uuid() { return crypto.randomUUID(); }
 function scoreAnswers(a) { return Object.values(a).reduce((s,v)=>s+Number(v||0),0); }
 function riskFromScore(score){ const r=Math.round(((25-score)/20)*100); return Math.max(0, Math.min(100,r)); }
@@ -692,24 +729,28 @@ app.post('/api/participants',async(req,res)=>{
   try{
     const email=normalizeContactEmail(req.body.email);
     if(!email) return res.status(400).json({error:'有効なメールアドレスを入力してください'});
+    const fclUser = await getOrCreateFclUser(email);
+
     if(!isTestEmail(email)){
       const existing=(await select('participants')).filter(x=>normalizeContactEmail(x.email)===email)
         .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0];
       if(existing){
         const row=await update('participants',existing.id,{
+          user_id:fclUser.id,
           name:req.body.name||existing.name||'',
           email,
           challenge:req.body.challenge||existing.challenge||'',
           goal:req.body.goal||existing.goal||''
         });
-        return res.json(row);
+        return res.json({ ...row, user_id:fclUser.id });
       }
     }
     const row=await insert('participants',{
+      user_id:fclUser.id,
       external_user_id:req.body.external_user_id||('web-'+Date.now()),
       name:req.body.name||'',email,challenge:req.body.challenge||'',goal:req.body.goal||''
     });
-    res.json(row);
+    res.json({ ...row, user_id:fclUser.id });
   }catch(e){res.status(500).json({error:e.message});}
 });
 
@@ -718,6 +759,30 @@ app.get('/api/participants/:id',async(req,res)=>{
     const participant=(await select('participants',{id:req.params.id}))[0];
     if(!participant) return res.status(404).json({error:'participant not found'});
     res.json(participant);
+  }catch(e){res.status(500).json({error:e.message});}
+});
+
+app.get('/api/users/:user_id', async (req,res)=>{
+  try{
+    const userId=String(req.params.user_id||'').trim();
+    const user=(await select('fcl_users',{id:userId}))[0];
+    if(!user) return res.status(404).json({error:'user not found'});
+    const [participants,supporters]=await Promise.all([
+      select('participants',{user_id:userId}),
+      select('supporters',{user_id:userId})
+    ]);
+    const latestParticipant=participants.slice().sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0] || null;
+    const latestSupporter=supporters.slice().sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0] || null;
+    res.json({
+      user_id:user.id,
+      email:user.email,
+      roles:{
+        challenger:Boolean(latestParticipant),
+        supporter:Boolean(latestSupporter)
+      },
+      participant:latestParticipant,
+      supporter:latestSupporter
+    });
   }catch(e){res.status(500).json({error:e.message});}
 });
 
@@ -815,7 +880,9 @@ app.post('/api/supporters/register',async(req,res)=>{
   try{
     const email=normalizeContactEmail(req.body.email);
     if(!email) return res.status(400).json({error:'有効なメールアドレスを入力してください'});
+    const fclUser = await getOrCreateFclUser(email);
     const patch={
+      user_id:fclUser.id,
       organization_name:req.body.organization_name||'',
       supporter_name:req.body.supporter_name||'',
       email,
@@ -828,9 +895,9 @@ app.post('/api/supporters/register',async(req,res)=>{
     if(!isTestEmail(email)){
       const existing=(await select('supporters')).filter(x=>normalizeContactEmail(x.email)===email)
         .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0];
-      if(existing) return res.json(await update('supporters',existing.id,patch));
+      if(existing) return res.json({ ...(await update('supporters',existing.id,patch)), user_id:fclUser.id });
     }
-    res.json(await insert('supporters',patch));
+    res.json({ ...(await insert('supporters',patch)), user_id:fclUser.id });
   }catch(e){res.status(500).json({error:e.message});}
 });
 
@@ -1374,10 +1441,17 @@ app.post('/api/supporter/execute', async (req, res) => {
 
 app.get('/api/supporter/dashboard', async (req, res) => {
   try {
-    const supporter_id = req.query.supporter_id;
-    if (!supporter_id) return res.status(400).json({ error: 'invalid supporter_id' });
+    let supporter_id = String(req.query.supporter_id || '').trim();
+    const user_id = String(req.query.user_id || '').trim();
 
-    const supporter=(await select('supporters',{id:supporter_id}))[0];
+    let supporter = supporter_id ? (await select('supporters',{id:supporter_id}))[0] : null;
+    if(!supporter && user_id){
+      const candidates = uniqueProductionContacts(await select('supporters',{user_id}));
+      supporter = candidates.slice().sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0] || null;
+      supporter_id = supporter?.id || '';
+    }
+
+    if (!supporter_id || !supporter) return res.status(400).json({ error: 'invalid user_id or supporter_id' });
     if (!supporter) return res.status(404).json({ error: 'supporter not found' });
 
     const matches=(await select('supporter_matches')).filter(x=>x.supporter_id===supporter_id);
@@ -1416,6 +1490,7 @@ app.get('/api/supporter/dashboard', async (req, res) => {
     res.json({
       supporter: {
         id: supporter.id,
+        user_id: supporter.user_id,
         supporter_name: supporter.supporter_name,
         organization_name: supporter.organization_name,
         active: supporter.active !== false,
