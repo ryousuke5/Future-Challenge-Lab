@@ -829,6 +829,7 @@ app.get('/api/users/:user_id/overview', async (req, res) => {
       if (participantIds.has(match.participant_id)) {
         const participant = participantMap.get(match.participant_id);
         const supporter = (await select('supporters', { id: match.supporter_id }))[0] || {};
+        if (supporter.archived_at) continue;
         const token = status === 'connected' ? createAccessToken(match.id, 'challenger') : '';
         visibleMatches.push({
           match_id: match.id,
@@ -850,6 +851,7 @@ app.get('/api/users/:user_id/overview', async (req, res) => {
       if (supporterIds.has(match.supporter_id)) {
         const participant = participantMap.get(match.participant_id) || (await select('participants', { id: match.participant_id }))[0] || {};
         const supporter = supporterMap.get(match.supporter_id);
+        if (participant.archived_at) continue;
         const token = status === 'connected' ? createAccessToken(match.id, 'supporter') : '';
         visibleMatches.push({
           match_id: match.id,
@@ -1596,10 +1598,14 @@ app.get('/api/supporter/dashboard', async (req, res) => {
       const checkins=(await select('checkins',{participant_id:match.participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
       const latest=checkins[0] || null;
       const priority = await buildSupporterPriority(match.participant_id);
+      const token = effectiveMatchStatus(match) === 'connected'
+        ? createAccessToken(match.id, 'supporter')
+        : '';
+      const publicUrl = (process.env.FCL_PUBLIC_URL || 'http://localhost:3000').replace(/\/$/, '');
       targets.push({
         match_id: match.id,
         participant_id: match.participant_id,
-        participant_name: participant?.name || '未登録',
+        participant_name: participant?.name || '挑戦者',
         priority: priority.priority,
         challenger_status: priority.challenger_status,
         latest_checkin: latest,
@@ -1608,7 +1614,10 @@ app.get('/api/supporter/dashboard', async (req, res) => {
         recommendation_reason: priority.recommendation_reason,
         suggested_message: priority.suggested_message,
         match_status: effectiveMatchStatus(match),
-        recommendation_type_code: priority.recommendation_type_code
+        recommendation_type_code: priority.recommendation_type_code,
+        access_url: token
+          ? `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(token)}`
+          : null
       });
     }
 
