@@ -28,12 +28,21 @@ fetch('/api/health').then(r=>r.json()).then(x=>document.getElementById('mode').t
 async function api(url,body){const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const x=await r.json();if(!r.ok)throw Error(x.error||'error');return x;}
 function showUiError(target,message='保存に失敗しました。もう一度お試しください。'){if(target)target.textContent=` ${message}`;}
 async function restoreCoreSession(){
-  const participantId=localStorage.getItem('fcl-participant-id');
+  let participantId=localStorage.getItem('fcl-participant-id');
+  const userId=localStorage.getItem('fcl-user-id');
+  if(userId){
+    const userResponse=await fetch(`/api/users/${encodeURIComponent(userId)}`);
+    if(userResponse.ok){
+      const user=await userResponse.json();
+      if(user.participant?.id) participantId=user.participant.id;
+    }
+  }
   if(!participantId)return;
   const response=await fetch(`/api/core/history/${encodeURIComponent(participantId)}`);
   if(!response.ok)return;
   const history=await response.json(); participant=history.participant;
-  document.getElementById('participantStatus').textContent=` 登録ID: ${participant.id}`;
+  if(participant?.user_id) localStorage.setItem('fcl-user-id',participant.user_id);
+  document.getElementById('participantStatus').textContent=` ユーザーID: ${participant.user_id || userId || '未取得'}`;
   if(history.analysis){ renderCoreResult({result:history.analysis}); renderInsight({result:history.analysis}); renderSolutions({result:history.analysis}); }
   const decision=history.decision?.selected_option || history.analysis?.recommended_option;
   if(decision){ selectedCoreOption=decision; document.getElementById('coreSelected').textContent=`選択中: ${decision}`; }
@@ -45,8 +54,8 @@ restoreCoreSession().catch(() => {});
 async function register(){
   await withLoadingUI(document.getElementById('registerBtn'), '登録処理中です。しばらくお待ちください…', async () => {
     participant=await api('/api/participants',{name:name.value,email:email.value,challenge:challenge.value,goal:goal.value});
-    localStorage.setItem('fcl-participant-id',participant.id);
-    participantStatus.textContent=` 登録ID: ${participant.id}`;
+    localStorage.setItem('fcl-participant-id',participant.id); localStorage.setItem('fcl-user-id',participant.user_id || '');
+    participantStatus.textContent=` ユーザーID: ${participant.user_id || '未取得'}`;
   });
 }
 function buildAnalysisCards(data){
@@ -202,10 +211,10 @@ async function dashboard(){
 }
 
 async function loadSupporterDashboard(){
-  const supporterId = document.getElementById('supporterIdInput').value.trim();
-  if(!supporterId){ return alert('supporter_id を入力してください'); }
+  const userId = document.getElementById('supporterIdInput').value.trim() || localStorage.getItem('fcl-user-id') || '';
+  if(!userId){ return alert('ユーザーIDを入力してください'); }
   await withLoadingUI(document.getElementById('supporterDashboardBtn'), '支援者データ取得中です。しばらくお待ちください…', async () => {
-    const data = await fetch(`/api/supporter/dashboard?supporter_id=${encodeURIComponent(supporterId)}`).then(r => r.json());
+    const data = await fetch(`/api/supporter/dashboard?user_id=${encodeURIComponent(userId)}`).then(r => r.json());
     if(data.error){ throw new Error(data.error); }
     const summary = data.summary || {};
     const targets = (data.targets || []).map(item => `
