@@ -31,12 +31,11 @@
     return data;
   }
 
-  function saveSupporterId(id){
-    if(id){
-      localStorage.setItem('fcl-supporter-id', id);
-      const input = document.getElementById('supporterIdInput');
-      if(input) input.value = id;
-    }
+  function saveSupporterIdentity(userId, supporterId){
+    if(userId) localStorage.setItem('fcl-user-id', userId);
+    if(supporterId) localStorage.setItem('fcl-supporter-id', supporterId); // legacy compatibility
+    const input = document.getElementById('supporterIdInput');
+    if(input && userId) input.value = userId;
   }
 
   function renderStatus(status){
@@ -209,9 +208,9 @@
       <div class="supporter-target-list">
         ${targets.length ? targets.map(renderTarget).join('') : '<div class="empty-box">現在、支援候補はありません。</div>'}
       </div>
-      <p class="supporter-mvp-note">MVPではこの端末に保存した支援者IDで画面を開いています。本番公開時はメールの本人確認付きリンクへ移行します。</p>
+      <p class="supporter-mvp-note">MVPではこの端末に保存したFCL共通ユーザーIDで画面を開いています。本番公開時はメールの本人確認付きリンクへ移行します。</p>
     `;
-    root.dataset.supporterId = supporterId;
+    root.dataset.supporterId = data.supporter?.id || supporterId;
   }
 
   window.registerSupporter = async function(){
@@ -232,30 +231,31 @@
         headers:{'content-type':'application/json'},
         body:JSON.stringify(payload)
       });
-      saveSupporterId(data.id);
+      saveSupporterIdentity(data.user_id, data.id);
       const status = document.getElementById('supportStatus');
-      if(status) status.innerHTML = ` 登録しました。<strong>支援者ID：${esc(data.id)}</strong>`;
+      if(status) status.innerHTML = ` 登録しました。<strong>ユーザーID：${esc(data.user_id || '未取得')}</strong>`;
       const openBtn = document.getElementById('openSupporterDashboardBtn');
       if(openBtn) openBtn.hidden = false;
-      await window.loadSupporterDashboard(data.id);
+      await window.loadSupporterDashboard(data.user_id);
     } catch(error){
       const status = document.getElementById('supportStatus');
       if(status) status.textContent = ` ${error.message || '登録に失敗しました。'}`;
     } finally { restore(); }
   };
 
-  window.loadSupporterDashboard = async function(explicitId){
+  window.loadSupporterDashboard = async function(explicitUserId){
     const input = document.getElementById('supporterIdInput');
-    const supporterId = (explicitId || input?.value || localStorage.getItem('fcl-supporter-id') || '').trim();
-    if(!supporterId){
-      alert('支援者登録後に画面を開くか、支援者IDを入力してください。');
+    const userId = (explicitUserId || input?.value || localStorage.getItem('fcl-user-id') || '').trim();
+    if(!userId){
+      alert('支援者登録後に画面を開くか、FCL共通ユーザーIDを入力してください。');
       return;
     }
-    saveSupporterId(supporterId);
     const btn = document.getElementById('supporterDashboardBtn') || document.getElementById('openSupporterDashboardBtn');
     const restore = loading(btn, '取得中…');
     try{
-      const data = await fetchJson(`/api/supporter/dashboard?supporter_id=${encodeURIComponent(supporterId)}`);
+      const data = await fetchJson(`/api/supporter/dashboard?user_id=${encodeURIComponent(userId)}`);
+      const supporterId = data.supporter?.id || '';
+      saveSupporterIdentity(data.supporter?.user_id || userId, supporterId);
       const currentSupportCount = await loadCurrentSupportCount(supporterId, data.targets || []);
       renderDashboard(data, supporterId, currentSupportCount);
       const status = document.getElementById('supporterDashboardStatus');
@@ -346,9 +346,10 @@
   };
 
   document.addEventListener('DOMContentLoaded', () => {
-    const id = localStorage.getItem('fcl-supporter-id');
+    const id = localStorage.getItem('fcl-user-id') || localStorage.getItem('fcl-supporter-id');
     if(id){
-      saveSupporterId(id);
+      const input = document.getElementById('supporterIdInput');
+      if(input) input.value = localStorage.getItem('fcl-user-id') || id;
       const btn = document.getElementById('openSupporterDashboardBtn');
       if(btn) btn.hidden = false;
     }
