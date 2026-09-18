@@ -11,6 +11,20 @@ function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+async function getOrCreateFclUser(email) {
+  const normalized = normalizeEmail(email);
+  const { data, error } = await supabase
+    .from('fcl_users')
+    .upsert(
+      { email: normalized, email_normalized: normalized, updated_at: new Date().toISOString() },
+      { onConflict: 'email_normalized' }
+    )
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
 function registerWithStableParticipantId(req, res, fallbackHandlers) {
   if (!supabase) {
     return originalPost.call(req.app, '/api/participants', ...fallbackHandlers);
@@ -24,6 +38,8 @@ function registerWithStableParticipantId(req, res, fallbackHandlers) {
       if (!email) {
         return originalPost.call(req.app, '/api/participants', ...fallbackHandlers);
       }
+
+      const fclUser = await getOrCreateFclUser(email);
 
       const { data: existingRows, error: existingError } = await supabase
         .from('participants')
@@ -64,6 +80,7 @@ function registerWithStableParticipantId(req, res, fallbackHandlers) {
         const patch = {
           name: String(body.name ?? '').trim() || canonical.name || '',
           email,
+          user_id: fclUser.id,
           challenge: String(body.challenge ?? '').trim() || canonical.challenge || '',
           goal: String(body.goal ?? '').trim() || canonical.goal || ''
         };
@@ -76,7 +93,7 @@ function registerWithStableParticipantId(req, res, fallbackHandlers) {
           .single();
 
         if (updateError) throw updateError;
-        return res.json({ ...updated, reused_existing_id: true });
+        return res.json({ ...updated, user_id: fclUser.id, reused_existing_id: true });
       }
 
       const { data: created, error: createError } = await supabase
@@ -92,7 +109,7 @@ function registerWithStableParticipantId(req, res, fallbackHandlers) {
         .single();
 
       if (createError) throw createError;
-      return res.json({ ...created, reused_existing_id: false });
+      return res.json({ ...created, user_id: fclUser.id, reused_existing_id: false });
     } catch (error) {
       return res.status(500).json({ error: error.message || 'participant registration failed' });
     }
