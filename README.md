@@ -57,3 +57,10 @@ node server.js
 - The same normalized email maps to one common user ID even when the person has both challenger and supporter roles.
 - `participants.id` and `supporters.id` remain internal role record IDs for compatibility with existing history and matching data.
 - The browser stores `fcl-user-id` as the primary client-side identity key; role-specific IDs remain internal compatibility identifiers.
+
+
+## Archived test registrations
+- Clearly synthetic registrations using `example.com` or `test.com` are archived with `archived_at` instead of being deleted.
+- Archived registrations are hidden from active FCL matching, dashboards, user roles, and registration reuse.
+- Check-ins, interventions, action results, learning events, and other historical rows are preserved.
+- This is intentionally non-destructive so research history is not lost.
