@@ -8,6 +8,11 @@ import { createAccessToken } from './match-messages.js';
 const app = express();
 app.use(cors());
 app.use(express.json());
+// Prevent stale cached HTML from hiding the latest FCL message-notification UI.
+app.use((req, res, next) => {
+  if (req.path.endsWith('.html')) res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  next();
+});
 app.use(express.static('public'));
 
 const port = process.env.PORT || 3000;
