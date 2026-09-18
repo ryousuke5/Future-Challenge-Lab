@@ -99,6 +99,7 @@ function registerWithStableParticipantId(req, res, fallbackHandlers) {
       const { data: created, error: createError } = await supabase
         .from('participants')
         .insert({
+          user_id: fclUser.id,
           external_user_id: String(body.external_user_id || `web-${Date.now()}`),
           name: String(body.name ?? '').trim(),
           email,
