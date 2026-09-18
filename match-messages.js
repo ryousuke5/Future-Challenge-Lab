@@ -131,52 +131,8 @@ async function sendMessageNotification({ match, senderRole, body }) {
   return result?.id || null;
 }
 
-async function runStartupEmailNotificationTest() {
-  if (process.env.FCL_EMAIL_TEST_ON_START !== 'true') return;
-  const matchId = String(process.env.FCL_EMAIL_TEST_MATCH_ID || '').trim();
-  const testId = String(process.env.FCL_EMAIL_TEST_ID || '').trim();
-  if (!matchId || !testId) return;
-
-  try {
-    const existing = await getRows('connection_events', { event_type: 'email_notification_test' });
-    const alreadyRun = existing.some(event => String(event.note || '').includes(testId));
-    if (alreadyRun) return;
-
-    const match = await loadMatch(matchId);
-    if (!match) throw new Error('test match not found');
-    if (String(match.status) !== 'connected') throw new Error('test match is not connected');
-
-    const testBody = 'FCLテスト：支援者からの返信通知メールです。';
-    const messageId = crypto.randomUUID();
-    const { error: insertError } = await supabase.from('match_messages').insert({
-      id: messageId,
-      match_id: match.id,
-      sender_role: 'supporter',
-      sender_id: match.supporter_id,
-      body: testBody,
-      created_at: new Date().toISOString()
-    });
-    if (insertError) throw insertError;
-
-    const resendId = await sendMessageNotification({ match, senderRole: 'supporter', body: testBody });
-    await supabase.from('connection_events').insert({
-      participant_id: match.participant_id,
-      supporter_id: match.supporter_id,
-      match_id: match.id,
-      event_type: 'email_notification_test',
-      note: JSON.stringify({ test_id: testId, message_id: messageId, resend_id: resendId, recipient_role: 'challenger' }),
-      created_at: new Date().toISOString()
-    });
-    console.log('[match-messages] startup email notification test sent', { match_id: match.id, message_id: messageId, resend_id: resendId });
-  } catch (error) {
-    console.error('[match-messages] startup email notification test failed', error?.message || error);
-  }
-}
-
 export function registerMatchMessageRoutes(app) {
   if (!app || !supabase) return;
-
-  void runStartupEmailNotificationTest();
 
   // One-shot operational test for the reciprocal email notification path.
   // Disabled unless FCL_EMAIL_TEST_TOKEN is configured on the server.
