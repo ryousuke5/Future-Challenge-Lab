@@ -1126,6 +1126,61 @@ function effectiveMatchStatus(match){
   return normalizeMatchStatus(hydrated.status || 'pending');
 }
 
+async function buildActionActivity(participant_id){
+  const now = Date.now();
+  const windowMs = 7 * 24 * 60 * 60 * 1000;
+  const recentCheckins = (await select('checkins',{participant_id}))
+    .filter(row => {
+      const t = new Date(row?.checked_in_at || 0).getTime();
+      return Number.isFinite(t) && now - t <= windowMs;
+    })
+    .sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
+  const recentActions = (await select('action_results',{participant_id}))
+    .filter(row => {
+      const t = new Date(row?.created_at || row?.completed_at || 0).getTime();
+      return Number.isFinite(t) && now - t <= windowMs;
+    })
+    .sort((a,b)=>new Date(b.created_at || b.completed_at || 0)-new Date(a.created_at || a.completed_at || 0));
+
+  const completedActions = recentActions.filter(row => row?.completed === true || row?.execution_status === 'completed').length;
+  const checkinDays = new Set(recentCheckins.map(row => new Date(row.checked_in_at).toISOString().slice(0,10))).size;
+  const lastActionAt = recentActions[0]?.created_at || recentActions[0]?.completed_at || null;
+  const lastCheckinAt = recentCheckins[0]?.checked_in_at || null;
+  const lastActivityAt = [lastActionAt,lastCheckinAt]
+    .map(v => v ? new Date(v).getTime() : 0)
+    .reduce((max,t)=>Math.max(max,t),0);
+  const ageHours = lastActivityAt ? Math.max(0,(now-lastActivityAt)/(60*60*1000)) : Infinity;
+  const recencyScore = ageHours <= 48 ? 20 : ageHours <= 96 ? 10 : ageHours <= 168 ? 5 : 0;
+  const actionCountScore = Math.min(recentActions.length / 5, 1) * 25;
+  const completedScore = Math.min(completedActions / 3, 1) * 30;
+  const checkinScore = Math.min(checkinDays / 5, 1) * 25;
+  const activityScore = Math.round(Math.min(100, actionCountScore + completedScore + checkinScore + recencyScore));
+
+  const active = recentActions.length > 0 || completedActions > 0 || checkinDays >= 3;
+  const action_activity_status = activityScore >= 55 && active
+    ? 'active'
+    : activityScore >= 25
+      ? 'moving'
+      : 'paused';
+  const action_activity_label = {
+    active: '行動中',
+    moving: '動きあり',
+    paused: '行動が少ない'
+  }[action_activity_status];
+  const action_priority_rank = action_activity_status === 'active' ? 2 : action_activity_status === 'moving' ? 1 : 0;
+
+  return {
+    action_activity_score: activityScore,
+    action_activity_status,
+    action_activity_label,
+    action_priority_rank,
+    recent_action_count: recentActions.length,
+    recent_completed_action_count: completedActions,
+    recent_checkin_days: checkinDays,
+    last_activity_at: lastActivityAt ? new Date(lastActivityAt).toISOString() : null
+  };
+}
+
 function getRecommendationTypeLabel(type){
   switch(type){
     case 'checkin_follow_up': return 'チェックインで見直す';
@@ -1146,6 +1201,7 @@ async function buildSupporterPriority(participant_id){
   const riskScore=Number(latest?.risk_score ?? latest?.analysis?.signals?.risk ?? 0);
   const autonomy=Number(latest?.autonomy_total ?? latest?.analysis?.signals?.score ?? 0);
   const completed=recentActions.filter(x=>x.completed).length;
+  const actionActivity = await buildActionActivity(participant_id);
 
   let priority='low';
   if(riskScore >= 70 || (riskScore >= 45 && autonomy <= 12) || completed === 0){
@@ -1173,6 +1229,14 @@ async function buildSupporterPriority(participant_id){
     latest_risk_score: riskScore,
     autonomy_score: autonomy,
     recent_action_count: recentActions.length,
+    action_activity: actionActivity,
+    action_activity_score: actionActivity.action_activity_score,
+    action_activity_status: actionActivity.action_activity_status,
+    action_activity_label: actionActivity.action_activity_label,
+    action_priority_rank: actionActivity.action_priority_rank,
+    recent_completed_action_count: actionActivity.recent_completed_action_count,
+    recent_checkin_days: actionActivity.recent_checkin_days,
+    last_activity_at: actionActivity.last_activity_at,
     recommendation_type_code: recommendationType,
     recommended_support_type: recommendationLabel,
     recommendation_reason: recommendationReason,
@@ -1638,6 +1702,14 @@ app.get('/api/supporter/dashboard', async (req, res) => {
         recommended_support_type: priority.recommended_support_type,
         recommendation_reason: priority.recommendation_reason,
         suggested_message: priority.suggested_message,
+        action_activity_score: priority.action_activity_score,
+        action_activity_status: priority.action_activity_status,
+        action_activity_label: priority.action_activity_label,
+        action_priority_rank: priority.action_priority_rank,
+        recent_action_count: priority.recent_action_count,
+        recent_completed_action_count: priority.recent_completed_action_count,
+        recent_checkin_days: priority.recent_checkin_days,
+        last_activity_at: priority.last_activity_at,
         match_status: effectiveMatchStatus(match),
         recommendation_type_code: priority.recommendation_type_code,
         access_url: token
@@ -1683,7 +1755,12 @@ app.get('/api/supporter/dashboard', async (req, res) => {
         new_matching_enabled: supporter.accepting_new_matches !== false
       },
       recent_outcomes: outcomes.slice(-5),
-      targets: targets.slice().sort((a,b) => ({ pending:0, challenger_approved:1, supporter_approved:2, connected:3, declined:4, expired:5 }[a.match_status] ?? 9) - ({ pending:0, challenger_approved:1, supporter_approved:2, connected:3, declined:4, expired:5 }[b.match_status] ?? 9) || ({ high:0, medium:1, low:2 }[a.priority] ?? 9) - ({ high:0, medium:1, low:2 }[b.priority] ?? 9)).slice(0, 10)
+      targets: targets.slice().sort((a,b) =>
+        (Number(b.action_priority_rank ?? 0) - Number(a.action_priority_rank ?? 0)) ||
+        (Number(b.action_activity_score ?? 0) - Number(a.action_activity_score ?? 0)) ||
+        (({ pending:0, challenger_approved:1, supporter_approved:2, connected:3, declined:4, expired:5 }[a.match_status] ?? 9) - ({ pending:0, challenger_approved:1, supporter_approved:2, connected:3, declined:4, expired:5 }[b.match_status] ?? 9)) ||
+        (({ high:0, medium:1, low:2 }[a.priority] ?? 9) - ({ high:0, medium:1, low:2 }[b.priority] ?? 9))
+      ).slice(0, 10)
     });
   } catch (error) {
     res.status(500).json({ error: error.message || 'supporter dashboard failed' });
