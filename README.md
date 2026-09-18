@@ -50,3 +50,10 @@ node server.js
 - Supporter outcomes are written to `supporter_outcomes` and `model_learning_events`.
 - When the policy selects `supporter` or `both`, a suggested `supporter_matches` row is created automatically.
 - Existing Supabase deployments should also run `supabase/migration_v2.sql`.
+
+
+## Unified user identity
+- FCL uses `fcl_users.id` as the common user ID.
+- The same normalized email maps to one common user ID even when the person has both challenger and supporter roles.
+- `participants.id` and `supporters.id` remain internal role record IDs for compatibility with existing history and matching data.
+- The browser stores `fcl-user-id` as the primary client-side identity key; role-specific IDs remain internal compatibility identifiers.
