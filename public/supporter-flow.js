@@ -114,6 +114,10 @@
             <p>${esc(item.challenger_status || '現在地を確認中')}</p>
           </div>
           <div class="supporter-info-card">
+            <span class="section-tag">最近の行動</span>
+            <p><strong>${esc(item.action_activity_label || '確認中')}</strong><br>直近7日：行動 ${Number(item.recent_action_count || 0)}回 / 完了 ${Number(item.recent_completed_action_count || 0)}回 / チェックイン ${Number(item.recent_checkin_days || 0)}日</p>
+          </div>
+          <div class="supporter-info-card">
             <span class="section-tag">今回求められている支援</span>
             <p>${esc(item.recommended_support_type || '話を聞きながら一緒に整理する')}</p>
           </div>
@@ -204,8 +208,8 @@
         <div class="result-card"><span class="section-tag">今週の支援</span><h3>${Number(summary.weekly_support_count ?? 0)}</h3><p>直近7日間の支援記録</p></div>
       </div>
       <div class="supporter-dashboard-note">
-        <strong>支援者が見る情報は最小限です。</strong>
-        <span>「今どこで止まっているか」「何を求めているか」「支援後どうなったか」を中心に確認します。</span>
+        <strong>FCLは「実際に動いている挑戦者」を優先して表示します。</strong>
+        <span>直近7日間の行動・完了・チェックインを見て、まず行動中の人が上に表示されます。その上で支援の必要度と接続状況を確認します。</span>
       </div>
       <div class="supporter-target-list">
         ${targets.length ? targets.map(renderTarget).join('') : '<div class="empty-box">現在、支援候補はありません。</div>'}
