@@ -1,5 +1,16 @@
 create extension if not exists pgcrypto;
 
+-- FCL共通ユーザーID
+-- 1人の利用者を1つのuser_idで管理し、挑戦者・支援者の両ロールから参照する。
+create table if not exists fcl_users (
+  id uuid primary key default gen_random_uuid(),
+  email text not null,
+  email_normalized text not null unique,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+
 create table if not exists participants (
   id uuid primary key default gen_random_uuid(),
   external_user_id text unique,
@@ -7,7 +18,8 @@ create table if not exists participants (
   email text,
   challenge text,
   goal text,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  user_id uuid not null references fcl_users(id)
 );
 
 create table if not exists checkins (
@@ -69,7 +81,8 @@ create table if not exists supporters (
   active boolean not null default true,
   capacity int not null default 5,
   accepting_new_matches boolean not null default true,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  user_id uuid not null references fcl_users(id)
 );
 
 create table if not exists supporter_matches (
@@ -160,3 +173,11 @@ alter table intervention_outcomes enable row level security;
 alter table model_learning_events enable row level security;
 alter table intervention_policy_decisions enable row level security;
 alter table supporter_outcomes enable row level security;
+
+-- 共通ユーザーIDの検索用インデックス
+create index if not exists participants_user_id_idx on participants(user_id);
+create index if not exists supporters_user_id_idx on supporters(user_id);
+
+alter table fcl_users enable row level security;
+alter table participants enable row level security;
+alter table supporters enable row level security;
