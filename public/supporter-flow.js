@@ -233,7 +233,7 @@
       });
       saveSupporterIdentity(data.user_id, data.id);
       const status = document.getElementById('supportStatus');
-      if(status) status.innerHTML = ` 登録しました。<strong>ユーザーID：${esc(data.user_id || '未取得')}</strong>`;
+      if(status) status.innerHTML = ` 登録しました。<strong>ユーザーID：${esc(data.user_id || '未取得')}</strong>`; const userPageLink=document.getElementById('supporterUserPageLink'); if(userPageLink&&data.user_id){ userPageLink.href='/user.html?user_id='+encodeURIComponent(data.user_id); userPageLink.hidden=false; }
       const openBtn = document.getElementById('openSupporterDashboardBtn');
       if(openBtn) openBtn.hidden = false;
       await window.loadSupporterDashboard(data.user_id);
