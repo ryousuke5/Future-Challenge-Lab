@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>FCL｜マイページ</title>
+  <style>
+    :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#1f2937;background:#f6f7f9}
+    *{box-sizing:border-box}
+    body{margin:0;background:#f6f7f9}
+    main{max-width:960px;margin:0 auto;padding:28px 16px 64px}
+    .hero,.card{background:#fff;border:1px solid #e5e7eb;border-radius:18px;box-shadow:0 8px 30px rgba(15,23,42,.05)}
+    .hero{padding:24px;margin-bottom:16px}
+    .card{padding:20px;margin-bottom:16px}
+    .eyebrow{font-size:12px;letter-spacing:.12em;color:#64748b;font-weight:700}
+    h1{font-size:30px;margin:8px 0 8px}
+    h2{font-size:20px;margin:0 0 14px}
+    h3{font-size:17px;margin:0 0 8px}
+    p{line-height:1.7;margin:6px 0}
+    .muted{color:#64748b;font-size:13px}
+    .user-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px}
+    input{flex:1 1 420px;min-width:220px;padding:12px;border:1px solid #cbd5e1;border-radius:12px;font:inherit}
+    button{border:0;border-radius:12px;padding:11px 16px;font-weight:700;cursor:pointer;background:#111827;color:#fff}
+    button.secondary{background:#fff;color:#111827;border:1px solid #cbd5e1}
+    button:disabled{opacity:.6;cursor:wait}
+    .pill{display:inline-flex;padding:6px 10px;border-radius:999px;background:#eef2ff;color:#3730a3;font-weight:700;font-size:13px;margin:0 6px 6px 0}
+    .summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+    .summary-item,.record,.match{background:#f8fafc;border-radius:14px;padding:14px}
+    .summary-item strong{display:block;font-size:24px;margin-top:3px}
+    .role-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .record-list,.match-list{display:grid;gap:12px}
+    .match-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+    .match-title{font-weight:700}
+    .match-meta{font-size:12px;color:#64748b;margin-top:4px}
+    .match-actions{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
+    .status{display:inline-flex;padding:5px 9px;border-radius:999px;background:#e2e8f0;color:#334155;font-size:12px;font-weight:700;white-space:nowrap}
+    .status.connected{background:#dcfce7;color:#166534}
+    .status.pending{background:#fef3c7;color:#92400e}
+    .error{padding:12px;border-radius:12px;background:#fef2f2;color:#991b1b;margin-bottom:14px}
+    .empty{padding:14px;background:#f8fafc;border-radius:12px;color:#64748b}
+    .notice{padding:12px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-size:13px;line-height:1.7}
+    .top-nav{display:flex;justify-content:space-between;align-items:center;gap:10px}
+    @media (max-width:760px){.summary-grid,.role-grid{grid-template-columns:1fr}.match-head{flex-direction:column}}
+  </style>
+</head>
+<body>
+<main>
+  <section class="hero">
+    <div class="top-nav">
+      <div>
+        <div class="eyebrow">FUTURE CHALLENGE LAB</div>
+        <h1>FCLマイページ</h1>
+        <p>1つのFCLユーザーIDで、自分の「挑戦」と「支援」をまとめて確認します。</p>
+      </div>
+      <a href="/"><button class="secondary" type="button">トップへ戻る</button></a>
+    </div>
+    <div class="user-bar">
+      <input id="userIdInput" placeholder="FCLユーザーID">
+      <button id="loadBtn" type="button">マイページを開く</button>
+    </div>
+    <div id="errorBox" class="error" hidden></div>
+  </section>
+
+  <section id="content" hidden>
+    <section class="card">
+      <h2>FCLユーザー</h2>
+      <div id="userIdLabel" class="match-title"></div>
+      <div id="roles" style="margin-top:10px"></div>
+      <p class="muted" style="margin-top:10px">同じメールアドレスから登録した挑戦者・支援者は、ここで同じユーザーIDに統合されています。</p>
+    </section>
+
+    <section class="card">
+      <h2>現在の状況</h2>
+      <div class="summary-grid">
+        <div class="summary-item"><div class="muted">挑戦者登録</div><strong id="summaryParticipants">0</strong></div>
+        <div class="summary-item"><div class="muted">支援者登録</div><strong id="summarySupporters">0</strong></div>
+        <div class="summary-item"><div class="muted">接続成立</div><strong id="summaryConnections">0</strong></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>自分の登録</h2>
+      <div class="role-grid">
+        <div>
+          <h3>挑戦者として</h3>
+          <div id="participantRecords" class="record-list"></div>
+        </div>
+        <div>
+          <h3>支援者として</h3>
+          <div id="supporterRecords" class="record-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>支援接続</h2>
+      <div class="notice">接続成立後は「接続ページを開く」から、相手とのメッセージ画面へ進めます。未成立のマッチも現在の状態をここで確認できます。</div>
+      <div id="matches" class="match-list" style="margin-top:12px"></div>
+    </section>
+
+    <section class="card">
+      <p class="muted">現在のMVPでは、共通ユーザーIDを端末から指定して表示しています。本番の本人確認はメール認証付きリンクへ移行します。</p>
+    </section>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+
+  function escapeHtml(value){
+    return String(value ?? '')
+      .replaceAll('&','&amp;')
+      .replaceAll('<','&lt;')
+      .replaceAll('>','&gt;')
+      .replaceAll('"','&quot;')
+      .replaceAll("'","&#39;");
+  }
+
+  function statusLabel(status){
+    return {
+      connected:'接続成立',
+      pending:'回答待ち',
+      challenger_approved:'挑戦者承認済み',
+      supporter_approved:'支援者承認済み',
+      declined:'辞退',
+      expired:'期限切れ'
+    }[status] || status || '状態確認中';
+  }
+
+  function statusClass(status){
+    return status === 'connected' ? 'connected' : ['pending','challenger_approved','supporter_approved'].includes(status) ? 'pending' : '';
+  }
+
+  function showError(message){
+    $('errorBox').textContent = message || '読み込みに失敗しました。';
+    $('errorBox').hidden = false;
+  }
+
+  function clearError(){
+    $('errorBox').hidden = true;
+    $('errorBox').textContent = '';
+  }
+
+  function renderRecords(data){
+    const challenger = data.challenger?.records || [];
+    const supporter = data.supporter?.records || [];
+
+    $('participantRecords').innerHTML = challenger.length
+      ? challenger.map(row => {
+          const latest = row.latest_checkin;
+          const latestState = latest?.risk_level ? '最新チェックイン：' + latest.risk_level : 'チェックイン記録なし';
+          return '<div class="record">' +
+            '<div class="match-title">' + escapeHtml(row.challenge || '挑戦テーマ未登録') + '</div>' +
+            '<p>目標：' + escapeHtml(row.goal || '未登録') + '</p>' +
+            '<div class="match-meta">' + escapeHtml(row.name || '') + ' ・ ' + escapeHtml(latestState) + '</div>' +
+          '</div>';
+        }).join('')
+      : '<div class="empty">挑戦者登録はありません。</div>';
+
+    $('supporterRecords').innerHTML = supporter.length
+      ? supporter.map(row => '<div class="record">' +
+          '<div class="match-title">' + escapeHtml(row.supporter_name || '支援者') + '</div>' +
+          '<p>' + escapeHtml(row.organization_name || '') + '</p>' +
+          '<div class="match-meta">' + escapeHtml(row.support_category || '支援') + ' ・ ' + (row.active ? '受付中' : '停止中') + '</div>' +
+        '</div>').join('')
+      : '<div class="empty">支援者登録はありません。</div>';
+  }
+
+  function renderMatches(matches){
+    if(!matches.length){
+      $('matches').innerHTML = '<div class="empty">現在、支援接続はありません。</div>';
+      return;
+    }
+
+    $('matches').innerHTML = matches.map(row => {
+      const counterpart = row.role === 'challenger'
+        ? escapeHtml((row.counterpart_name || '支援者') + (row.counterpart_organization ? '（' + row.counterpart_organization + '）' : ''))
+        : escapeHtml(row.counterpart_name || '挑戦者');
+      const detail = row.role === 'challenger'
+        ? '支援者：' + counterpart
+        : '挑戦者：' + counterpart;
+      const button = row.access_url
+        ? '<a href="' + escapeHtml(row.access_url) + '"><button type="button">接続ページを開く</button></a>'
+        : '';
+      return '<div class="match">' +
+        '<div class="match-head">' +
+          '<div>' +
+            '<div class="match-title">' + escapeHtml(row.role_label) + 'としての接続</div>' +
+            '<div class="match-meta">' + detail + '</div>' +
+          '</div>' +
+          '<span class="status ' + statusClass(row.status) + '">' + escapeHtml(statusLabel(row.status)) + '</span>' +
+        '</div>' +
+        '<p style="margin-top:10px">挑戦内容：' + escapeHtml(row.challenge) + '</p>' +
+        '<p>目標：' + escapeHtml(row.goal) + '</p>' +
+        '<div class="match-actions">' + button + '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  async function loadOverview(userId){
+    const value = String(userId || '').trim();
+    if(!value){ showError('FCLユーザーIDを入力してください。'); return; }
+
+    const btn = $('loadBtn');
+    btn.disabled = true;
+    btn.textContent = '取得中…';
+    clearError();
+
+    try{
+      const response = await fetch('/api/users/' + encodeURIComponent(value) + '/overview');
+      const data = await response.json().catch(() => ({}));
+      if(!response.ok) throw new Error(data.error || 'マイページの取得に失敗しました。');
+
+      localStorage.setItem('fcl-user-id', data.user_id);
+      $('userIdInput').value = data.user_id;
+      $('userIdLabel').textContent = 'ユーザーID：' + data.user_id;
+      $('roles').innerHTML = [
+        data.roles?.challenger ? '<span class="pill">挑戦者</span>' : '',
+        data.roles?.supporter ? '<span class="pill">支援者</span>' : ''
+      ].join('') || '<span class="muted">役割登録なし</span>';
+
+      const summary = data.summary || {};
+      $('summaryParticipants').textContent = Number(summary.participant_records || 0);
+      $('summarySupporters').textContent = Number(summary.supporter_records || 0);
+      $('summaryConnections').textContent = Number(summary.connected_connections || 0);
+
+      renderRecords(data);
+      renderMatches(data.matches || []);
+      $('content').hidden = false;
+    }catch(error){
+      $('content').hidden = true;
+      showError(error.message || 'マイページの取得に失敗しました。');
+    }finally{
+      btn.disabled = false;
+      btn.textContent = 'マイページを開く';
+    }
+  }
+
+  $('loadBtn').addEventListener('click', () => loadOverview($('userIdInput').value));
+
+  const params = new URLSearchParams(location.search);
+  const initialUserId = params.get('user_id') || localStorage.getItem('fcl-user-id') || '';
+  if(initialUserId){
+    $('userIdInput').value = initialUserId;
+    loadOverview(initialUserId);
+  }
+})();
+</script>
+</body>
+</html>
