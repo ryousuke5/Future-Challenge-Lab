@@ -1228,10 +1228,19 @@ app.post('/api/matches',async(req,res)=>{
     const last=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0];
     const ranked=ss.map(s=>({s,...matchScore(ps||{},s,last)})).sort((a,b)=>b.score-a.score).slice(0,5);
     const rows=[];
+    const publicUrl = (process.env.FCL_PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
     for(const x of ranked){
       const existing = (await select('supporter_matches',{participant_id, supporter_id: x.s.id})).find(m => !['connected','declined','expired'].includes(effectiveMatchStatus(m)));
       if (existing) {
-        rows.push({ ...existing, supporter: x.s, match_score: Number(existing.score), status: effectiveMatchStatus(existing) });
+        const status = effectiveMatchStatus(existing);
+        const token = status === 'connected' ? createAccessToken(existing.id, 'challenger') : '';
+        rows.push({
+          ...existing,
+          supporter: x.s,
+          match_score: Number(existing.score),
+          status,
+          access_url: token ? `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(existing.id)}&token=${encodeURIComponent(token)}` : null
+        });
         continue;
       }
       const record = await insert('supporter_matches',{
@@ -1249,7 +1258,15 @@ app.post('/api/matches',async(req,res)=>{
         created_at:new Date().toISOString(),
         updated_at:new Date().toISOString()
       });
-      rows.push({ ...record, supporter: x.s, match_score: Number(record.score), status: effectiveMatchStatus(record) });
+      const status = effectiveMatchStatus(record);
+      const token = status === 'connected' ? createAccessToken(record.id, 'challenger') : '';
+      rows.push({
+        ...record,
+        supporter: x.s,
+        match_score: Number(record.score),
+        status,
+        access_url: token ? `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(record.id)}&token=${encodeURIComponent(token)}` : null
+      });
     }
     res.json(rows);
   }catch(e){res.status(500).json({error:e.message});}
@@ -1259,10 +1276,13 @@ app.post('/api/matches/:id/request',async(req,res)=>{
   try{
     const m=(await select('supporter_matches',{id:req.params.id}))[0];
     if(!m) return res.status(404).json({error:'match not found'});
-    if(['declined','expired'].includes(effectiveMatchStatus(m))) return res.status(409).json({error:'match is not active'});
-    if(approvalSnapshot(m).challenger) return res.status(409).json({error:'connection request already recorded'});
+    const currentStatus = effectiveMatchStatus(m);
+    if(['declined','expired'].includes(currentStatus)) return res.status(409).json({error:'match is not active'});
+    if(approvalSnapshot(m).challenger) {
+      return res.json({ ...m, status: currentStatus, already_requested: true });
+    }
     const updated=await updateMatchApprovalStatus(m.id,'challenger','request',req.body?.note||'Future Challenge Labからの接続依頼');
-    res.json(updated);
+    res.json({ ...updated, already_requested: false });
   }catch(e){res.status(500).json({error:e.message});}
 });
 
@@ -1283,7 +1303,7 @@ app.get('/api/matches/:id/detail', async (req, res) => {
       },
       participant: {
         id: participant?.id || match.participant_id,
-        name: participant?.name || '未登録',
+        name: participant?.name || '挑戦者',
         challenge: participant?.challenge || '挑戦内容未入力',
         goal: participant?.goal || '目標未入力'
       },
