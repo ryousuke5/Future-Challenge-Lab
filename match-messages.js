@@ -134,6 +134,41 @@ async function sendMessageNotification({ match, senderRole, body }) {
 export function registerMatchMessageRoutes(app) {
   if (!app || !supabase) return;
 
+  // One-shot operational test for the reciprocal email notification path.
+  // Disabled unless FCL_EMAIL_TEST_TOKEN is configured on the server.
+  app.get('/api/test/message-notification', async (req, res) => {
+    try {
+      const configuredToken = String(process.env.FCL_EMAIL_TEST_TOKEN || '');
+      if (!configuredToken || String(req.query?.token || '') !== configuredToken) {
+        return res.status(404).json({ error: 'not found' });
+      }
+      const matchId = String(req.query?.match_id || '');
+      if (!matchId) return res.status(400).json({ error: 'match_id is required' });
+
+      const match = await loadMatch(matchId);
+      if (!match) return res.status(404).json({ error: 'match not found' });
+      if (String(match.status) !== 'connected') return res.status(409).json({ error: 'match is not connected' });
+
+      const testBody = 'FCLメール通知テスト：支援者からの返信通知が届くか確認しています。';
+      const messageId = crypto.randomUUID();
+      const { error: insertError } = await supabase.from('match_messages').insert({
+        id: messageId,
+        match_id: match.id,
+        sender_role: 'supporter',
+        sender_id: match.supporter_id,
+        body: testBody,
+        created_at: new Date().toISOString()
+      });
+      if (insertError) throw insertError;
+
+      const resendId = await sendMessageNotification({ match, senderRole: 'supporter', body: testBody });
+      return res.json({ ok: true, match_id: match.id, message_id: messageId, resend_id: resendId, test_body: testBody });
+    } catch (error) {
+      console.error('[match-messages] operational email test failed', error);
+      return res.status(500).json({ error: error.message || 'operational email test failed' });
+    }
+  });
+
   app.get('/api/matches/:id/messages', async (req, res) => {
     try {
       const authz = await authorize(req.params.id, req.query?.token);
