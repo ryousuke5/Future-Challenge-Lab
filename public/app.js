@@ -55,7 +55,7 @@ async function register(){
   await withLoadingUI(document.getElementById('registerBtn'), '登録処理中です。しばらくお待ちください…', async () => {
     participant=await api('/api/participants',{name:name.value,email:email.value,challenge:challenge.value,goal:goal.value});
     localStorage.setItem('fcl-participant-id',participant.id); localStorage.setItem('fcl-user-id',participant.user_id || '');
-    participantStatus.textContent=` ユーザーID: ${participant.user_id || '未取得'}`;
+    participantStatus.textContent=` ユーザーID: ${participant.user_id || '未取得'}`; const userPageLink=document.getElementById('participantUserPageLink'); if(userPageLink&&participant.user_id){ userPageLink.href='/user.html?user_id='+encodeURIComponent(participant.user_id); userPageLink.hidden=false; }
   });
 }
 function buildAnalysisCards(data){
