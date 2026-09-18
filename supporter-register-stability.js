@@ -103,6 +103,7 @@ function registerWithStableSupporterId(req, res, fallbackHandlers) {
       const { data: created, error: createError } = await supabase
         .from('supporters')
         .insert({
+          user_id: fclUser.id,
           organization_name: String(body.organization_name ?? '').trim() || 'FCL',
           supporter_name: String(body.supporter_name ?? '').trim() || '支援者',
           email,
