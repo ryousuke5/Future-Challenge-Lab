@@ -19,6 +19,7 @@ create table if not exists participants (
   challenge text,
   goal text,
   created_at timestamptz not null default now(),
+  archived_at timestamptz,
   user_id uuid not null references fcl_users(id)
 );
 
@@ -82,6 +83,7 @@ create table if not exists supporters (
   capacity int not null default 5,
   accepting_new_matches boolean not null default true,
   created_at timestamptz not null default now(),
+  archived_at timestamptz,
   user_id uuid not null references fcl_users(id)
 );
 
@@ -181,3 +183,6 @@ create index if not exists supporters_user_id_idx on supporters(user_id);
 alter table fcl_users enable row level security;
 alter table participants enable row level security;
 alter table supporters enable row level security;
+
+create index if not exists participants_archived_at_idx on participants(archived_at);
+create index if not exists supporters_archived_at_idx on supporters(archived_at);
