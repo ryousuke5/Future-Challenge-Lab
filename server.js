@@ -51,13 +51,18 @@ function isTestEmail(value){
   return domain === 'example.com' || domain === 'test.com';
 }
 function uniqueProductionContacts(rows = []){
-  const seen=new Set();
-  return rows.filter(row => {
+  const byEmail=new Map();
+  for(const row of rows){
     const email=normalizeContactEmail(row?.email);
-    if(!email || isTestEmail(email) || seen.has(email)) return false;
-    seen.add(email);
-    return true;
-  });
+    if(!email || isTestEmail(email)) continue;
+    const current=byEmail.get(email);
+    const currentTime=new Date(current?.created_at || 0).getTime();
+    const rowTime=new Date(row?.created_at || 0).getTime();
+    const currentCompleteness=Number(Boolean(current?.organization_name))+Number(Boolean(current?.supporter_name))+Number(Boolean(current?.support_category));
+    const rowCompleteness=Number(Boolean(row?.organization_name))+Number(Boolean(row?.supporter_name))+Number(Boolean(row?.support_category));
+    if(!current || rowTime>currentTime || (rowTime===currentTime && rowCompleteness>currentCompleteness)) byEmail.set(email,row);
+  }
+  return [...byEmail.values()];
 }
 function uuid() { return crypto.randomUUID(); }
 function scoreAnswers(a) { return Object.values(a).reduce((s,v)=>s+Number(v||0),0); }
@@ -684,8 +689,28 @@ async function saveFclCoreOutcome({ participant_id, selected_option, next_action
 app.get('/api/health',(req,res)=>res.json({ok:true,supabase:hasSupabase,mode:hasSupabase?'supabase':'memory'}));
 
 app.post('/api/participants',async(req,res)=>{
-  try{ const row=await insert('participants',{external_user_id:req.body.external_user_id||`web-${Date.now()}`,name:req.body.name||'',email:req.body.email||'',challenge:req.body.challenge||'',goal:req.body.goal||''}); res.json(row); }
-  catch(e){res.status(500).json({error:e.message});}
+  try{
+    const email=normalizeContactEmail(req.body.email);
+    if(!email) return res.status(400).json({error:'有効なメールアドレスを入力してください'});
+    if(!isTestEmail(email)){
+      const existing=(await select('participants')).filter(x=>normalizeContactEmail(x.email)===email)
+        .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0];
+      if(existing){
+        const row=await update('participants',existing.id,{
+          name:req.body.name||existing.name||'',
+          email,
+          challenge:req.body.challenge||existing.challenge||'',
+          goal:req.body.goal||existing.goal||''
+        });
+        return res.json(row);
+      }
+    }
+    const row=await insert('participants',{
+      external_user_id:req.body.external_user_id||('web-'+Date.now()),
+      name:req.body.name||'',email,challenge:req.body.challenge||'',goal:req.body.goal||''
+    });
+    res.json(row);
+  }catch(e){res.status(500).json({error:e.message});}
 });
 
 app.get('/api/participants/:id',async(req,res)=>{
@@ -787,8 +812,26 @@ app.post('/api/supporter-outcomes',async(req,res)=>{
 });
 
 app.post('/api/supporters/register',async(req,res)=>{
-  try{ const row=await insert('supporters',{organization_name:req.body.organization_name,supporter_name:req.body.supporter_name,email:req.body.email||'',support_category:req.body.support_category,strengths:Array.isArray(req.body.strengths)?req.body.strengths:[],timing_tags:Array.isArray(req.body.timing_tags)?req.body.timing_tags:[],description:req.body.description||'',active:true,capacity:Number(req.body.capacity ?? 5),accepting_new_matches:req.body.accepting_new_matches !== false}); res.json(row); }
-  catch(e){res.status(500).json({error:e.message});}
+  try{
+    const email=normalizeContactEmail(req.body.email);
+    if(!email) return res.status(400).json({error:'有効なメールアドレスを入力してください'});
+    const patch={
+      organization_name:req.body.organization_name||'',
+      supporter_name:req.body.supporter_name||'',
+      email,
+      support_category:req.body.support_category||'',
+      strengths:Array.isArray(req.body.strengths)?req.body.strengths:[],
+      timing_tags:Array.isArray(req.body.timing_tags)?req.body.timing_tags:[],
+      description:req.body.description||'',
+      active:true
+    };
+    if(!isTestEmail(email)){
+      const existing=(await select('supporters')).filter(x=>normalizeContactEmail(x.email)===email)
+        .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0];
+      if(existing) return res.json(await update('supporters',existing.id,patch));
+    }
+    res.json(await insert('supporters',patch));
+  }catch(e){res.status(500).json({error:e.message});}
 });
 
 function matchScore(p,s,last){
