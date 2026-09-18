@@ -242,7 +242,7 @@ async function processMatchEvent(event) {
     const resend = await sendEmail({
       to: recipient.email,
       email,
-      idempotencyKey: `fcl/connection_confirmed/${match.id}/${recipient.role}`
+      idempotencyKey: `fcl/connection_confirmed/${match.id}/${recipient.role}/${crypto.createHash('sha256').update(recipient.email).digest('hex').slice(0, 16)}`
     });
     await recordEmailSent({
       event,
