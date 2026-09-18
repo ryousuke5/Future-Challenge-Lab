@@ -42,6 +42,23 @@ function hydrateMatchApprovalState(match){
 }
 
 function db(table) { if (!supabase) return null; return supabase.from(table); }
+function normalizeContactEmail(value){
+  return String(value || '').trim().toLowerCase();
+}
+function isTestEmail(value){
+  const email=normalizeContactEmail(value);
+  const domain=email.split('@').pop() || '';
+  return domain === 'example.com' || domain === 'test.com';
+}
+function uniqueProductionContacts(rows = []){
+  const seen=new Set();
+  return rows.filter(row => {
+    const email=normalizeContactEmail(row?.email);
+    if(!email || isTestEmail(email) || seen.has(email)) return false;
+    seen.add(email);
+    return true;
+  });
+}
 function uuid() { return crypto.randomUUID(); }
 function scoreAnswers(a) { return Object.values(a).reduce((s,v)=>s+Number(v||0),0); }
 function riskFromScore(score){ const r=Math.round(((25-score)/20)*100); return Math.max(0, Math.min(100,r)); }
@@ -926,7 +943,7 @@ async function getSupporterCandidates(participant_id){
   const priorityData=await buildSupporterPriority(participant_id);
   const checkins=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
   const last=checkins[0] || null;
-  const supporters=(await select('supporters')).filter(s=>s.active!==false);
+  const supporters=uniqueProductionContacts((await select('supporters')).filter(s=>s.active!==false && s.accepting_new_matches!==false));
 
   const candidates=supporters.map(s=>({
     supporter_id:s.id,
@@ -953,7 +970,7 @@ app.post('/api/matches',async(req,res)=>{
   try{
     const participant_id = req.body.participant_id || req.body.challenger_id;
     const ps=(await select('participants',{id:participant_id}))[0];
-    const allSupporters = (await select('supporters')).filter(s => s.active !== false && s.accepting_new_matches !== false);
+    const allSupporters = uniqueProductionContacts((await select('supporters')).filter(s => s.active !== false && s.accepting_new_matches !== false));
     const allMatches = (await select('supporter_matches')).filter(m => !['connected','declined','expired'].includes(effectiveMatchStatus(m)));
     const activeCounts = new Map();
     for (const match of allMatches) {
@@ -1426,6 +1443,8 @@ app.get('/api/optimization/:participant_id',async(req,res)=>{
 app.get('/api/dashboard',async(req,res)=>{
  try{
   const [p,c,i,a,o,m,s,pol,learn,so]=await Promise.all(['participants','checkins','intervention_assignments','action_results','intervention_outcomes','supporter_matches','supporters','intervention_policy_decisions','model_learning_events','supporter_outcomes'].map(t=>select(t)));
+  const productionParticipants=uniqueProductionContacts(p);
+  const productionSupporters=uniqueProductionContacts(s);
   const variants={A:i.filter(x=>x.variant==='A'),B:i.filter(x=>x.variant==='B')};
   const rate=v=>{const ids=new Set(v.map(x=>x.id)); const rows=a.filter(x=>x.intervention_id&&ids.has(x.intervention_id)); return rows.length?rows.filter(x=>x.completed).length/rows.length:0};
   const connectedMatches=m.filter(match=>effectiveMatchStatus(match)==='connected');
@@ -1434,7 +1453,7 @@ app.get('/api/dashboard',async(req,res)=>{
     return a.filter(action=>action.participant_id===match.participant_id && (safeDate(action.created_at||action.completed_at)?.getTime()||0)>=connectedAt);
   });
   const executionRate=actionsAfterMatch.length ? actionsAfterMatch.filter(action=>action.completed).length/actionsAfterMatch.length : 0;
-  res.json({counts:{participants:p.length,checkins:c.length,restarts:c.filter(x=>x.analysis?.resumed).length,actions:a.length,supporters:s.length,requests:m.filter(x=>normalizeMatchStatus(x.status)==='pending').length,policy_decisions:pol.length,learning_events:learn.length,supporter_outcomes:so.length},ab:{A:{n:variants.A.length,completion_rate:rate(variants.A)},B:{n:variants.B.length,completion_rate:rate(variants.B)}},policy:{version:'unified-contextual-bandit-v2',exploration_rate:pol.length?pol.filter(x=>x.exploration).length/pol.length:0,recent:pol.slice(-10)},intervention_optimization:{version:'unified-contextual-bandit-v2',assignments:i.length,policy_decisions:pol.length},supporter_connection_execution:{total_connected_matches:connectedMatches.length,actions_after_match_total:actionsAfterMatch.length,actions_after_match_completed:actionsAfterMatch.filter(action=>action.completed).length,execution_rate:Number((executionRate*100).toFixed(1)),note:'connected後のaction_resultsから算出'},outcomes:o,supporter_outcomes:so});
+  res.json({counts:{participants:productionParticipants.length,checkins:c.length,restarts:c.filter(x=>x.analysis?.resumed).length,actions:a.length,supporters:productionSupporters.length,requests:m.filter(x=>normalizeMatchStatus(x.status)==='pending').length,policy_decisions:pol.length,learning_events:learn.length,supporter_outcomes:so.length},ab:{A:{n:variants.A.length,completion_rate:rate(variants.A)},B:{n:variants.B.length,completion_rate:rate(variants.B)}},policy:{version:'unified-contextual-bandit-v2',exploration_rate:pol.length?pol.filter(x=>x.exploration).length/pol.length:0,recent:pol.slice(-10)},intervention_optimization:{version:'unified-contextual-bandit-v2',assignments:i.length,policy_decisions:pol.length},supporter_connection_execution:{total_connected_matches:connectedMatches.length,actions_after_match_total:actionsAfterMatch.length,actions_after_match_completed:actionsAfterMatch.filter(action=>action.completed).length,execution_rate:Number((executionRate*100).toFixed(1)),note:'connected後のaction_resultsから算出'},outcomes:o,supporter_outcomes:so});
  }catch(e){res.status(500).json({error:e.message});}
 });
 
