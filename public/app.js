@@ -350,6 +350,7 @@ function renderInsight(data){
       ${result.personal_support_pattern?.statement ? `<p><strong>個人別の観測:</strong> ${esc(result.personal_support_pattern.statement)}</p>` : ''}
       ${personalHint ? `<div class="personal-learning-hint"><strong>あなたの過去の記録からのヒント</strong><p>${esc(personalHint)}</p><small>観測の確かさ：${esc(evidenceQuality)}</small></div>` : ''}
       ${result.personal_learning?.recommendation_learning?.total_trials ? `<div class="personal-learning-hint"><strong>AIの自己改善状況</strong><p>これまでの次の一歩を ${esc(result.personal_learning.recommendation_learning.total_trials)}回観測。今回の結果を次の提案に反映します。</p></div>` : ''}
+      ${result.personal_learning?.individual_continuation_pattern?.statement ? `<div class="personal-learning-hint"><strong>あなたが続きやすい進め方</strong><p>${esc(result.personal_learning.individual_continuation_pattern.statement)}</p><small>根拠：${esc(result.personal_learning.individual_continuation_pattern.evidence || '観測中')}</small></div>` : ''}
     </div>
   `;
 }
