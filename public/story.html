@@ -17,7 +17,7 @@ button:disabled{opacity:.6}.error{padding:12px;border-radius:12px;background:#fe
 .timeline{position:relative;margin:8px 0 0 8px;padding-left:25px;border-left:2px solid #e2e8f0}.event{position:relative;padding:0 0 24px}.event:last-child{padding-bottom:0}
 .event:before{content:"";position:absolute;left:-32px;top:4px;width:12px;height:12px;border-radius:50%;background:#64748b;border:3px solid #fff;box-shadow:0 0 0 2px #e2e8f0}
 .date{font-size:12px;color:#64748b;margin-bottom:3px}.tag{font-size:12px;font-weight:700;color:#475569}.empty{padding:14px;background:#f8fafc;border-radius:12px;color:#64748b}
-@media(max-width:650px){.user-bar{flex-direction:column;align-items:stretch}}
+@media(max-width:650px){.user-bar{flex-direction:column;align-items:stretch}.story-head>div[style*="grid-template-columns"]{grid-template-columns:1fr!important}}
 </style>
 </head>
 <body><main>
@@ -47,13 +47,17 @@ async function load(){
   $('story').innerHTML=participants.map((p,i)=>{
    const h=histories[i]||{}; const checkins=h.checkins||[]; const actions=h.actions||[]; const events=h.events||[]; const matches=h.matches||[];
    const timeline=[];
+   const startAt=p.created_at?new Date(p.created_at):null;
+   const days=startAt?Math.max(1,Math.floor((Date.now()-startAt.getTime())/86400000)+1):null;
+   const actionDays=new Set(actions.map(a=>new Date(a.completed_at||a.created_at).toISOString().slice(0,10))).size;
+   const connectedMatches=matches.filter(m=>m.status==='connected');
    timeline.push({at:p.created_at,label:'物語のはじまり',text:'「'+esc(p.challenge||'挑戦')+'」への挑戦を登録しました。目標：'+esc(p.goal||'未登録')});
    checkins.forEach((c,n)=>timeline.push({at:c.checked_in_at,label:'今日の1ページ',text:'FCLチェックイン '+(n+1)+'回目。自己決定度 '+esc(c.autonomy_total||0)+' / 25、現在の状態：'+esc(c.risk_level||'確認中')+'。'}));
    actions.forEach(a=>timeline.push({at:a.completed_at||a.created_at,label:a.completed?'次の一歩を実行':'次の一歩を記録',text:esc(a.action_text||'行動を記録しました。')+(a.completed?' → 実行できました。':' → まだ実行できていません。')+(a.result_note?' 結果：'+esc(a.result_note):'')}));
    events.forEach(e=>{const type=e.features?.action_type||e.label; if(type==='core_analysis')timeline.push({at:e.created_at,label:'現在地を知る',text:esc(e.features?.result?.summary||e.features?.result?.insight||'現在の状態を分析しました。')}); else if(type==='core_decision')timeline.push({at:e.created_at,label:'自分で選ぶ',text:'解決策「'+esc(e.features?.selected_option||'未選択')+'」を選びました。'}); else if(type==='core_outcome')timeline.push({at:e.created_at,label:'行動の結果',text:esc(e.features?.result_note||e.features?.outcome_status||'行動結果を記録しました。')});});
    matches.filter(m=>m.status==='connected').forEach(m=>timeline.push({at:m.updated_at||m.created_at,label:'支援者とつながる',text:'支援者との接続が成立しました。'}));
    timeline.sort((x,y)=>new Date(x.at||0)-new Date(y.at||0));
-   return '<section class="card"><div class="story-head"><span class="pill">挑戦者</span><h2>'+esc(p.challenge||'挑戦')+'</h2><p>目標：'+esc(p.goal||'未登録')+'</p><p class="muted">'+checkins.length+'回のチェックイン・'+actions.length+'件の行動記録が、この物語に積み重なっています。</p></div><div class="timeline">'+(timeline.length?timeline.map(e=>'<div class="event"><div class="date">'+date(e.at)+'</div><div class="tag">'+esc(e.label)+'</div><p>'+e.text+'</p></div>').join(''):'<div class="empty">まだ物語の記録はありません。</div>')+'</div><p class="muted" style="margin-top:20px">あなたの物語は、まだ途中です。次の1ページを記録していきましょう。</p></section>';
+   return '<section class="card"><div class="story-head"><span class="pill">挑戦者</span><h2>'+esc(p.challenge||'挑戦')+'</h2><p>目標：'+esc(p.goal||'未登録')+'</p><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px"><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">挑戦の日数</div><strong style="font-size:22px">'+(days??'-')+'日</strong></div><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">チェックイン</div><strong style="font-size:22px">'+checkins.length+'回</strong></div><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">行動した日</div><strong style="font-size:22px">'+actionDays+'日</strong></div></div><p class="muted" style="margin-top:14px">'+checkins.length+'回のチェックイン・'+actions.length+'件の行動記録が、この物語に積み重なっています。'+(connectedMatches.length?' 支援者との接続も'+connectedMatches.length+'件あります。':'')+'</p></div><div class="timeline">'+(timeline.length?timeline.map(e=>'<div class="event"><div class="date">'+date(e.at)+'</div><div class="tag">'+esc(e.label)+'</div><p>'+e.text+'</p></div>').join(''):'<div class="empty">まだ物語の記録はありません。</div>')+'</div><p class="muted" style="margin-top:20px">あなたの物語は、まだ途中です。次の1ページを記録していきましょう。</p></section>';
   }).join('');
   $('story').hidden=false;
  }catch(e){$('story').hidden=true;showError(e.message||'物語の取得に失敗しました。')}
