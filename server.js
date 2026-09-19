@@ -553,7 +553,86 @@ function buildPersonalSupportPattern({ participant_id, assignments, actions, sup
   };
 }
 
-function buildPersonalLearningProfile({ assignments = [], actions = [], supportHistory = [], events = [] } = {}){
+function buildRecommendationLearningProfile({ events = [] } = {}){
+  const rows=(events||[])
+    .filter(event=>event.features?.action_type==='ai_recommendation_outcome')
+    .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
+
+  const completedStatuses=new Set(['completed','partial']);
+  const total=rows.length;
+  const completed=rows.filter(row=>completedStatuses.has(String(row.features?.outcome_status||'').toLowerCase())).length;
+  const fullyCompleted=rows.filter(row=>String(row.features?.outcome_status||'').toLowerCase()==='completed').length;
+  const followed=rows.filter(row=>row.features?.followed_recommendation===true).length;
+  const completionRate=total ? Number((completed/total).toFixed(3)) : null;
+  const followthroughRate=total ? Number((followed/total).toFixed(3)) : null;
+
+  const optionStats=new Map();
+  for(const row of rows){
+    const option=String(row.features?.selected_option||row.features?.recommended_option||'').toUpperCase();
+    if(!['A','B','C'].includes(option)) continue;
+    const current=optionStats.get(option)||{option,trials:0,completed:0};
+    current.trials++;
+    if(completedStatuses.has(String(row.features?.outcome_status||'').toLowerCase())) current.completed++;
+    optionStats.set(option,current);
+  }
+  const options=[...optionStats.values()].map(row=>({
+    ...row,
+    observed_rate: row.trials ? Number((row.completed/row.trials).toFixed(3)) : null
+  })).sort((a,b)=>(b.observed_rate??-1)-(a.observed_rate??-1));
+
+  const barrierMap=new Map();
+  for(const row of rows){
+    const status=String(row.features?.outcome_status||'').toLowerCase();
+    if(completedStatuses.has(status)) continue;
+    const value=String(row.features?.barrier||row.features?.result_note||'').trim();
+    if(!value) continue;
+    const key=value.toLowerCase();
+    const current=barrierMap.get(key)||{label:value,count:0};
+    current.count++;
+    barrierMap.set(key,current);
+  }
+  const recurringBarriers=[...barrierMap.values()]
+    .sort((a,b)=>b.count-a.count)
+    .slice(0,3);
+
+  const recentFailures=rows.filter(row=>!completedStatuses.has(String(row.features?.outcome_status||'').toLowerCase())).slice(0,5);
+  let mode='observe';
+  let reason='今回までの結果を観測しながら、複数の進め方を試します。';
+  let nextActionHint='まずは今日できる最小の一歩を1つ選びます。';
+
+  if(recurringBarriers[0]?.count>=2){
+    mode='shrink_and_adjust';
+    reason='同じ未実行理由が複数回観測されたため、同じサイズの行動を繰り返さず、障壁を先に1つ整理します。';
+    nextActionHint='同じ障壁を解決してから進めるため、まず障壁を1つだけ整理し、その後3分でできる行動に縮小します。';
+  }else if(recentFailures.length>=2){
+    mode='smaller_step';
+    reason='直近の未実行・未完了が複数回あるため、次の行動の負担を下げて試します。';
+    nextActionHint='直近よりさらに小さい単位に分け、まず3分だけ着手できる形にします。';
+  }else if(options[0]?.trials>=2 && (options[0]?.observed_rate??0) >= 0.75){
+    mode='reuse_observed';
+    reason='過去の本人の観測で、同じ選択肢が複数回実行につながっています。因果効果は断定せず、再度試して結果を確認します。';
+    nextActionHint=`過去に比較的実行できた選択肢「${options[0].option}」に近い形で、今日の一歩を小さく設定します。`;
+  }
+
+  return {
+    total_trials:total,
+    completed_trials:completed,
+    fully_completed_trials:fullyCompleted,
+    observed_completion_rate:completionRate,
+    recommendation_followthrough_rate:followthroughRate,
+    options,
+    recurring_barriers:recurringBarriers,
+    recent_failures:recentFailures.slice(0,3).map(row=>({
+      outcome_status:row.features?.outcome_status||'unknown',
+      selected_option:row.features?.selected_option||null,
+      barrier:String(row.features?.barrier||'').slice(0,120),
+      next_action:String(row.features?.actual_next_action||row.features?.next_action||'').slice(0,160)
+    })),
+    adjustment:{mode,reason,next_action_hint:nextActionHint}
+  };
+}
+
+function buildPersonalLearningProfile({ participant_id, assignments = [], actions = [], supportHistory = [], events = [] } = {}){
   const actionByIntervention=new Map();
   for(const row of actions||[]){
     if(!row.intervention_id) continue;
@@ -583,7 +662,16 @@ function buildPersonalLearningProfile({ assignments = [], actions = [], supportH
   }else if(observedVariants.length===1){
     hint=`「${observedVariants[0].label}」は過去${observedVariants[0].trials}回の観測があります。まだ比較材料が少ないため、次の結果も見ながら判断します。`;
   }
-  return { variants, support: { trials:supportOutcomes.length, observed_rate:supportRate }, recurring_barriers:recurringBarriers, recent_outcomes:recentCoreOutcomes, hint, evidence_quality: observedVariants.length>=2 ? '比較観測あり' : observedVariants.length===1 ? '一部観測あり' : '観測不足' };
+  const recommendationLearning=buildRecommendationLearningProfile({events});
+  return {
+    variants,
+    support: { trials:supportOutcomes.length, observed_rate:supportRate },
+    recurring_barriers:recurringBarriers,
+    recent_outcomes:recentCoreOutcomes,
+    recommendation_learning:recommendationLearning,
+    hint:recommendationLearning.adjustment.reason ? hint+' '+recommendationLearning.adjustment.reason : hint,
+    evidence_quality: observedVariants.length>=2 ? '比較観測あり' : observedVariants.length===1 ? '一部観測あり' : recommendationLearning.total_trials>0 ? '行動結果を観測中' : '観測不足'
+  };
 }
 function buildContinuationProfile({ checkins = [], actions = [], journalReplies = [] } = {}){
   const orderedCheckins=[...(checkins||[])].sort((a,b)=>new Date(a.checked_in_at||0)-new Date(b.checked_in_at||0));
@@ -711,6 +799,12 @@ function normalizeAiCoreResult(llmResult, baseResult){
     ? String(rawRecommended).toUpperCase()
     : normalizedSolutions[0]?.id || 'A';
 
+  const adaptiveMode=baseResult.personal_learning?.recommendation_learning?.adjustment?.mode;
+  const llmNextAction=typeof llmResult.next_action === 'string' && llmResult.next_action.trim() ? llmResult.next_action.trim() : baseResult.next_action;
+  const nextAction=['shrink_and_adjust','smaller_step'].includes(adaptiveMode)
+    ? baseResult.next_action
+    : llmNextAction;
+
   return {
     ...baseResult,
     state: normalizeState(llmResult.state),
@@ -723,7 +817,8 @@ function normalizeAiCoreResult(llmResult, baseResult){
     hypothesis: typeof llmResult.hypothesis === 'string' && llmResult.hypothesis.trim() ? llmResult.hypothesis.trim() : baseResult.hypothesis,
     solutions: normalizedSolutions,
     recommended_option: recommended,
-    next_action: typeof llmResult.next_action === 'string' && llmResult.next_action.trim() ? llmResult.next_action.trim() : baseResult.next_action,
+    next_action: nextAction,
+    adaptive_next_step_reason: baseResult.adaptive_next_step_reason,
     adaptive_questions: Array.isArray(llmResult.adaptive_questions) ? llmResult.adaptive_questions : baseResult.adaptive_questions,
     personal_support_pattern: llmResult.personal_support_pattern && typeof llmResult.personal_support_pattern === 'object'
       ? llmResult.personal_support_pattern
@@ -780,6 +875,10 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
     reason: riskSignals[0] || '状態変化が限定的で、追加観測が必要な可能性があります。'
   };
 
+  const adaptiveAdjustment=personalLearning.recommendation_learning?.adjustment || {};
+  const adaptiveNextAction=adaptiveAdjustment.next_action_hint
+    || `今日の最初の一歩として、${solutions[0]?.title || '問題を整理する'}を3分で始めます。`;
+
   const baseResult = {
     state: state.currentState || 'unknown',
     state_change: stateChanges.join(' ') || '変化の有無はまだ不明ですが、継続の基準を確認する必要があります。',
@@ -791,13 +890,14 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
     hypothesis: coreInsight.hypothesis,
     solutions,
     recommended_option: solutions[0]?.id || 'A',
-    next_action: `今日の最初の一歩として、${solutions[0]?.title || '問題を整理する'}を3分で始めます。`,
+    next_action: adaptiveNextAction,
+    adaptive_next_step_reason: adaptiveAdjustment.reason || '今回の結果を観測しながら、次の一歩を更新します。',
     adaptive_questions: adaptiveQuestions,
     personal_support_pattern: personalSupportPattern,
     exploration: { mode: personalSupportPattern.status==='observational' ? 'exploit_with_exploration' : 'explore', reason: personalSupportPattern.statement }
   };
 
-  const prompt = 'participant_goal=' + coreContext.goal + '\ncheckin_text=' + coreContext.checkin_text + '\nstate=' + JSON.stringify(state) + '\nstate_changes=' + JSON.stringify(stateChanges) + '\nrisk_signals=' + JSON.stringify(riskSignals) + '\ncontinuation_profile=' + JSON.stringify(continuationProfile) + '\npersonal_learning=' + JSON.stringify(personalLearning) + '\nrecent_action=' + coreContext.recentAction + '\nbarriers=' + coreContext.barriers + '\nUse continuation_profile to identify concrete continuation risks. Do not diagnose health or personality. Distinguish observed signals from hypotheses. Prefer a small actionable next step and avoid repeating previous journal wording.';
+  const prompt = 'participant_goal=' + coreContext.goal + '\ncheckin_text=' + coreContext.checkin_text + '\nstate=' + JSON.stringify(state) + '\nstate_changes=' + JSON.stringify(stateChanges) + '\nrisk_signals=' + JSON.stringify(riskSignals) + '\ncontinuation_profile=' + JSON.stringify(continuationProfile) + '\npersonal_learning=' + JSON.stringify(personalLearning) + '\nrecommendation_learning=' + JSON.stringify(personalLearning.recommendation_learning||{}) + '\nrecent_action=' + coreContext.recentAction + '\nbarriers=' + coreContext.barriers + '\nUse continuation_profile to identify concrete continuation risks. Use recommendation_learning to adapt the next action from prior outcomes. When adjustment.mode is shrink_and_adjust or smaller_step, do not recommend repeating the same-sized action; use the provided next_action_hint. When adjustment.mode is reuse_observed, you may reuse the observed option but still keep the step small. Do not diagnose health or personality. Distinguish observed signals from hypotheses. Prefer a small actionable next step and avoid repeating previous journal wording.';
   const llmResult = await callOpenAiFallback(prompt);
   if(llmResult){
     const result = normalizeAiCoreResult(llmResult, baseResult);
@@ -895,37 +995,103 @@ async function saveFclCoreOutcome({ participant_id, selected_option, next_action
     ? String(outcome_status).toLowerCase()
     : 'not_completed';
 
+  const events=await select('model_learning_events',{participant_id});
+  const sortedEvents=[...events].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
+  const latestAnalysis=sortedEvents.find(event=>event.features?.action_type==='core_analysis') || null;
+  const latestDecision=sortedEvents.find(event=>event.features?.action_type==='core_decision') || null;
+
+  const analysisResult=latestAnalysis?.features?.result || {};
+  const recommendedOption=latestAnalysis?.label?.recommended_option
+    || analysisResult.recommended_option
+    || latestDecision?.label?.selected_option
+    || latestDecision?.features?.selected_option
+    || 'A';
+  const recommendedNextAction=latestAnalysis?.label?.next_action
+    || analysisResult.next_action
+    || latestDecision?.label?.next_action
+    || latestDecision?.features?.next_action
+    || null;
+  const actualOption=sanitizeText(selected_option, latestDecision?.features?.selected_option || 'A').toUpperCase();
+  const actualNextAction=sanitizeText(next_action, '次に一歩を進める');
+  const resultNote=sanitizeText(result_note, '');
   const completed = status === 'completed';
+  const followedRecommendation=actualOption===String(recommendedOption||'A').toUpperCase();
+  const barrier=status==='completed'||status==='partial' ? '' : sanitizeText(resultNote, '未実行');
+
   const row = await insert('action_results', {
     participant_id,
     intervention_id: null,
-    action_text: sanitizeText(next_action, '次に一歩を進める'),
+    action_text: actualNextAction,
     completed,
-    barrier: status === 'not_completed' ? sanitizeText(result_note, '未実行') : '',
-    result_note: sanitizeText(result_note, ''),
+    barrier,
+    result_note: resultNote,
     completed_at: status === 'completed' || status === 'partial' ? new Date().toISOString() : null,
     created_at: new Date().toISOString()
+  });
+
+  const outcomeEvent=await insert('model_learning_events', {
+    participant_id,
+    features: {
+      action_type: 'core_outcome',
+      selected_option: actualOption,
+      recommended_option: String(recommendedOption||'A').toUpperCase(),
+      followed_recommendation: followedRecommendation,
+      recommended_next_action: recommendedNextAction,
+      actual_next_action: actualNextAction,
+      next_action: actualNextAction,
+      outcome_status: status,
+      result_note: resultNote,
+      barrier,
+      target_date: sanitizeText(target_date, null),
+      analysis_event_id: latestAnalysis?.id || null,
+      decision_event_id: latestDecision?.id || null,
+      action_result_id: row?.id || null
+    },
+    label: {
+      outcome_status: status,
+      selected_option: actualOption,
+      recommended_option: String(recommendedOption||'A').toUpperCase(),
+      followed_recommendation: followedRecommendation,
+      completion: completed,
+      action_text: actualNextAction
+    }
   });
 
   await insert('model_learning_events', {
     participant_id,
     features: {
-      action_type: 'core_outcome',
-      selected_option: sanitizeText(selected_option, 'A'),
-      next_action: sanitizeText(next_action, '次に一歩を進める'),
+      action_type: 'ai_recommendation_outcome',
+      analysis_event_id: latestAnalysis?.id || null,
+      decision_event_id: latestDecision?.id || null,
+      action_result_id: row?.id || null,
+      recommended_option: String(recommendedOption||'A').toUpperCase(),
+      selected_option: actualOption,
+      followed_recommendation: followedRecommendation,
+      recommended_next_action: recommendedNextAction,
+      actual_next_action: actualNextAction,
+      next_action: actualNextAction,
       outcome_status: status,
-      result_note: sanitizeText(result_note, ''),
+      result_note: resultNote,
+      barrier,
       target_date: sanitizeText(target_date, null)
     },
     label: {
       outcome_status: status,
-      selected_option: sanitizeText(selected_option, 'A'),
-      completion: completed,
-      action_text: sanitizeText(next_action, '次に一歩を進める')
+      followed_recommendation: followedRecommendation,
+      selected_option: actualOption,
+      recommended_option: String(recommendedOption||'A').toUpperCase(),
+      completion: completed
     }
   });
 
-  return row;
+  return { row, outcome_event:outcomeEvent, recommendation: {
+    analysis_event_id: latestAnalysis?.id || null,
+    decision_event_id: latestDecision?.id || null,
+    recommended_option: String(recommendedOption||'A').toUpperCase(),
+    selected_option: actualOption,
+    followed_recommendation: followedRecommendation,
+    recommended_next_action: recommendedNextAction
+  }};
 }
 
 app.get('/api/health',(req,res)=>res.json({ok:true,supabase:hasSupabase,mode:hasSupabase?'supabase':'memory'}));
