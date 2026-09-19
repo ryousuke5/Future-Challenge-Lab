@@ -262,7 +262,7 @@ async function loadSupporterDashboard(){
         <div>推奨: ${item.recommended_support_type}</div>
         <p>${item.recommendation_reason}</p>
         <textarea data-supporter-message='${item.participant_id}' placeholder='サポートメッセージを編集'>${item.suggested_message || ''}</textarea>
-        <button onclick="executeSupporterRecommendation('${item.participant_id}','${supporterId}','${item.recommendation_type_code || item.recommended_support_type}')">支援を実行</button>
+        <button onclick="executeSupporterRecommendation('${item.participant_id}','${supporterId}','${item.recommendation_type_code || item.recommended_support_type}','${item.match_id}')">支援を実行</button>
       </div>
     `).join('') || '<p>対象がありません。</p>';
 
@@ -278,7 +278,7 @@ async function loadSupporterDashboard(){
   });
 }
 
-async function executeSupporterRecommendation(participantId, supporterId, recommendationType){
+async function executeSupporterRecommendation(participantId, supporterId, recommendationType, matchId){
   const message = document.querySelector(`[data-supporter-message='${participantId}']`)?.value || '今日の最初の一歩を10分だけ進めましょう。';
   try { await withLoadingUI(null, '支援を実行しています。しばらくお待ちください…', async () => {
     const response = await fetch('/api/supporter/execute', {
@@ -287,6 +287,7 @@ async function executeSupporterRecommendation(participantId, supporterId, recomm
       body: JSON.stringify({
         participant_id: participantId,
         supporter_id: supporterId,
+        match_id: matchId || null,
         recommendation_type: recommendationType,
         recommendation_reason: '支援者が明示的に確認した支援提案です。',
         suggested_message: message,
