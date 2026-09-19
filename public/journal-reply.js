@@ -163,7 +163,7 @@ async function loadJournalReply(){
     const response = await fetch(`/api/core/history/${encodeURIComponent(participantId)}`);
     if(!response.ok) return;
     const history = await response.json();
-    if(history.journal_reply?.reply_text && history.journal_reply.reply_version === 'v2-ai'){
+    if(history.journal_reply?.reply_text){
       renderJournalReplyText(history.journal_reply.reply_text);
       return;
     }
