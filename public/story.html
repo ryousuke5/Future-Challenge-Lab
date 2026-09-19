@@ -6,7 +6,7 @@
 <title>FCL｜あなたの挑戦の物語</title>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#1f2937;background:#f6f7f9}
-*{box-sizing:border-box}body{margin:0;background:#f6f7f9}main{max-width:960px;margin:auto;padding:28px 16px 64px}
+*{box-sizing:border-box}body{margin:0;background:#f6f7f9}main{max-width:980px;margin:auto;padding:28px 16px 64px}
 .hero,.challenge-group,.story-detail{background:#fff;border:1px solid #e5e7eb;border-radius:18px;box-shadow:0 8px 30px rgba(15,23,42,.05)}
 .hero{padding:26px;margin-bottom:16px}.hero h1{font-size:30px;margin:8px 0}.hero p{line-height:1.75;color:#475569;margin:6px 0}
 .eyebrow{font-size:12px;letter-spacing:.12em;color:#64748b;font-weight:700}.muted{color:#64748b;font-size:13px}
@@ -14,17 +14,19 @@
 .challenge-group{padding:20px;margin:16px 0}.challenge-group h2{margin:4px 0 14px;font-size:21px}.challenge-summary{color:#64748b;font-size:13px;margin-bottom:12px}
 .person-list{display:grid;gap:10px}.person-card{display:block;width:100%;text-align:left;padding:16px;border:1px solid #e2e8f0;border-radius:15px;background:#f8fafc;color:#111827;cursor:pointer;font:inherit}
 .person-card:hover{border-color:#94a3b8;background:#fff}.person-top{display:flex;justify-content:space-between;gap:12px;align-items:center}.person-name{font-size:17px;font-weight:800}.person-goal{margin-top:7px;color:#475569;line-height:1.6}.click-note{font-size:12px;color:#64748b;white-space:nowrap}
-.story-detail{margin-top:10px;padding:18px;background:#fff}.detail-header{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.detail-header h3{margin:0 0 5px;font-size:19px}.detail-block{margin-top:14px;padding:14px;border-radius:13px;background:#f8fafc}.detail-block h4{margin:0 0 7px;font-size:14px}.detail-block p{margin:0;line-height:1.8;color:#334155;white-space:pre-wrap}
-.detail-close{border:1px solid #cbd5e1;background:#fff;color:#111827;border-radius:10px;padding:8px 11px;font-weight:700;cursor:pointer}
-@media(max-width:650px){.person-top,.detail-header{flex-direction:column;align-items:flex-start}.click-note{white-space:normal}}
+.story-detail{margin-top:10px;padding:18px;background:#fff}.detail-header{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.detail-header h3{margin:0 0 5px;font-size:20px}.detail-title{font-size:14px;color:#64748b}
+.growth-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0}.growth-stat{padding:14px;border-radius:14px;background:#f8fafc;border:1px solid #e2e8f0}.growth-stat strong{display:block;font-size:22px;margin-top:4px}.growth-highlight{margin-top:12px;padding:16px;border-radius:15px;background:linear-gradient(135deg,#eef6ff,#f5f3ff);line-height:1.8;color:#334155}
+.story-section{margin-top:16px}.story-section h4{margin:0 0 10px;font-size:15px}.timeline{display:grid;gap:10px}.day-card{padding:15px;border:1px solid #e2e8f0;border-radius:14px;background:#fff}.day-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.day-head strong{font-size:14px}.day-head span{font-size:12px;color:#64748b}.day-headline{margin:8px 0 6px;font-weight:800}.day-actions{margin:6px 0 0;padding-left:18px}.day-actions li{margin:5px 0;line-height:1.7}.day-growth{margin-top:10px;padding:11px 13px;border-radius:11px;background:#f8fafc;color:#475569;line-height:1.7}.day-growth strong{color:#111827}.detail-close{border:1px solid #cbd5e1;background:#fff;color:#111827;border-radius:10px;padding:8px 11px;font-weight:700;cursor:pointer}
+@media(max-width:760px){.growth-summary{grid-template-columns:1fr 1fr}.person-top,.detail-header{flex-direction:column;align-items:flex-start}.click-note{white-space:normal}}
+@media(max-width:480px){.growth-summary{grid-template-columns:1fr}}
 </style>
 </head>
 <body><main>
 <section class="hero">
   <div class="eyebrow">YOUR CHALLENGE STORY</div>
   <h1>あなたの挑戦の物語</h1>
-  <p>挑戦テーマごとに、そこにいる人の物語を見つけられます。</p>
-  <p class="muted">本人が公開を承認した「挑戦の物語」のみ表示しています。人をクリックすると、その人の物語の内容が開きます。</p>
+  <p><strong>挑戦したことではなく、挑戦する中で「自分がどう動き、どう変わってきたか」</strong>を読むページです。</p>
+  <p class="muted">挑戦テーマごとに人を選べます。本人が公開を承認した物語だけを表示しています。</p>
 </section>
 <section id="storyIndex">
   <div class="loading">挑戦の物語を読み込んでいます…</div>
@@ -37,30 +39,77 @@
     .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
     .replaceAll('"','&quot;').replaceAll("'","&#39;");
 
-  function parseStoryText(value){
-    if(!value) return {};
-    try{
-      const parsed=JSON.parse(value);
-      return parsed && typeof parsed === 'object' ? parsed : {};
-    }catch(error){
-      return {raw:String(value)};
-    }
+  const dateLabel = (value) => {
+    if(!value) return '日付不明';
+    const d=new Date(value+'T00:00:00');
+    return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString('ja-JP',{year:'numeric',month:'numeric',day:'numeric'});
+  };
+
+  function renderDetail(container, detail){
+    const p=detail.participant || {};
+    const o=detail.overview || {};
+    const timeline=Array.isArray(detail.timeline) ? detail.timeline : [];
+
+    const daysHtml=timeline.length ? timeline.map(day => {
+      const actions=Array.isArray(day.actions) ? day.actions : [];
+      const actionsHtml=actions.length
+        ? '<ul class="day-actions">'+actions.map(a =>
+            '<li><strong>'+esc(a.completed?'実行した':'取り組もうとした')+'：</strong>'+esc(a.text||'記録')+
+            (a.result?'<br><span class="muted">結果：'+esc(a.result)+'</span>':'')+
+          '</li>').join('')+'</ul>'
+        : '<p class="muted">この日は行動記録はありません。</p>';
+
+      return '<article class="day-card">' +
+        '<div class="day-head"><strong>'+esc(day.headline||'この日のページ')+'</strong><span>'+esc(dateLabel(day.date))+'</span></div>' +
+        (Array.isArray(day.summary)&&day.summary.length?'<p class="day-headline">'+esc(day.summary[0])+'</p>':'') +
+        actionsHtml +
+        '<div class="day-growth"><strong>この日の成長：</strong>'+esc(day.growth||'今日の記録が次のページにつながっています。')+'</div>' +
+      '</article>';
+    }).join('') : '<div class="empty">まだ行動のタイムラインはありません。</div>';
+
+    container.innerHTML=
+      '<div class="detail-header">' +
+        '<div><div class="eyebrow">'+esc(p.challenge||'挑戦')+'</div><h3>'+esc(p.name||'匿名の挑戦者')+'</h3>' +
+        (p.goal?'<div class="detail-title">目標：'+esc(p.goal)+'</div>':'')+
+        '<div class="detail-title" style="margin-top:5px;">'+esc(detail.story_title||'自分の行動と成長の物語')+'</div></div>' +
+        '<button type="button" class="detail-close">閉じる</button>' +
+      '</div>' +
+      '<div class="growth-summary">' +
+        '<div class="growth-stat"><span class="muted">記録した日</span><strong>'+esc(o.recorded_days??0)+'</strong></div>' +
+        '<div class="growth-stat"><span class="muted">現在地の記録</span><strong>'+esc(o.checkins??0)+'</strong></div>' +
+        '<div class="growth-stat"><span class="muted">実行した行動</span><strong>'+esc(o.completed_actions??0)+'</strong></div>' +
+        '<div class="growth-stat"><span class="muted">行動した日</span><strong>'+esc(o.action_days??0)+'</strong></div>' +
+      '</div>' +
+      '<div class="growth-highlight"><strong>この物語の成長</strong><br>'+esc(o.growth||'まだ物語の途中です。')+'</div>' +
+      '<div class="story-section"><h4>自分の行動の軌跡</h4><div class="timeline">'+daysHtml+'</div></div>';
+
+    container.querySelector('.detail-close')?.addEventListener('click',()=>{
+      container.hidden=true;
+      const trigger=container.previousElementSibling;
+      if(trigger) trigger.setAttribute('aria-expanded','false');
+    });
   }
 
-  function detailHtml(story){
-    const raw = story?.raw || '';
-    const fields = [
-      ['これまでの物語', story?.past || ''],
-      ['目指していること', story?.hope || ''],
-      ['必要としている支援', story?.support_need || '']
-    ].filter(([,value]) => String(value || '').trim());
+  async function openPerson(button, detail, participantId){
+    const open=!detail.hidden;
+    if(open){
+      detail.hidden=true;
+      button.setAttribute('aria-expanded','false');
+      return;
+    }
 
-    if(!fields.length && raw) fields.push(['物語',raw]);
-    if(!fields.length) fields.push(['物語', '公開された詳細はまだありません。']);
+    detail.hidden=false;
+    button.setAttribute('aria-expanded','true');
+    detail.innerHTML='<div class="loading">この人の行動と成長の物語を読み込んでいます…</div>';
 
-    return fields.map(([title,value]) =>
-      '<div class="detail-block"><h4>'+esc(title)+'</h4><p>'+esc(value)+'</p></div>'
-    ).join('');
+    try{
+      const response=await fetch('/api/story-person/'+encodeURIComponent(participantId));
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok) throw new Error(data.error || '物語の詳細を取得できませんでした。');
+      renderDetail(detail,data);
+    }catch(error){
+      detail.innerHTML='<div class="error">'+esc(error.message || '物語の詳細を取得できませんでした。')+'</div>';
+    }
   }
 
   async function load(){
@@ -86,43 +135,32 @@
       $('storyIndex').innerHTML=[...groups.entries()].map(([challenge,people])=>{
         const cards=people.map(person=>{
           const id='story-person-'+(++personNo);
-          const story=person.story || {};
           return '<div>' +
             '<button type="button" class="person-card" aria-expanded="false" aria-controls="'+id+'">' +
-              '<div class="person-top"><span class="person-name">'+esc(person.name || '匿名の挑戦者')+'</span><span class="click-note">クリックして物語を見る</span></div>' +
+              '<div class="person-top"><span class="person-name">'+esc(person.name || '匿名の挑戦者')+'</span><span class="click-note">クリックして行動と成長を見る</span></div>' +
               (person.goal ? '<div class="person-goal">目標：'+esc(person.goal)+'</div>' : '') +
             '</button>' +
-            '<div id="'+id+'" class="story-detail" hidden>' +
-              '<div class="detail-header"><div><h3>'+esc(person.name || '匿名の挑戦者')+'</h3><div class="muted">'+esc(challenge)+'</div></div><button type="button" class="detail-close">閉じる</button></div>' +
-              (story.title ? '<p class="muted" style="margin-top:10px;">'+esc(story.title)+'</p>' : '') +
-              detailHtml(story) +
-            '</div>' +
+            '<div id="'+id+'" class="story-detail" hidden></div>' +
           '</div>';
         }).join('');
 
         return '<section class="challenge-group">' +
           '<div class="eyebrow">CHALLENGE</div>' +
           '<h2>'+esc(challenge)+'</h2>' +
-          '<div class="challenge-summary">'+people.length+'人の挑戦者</div>' +
+          '<div class="challenge-summary">'+people.length+'人の物語</div>' +
           '<div class="person-list">'+cards+'</div>' +
         '</section>';
       }).join('');
 
       document.querySelectorAll('.person-card').forEach(button=>{
+        const detail=document.getElementById(button.getAttribute('aria-controls'));
+        const participantId=(() => {
+          const groupButtons=[...document.querySelectorAll('.person-card')];
+          const index=groupButtons.indexOf(button);
+          return stories[index]?.participant_id;
+        })();
         button.addEventListener('click',()=>{
-          const detail=document.getElementById(button.getAttribute('aria-controls'));
-          const open=!detail.hidden;
-          detail.hidden=open;
-          button.setAttribute('aria-expanded',String(!open));
-        });
-      });
-
-      document.querySelectorAll('.detail-close').forEach(button=>{
-        button.addEventListener('click',()=>{
-          const detail=button.closest('.story-detail');
-          const personButton=detail?.previousElementSibling;
-          if(detail) detail.hidden=true;
-          if(personButton) personButton.setAttribute('aria-expanded','false');
+          if(participantId) openPerson(button,detail,participantId);
         });
       });
     }catch(error){
