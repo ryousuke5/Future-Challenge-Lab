@@ -207,8 +207,12 @@ restoreCoreSession().catch(() => {});
 
 async function register(){
   await withLoadingUI(document.getElementById('registerBtn'), '登録処理中です。しばらくお待ちください…', async () => {
-    await ensureFclSession(email.value);
-    participant=await api('/api/participants',{name:name.value,email:email.value,challenge:challenge.value,goal:goal.value});
+    const nameValue=document.getElementById('name')?.value||'';
+    const emailValue=document.getElementById('email')?.value||'';
+    const challengeValue=document.getElementById('challenge')?.value||'';
+    const goalValue=document.getElementById('goal')?.value||'';
+    await ensureFclSession(emailValue);
+    participant=await api('/api/participants',{name:nameValue,email:emailValue,challenge:challengeValue,goal:goalValue});
     localStorage.setItem('fcl-participant-id',participant.id);
     localStorage.setItem('fcl-user-id',participant.user_id || '');
     participantStatus.textContent=` ユーザーID: ${participant.user_id || '未取得'} / 現在の挑戦: ${participant.challenge || '未登録'}`;
