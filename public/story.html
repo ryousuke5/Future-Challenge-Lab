@@ -18,7 +18,7 @@ button:disabled{opacity:.6}.error{padding:12px;border-radius:12px;background:#fe
 .event:before{content:"";position:absolute;left:-32px;top:4px;width:12px;height:12px;border-radius:50%;background:#64748b;border:3px solid #fff;box-shadow:0 0 0 2px #e2e8f0}
 .date{font-size:12px;color:#64748b;margin-bottom:3px}.tag{font-size:12px;font-weight:700;color:#475569}.empty{padding:14px;background:#f8fafc;border-radius:12px;color:#64748b}.comment{margin-top:10px;padding:12px 14px;border-radius:12px;background:#f8fafc;color:#334155;font-size:14px;line-height:1.7}.growth{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin:12px 0}.growth-item{padding:14px;border:1px solid #e5e7eb;border-radius:14px;background:#fff}.growth-item strong{display:block;margin-bottom:5px}.story-ending{margin-top:18px;padding:18px;border-radius:16px;background:#f8fafc}.next-step{margin-top:14px;padding:14px;border-radius:14px;background:#fff}
 @media(max-width:650px){.user-bar{flex-direction:column;align-items:stretch}.story-head>div[style*="grid-template-columns"]{grid-template-columns:1fr!important}}
-.daily-card{padding:18px;border:1px solid #e5e7eb;border-radius:16px;background:#fff;margin-bottom:12px}.daily-meta{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.page-no{font-size:12px;color:#64748b;font-weight:700}.daily-date{font-size:13px;color:#64748b}.daily-lines{margin:0;padding-left:20px}.daily-lines li{margin:7px 0;line-height:1.7}.daily-card details{margin-top:12px}.daily-card summary{cursor:pointer;color:#334155;font-weight:700}.detail-body{margin-top:10px;padding:12px 14px;border-radius:12px;background:#f8fafc}.detail-row{padding:8px 0;border-bottom:1px solid #e5e7eb;line-height:1.6}.detail-row:last-child{border-bottom:0}.milestone-comment{margin:12px 0;padding:14px 16px;border-left:4px solid #94a3b8;background:#f8fafc;border-radius:10px;line-height:1.7}.roadmap{margin:16px 0 4px;padding:16px;border:1px solid #e5e7eb;border-radius:16px;background:#fff}.roadmap-title{font-size:14px;font-weight:700;margin-bottom:12px}.roadmap-track{display:flex;align-items:flex-start;gap:0;overflow-x:auto;padding:4px 2px 8px}.roadmap-step{min-width:150px;position:relative;text-align:center}.roadmap-step:not(:last-child):after{content:"";position:absolute;top:12px;left:50%;width:100%;height:2px;background:#e2e8f0}.roadmap-dot{position:relative;z-index:1;width:24px;height:24px;margin:0 auto 7px;border-radius:50%;border:2px solid #cbd5e1;background:#fff}.roadmap-step.done .roadmap-dot{background:#334155;border-color:#334155}.roadmap-step.current .roadmap-dot{box-shadow:0 0 0 4px #e2e8f0}.roadmap-label{font-size:12px;font-weight:700}.roadmap-note{font-size:11px;color:#64748b;margin-top:3px;line-height:1.4}.story-end{margin-top:18px;padding:20px;border-radius:16px;background:#f8fafc}@media(max-width:650px){.daily-meta{align-items:flex-start;flex-direction:column}}</style>
+.daily-card{padding:18px;border:1px solid #e5e7eb;border-radius:16px;background:#fff;margin-bottom:12px}.daily-meta{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.page-no{font-size:12px;color:#64748b;font-weight:700}.daily-date{font-size:13px;color:#64748b}.daily-lines{margin:0;padding-left:20px}.daily-lines li{margin:7px 0;line-height:1.7}.daily-card details{margin-top:12px}.daily-card summary{cursor:pointer;color:#334155;font-weight:700}.detail-body{margin-top:10px;padding:12px 14px;border-radius:12px;background:#f8fafc}.detail-row{padding:8px 0;border-bottom:1px solid #e5e7eb;line-height:1.6}.detail-row:last-child{border-bottom:0}.milestone-comment{margin:12px 0;padding:14px 16px;border-left:4px solid #94a3b8;background:#f8fafc;border-radius:10px;line-height:1.7}.journal-history{margin:0 0 14px;padding:14px;border:1px solid #dbe4ee;border-radius:14px;background:#fff}.journal-history-heading h4{margin:9px 0 12px;font-size:1.05rem}.journal-history-body{padding:13px 14px;background:#f8fafc;border-radius:11px;line-height:1.85}.journal-history-body p{margin:0 0 10px}.journal-history-body p:last-child{margin-bottom:0}.roadmap{margin:16px 0 4px;padding:16px;border:1px solid #e5e7eb;border-radius:16px;background:#fff}.roadmap-title{font-size:14px;font-weight:700;margin-bottom:12px}.roadmap-track{display:flex;align-items:flex-start;gap:0;overflow-x:auto;padding:4px 2px 8px}.roadmap-step{min-width:150px;position:relative;text-align:center}.roadmap-step:not(:last-child):after{content:"";position:absolute;top:12px;left:50%;width:100%;height:2px;background:#e2e8f0}.roadmap-dot{position:relative;z-index:1;width:24px;height:24px;margin:0 auto 7px;border-radius:50%;border:2px solid #cbd5e1;background:#fff}.roadmap-step.done .roadmap-dot{background:#334155;border-color:#334155}.roadmap-step.current .roadmap-dot{box-shadow:0 0 0 4px #e2e8f0}.roadmap-label{font-size:12px;font-weight:700}.roadmap-note{font-size:11px;color:#64748b;margin-top:3px;line-height:1.4}.story-end{margin-top:18px;padding:20px;border-radius:16px;background:#f8fafc}@media(max-width:650px){.daily-meta{align-items:flex-start;flex-direction:column}}</style>
 </head>
 <body><main>
 <section class="hero">
@@ -61,53 +61,151 @@ function meaningfulComment(day, checkins, actions, events, matches, allCheckins)
     return '';
 }
 
-function buildDailySummary(day, index, startAt, totalCheckins){
+function pickPhrase(pool, seed){
+  return pool[Math.abs(seed)%pool.length];
+}
+function daySeed(day){
+  return Array.from(day.key||'').reduce((sum,ch)=>sum+ch.charCodeAt(0),0)+day.checkins.length*7+day.actions.length*13+day.events.length*17;
+}
+function buildDailySummary(day){
   const lines=[];
   const checks=day.checkins, acts=day.actions, evs=day.events, con=day.connections;
   const latestCheck=checks[checks.length-1];
+  const seed=daySeed(day);
+
+  if(day.isStart){
+    lines.push(pickPhrase([
+      '「'+(day.challenge||'この挑戦')+'」への一歩を踏み出した。',
+      '今日から、この挑戦の物語が始まった。',
+      '挑戦したいことを言葉にして、スタート地点に立った。'
+    ],seed));
+    lines.push(pickPhrase([
+      'まずは自分が進みたい方向を決めた。',
+      'ここから日々の記録を積み重ねていく。',
+      'まだ何も分からない。でも、始めたことが最初の一歩になった。'
+    ],seed+1));
+    lines.push('このページが、これからの物語の出発点になる。');
+    return lines;
+  }
+
   if(latestCheck){
-    const status=latestCheck.risk_level?'現在の状態は「'+latestCheck.risk_level+'」でした。':'今日の状態を記録しました。';
-    lines.push('今日の状態を記録した。'+status);
-  } else if(day.isStart){
-    lines.push('「'+(day.challenge||'挑戦')+'」への挑戦を始めた。');
-  } else {
-    lines.push('挑戦に関する記録を残した。');
+    const score=Number(latestCheck.autonomy_total||0);
+    lines.push(pickPhrase([
+      '今日の自分の状態を、立ち止まって確かめた。',
+      '今の感覚を言葉と数字にして、現在地を残した。',
+      '今日のコンディションを記録し、自分の現在地を見つめた。',
+      '今日という一日の状態を、物語の一ページとして残した。'
+    ],seed));
+    if(day.autonomyRise){
+      lines.push(pickPhrase([
+        '前回より「自分で選べている」感覚が強くなった。',
+        '前のページから、自己決定度が一段上がった。',
+        '迷いの中にも、自分で決められる部分が増えてきた。'
+      ],seed+2));
+    }else if(day.autonomyDrop){
+      lines.push(pickPhrase([
+        '今日は少し揺れた。それも今の自分を知る大切な記録になった。',
+        '思うように進まない感覚も、そのまま一ページに残した。',
+        '下がった日も含めて、自分の現在地を知る材料になった。'
+      ],seed+2));
+    }else{
+      lines.push(pickPhrase([
+        '前のページとの違いを見ながら、今の自分を確かめた。',
+        '大きく変わらなくても、今日の現在地を残した。',
+        '変化の大きさより、続けて記録したことに意味がある一日だった。'
+      ],seed+2));
+    }
+  }else{
+    lines.push(pickPhrase([
+      '挑戦について考えたことを、一日の記録として残した。',
+      '今日の出来事を、挑戦の物語に書き加えた。',
+      'この日の動きや気づきを、一ページにまとめた。'
+    ],seed));
   }
 
-  const completed=acts.filter(a=>a.completed);
-  const unfinished=acts.filter(a=>!a.completed);
+  const completed=acts.filter(a=>a.completed), unfinished=acts.filter(a=>!a.completed);
   if(completed.length){
-    lines.push(completed.length+'件の次の一歩を実行した。');
-  } else if(acts.length){
-    lines.push('次の一歩を記録した。まだ実行していないものも残っている。');
-  } else if(con.length){
-    lines.push('支援者とのつながりが加わった。');
-  } else if(evs.some(e=>(e.features?.action_type||e.label)==='core_decision')){
-    lines.push('自分で次の選択を決めた。');
-  } else if(day.isStart){
-    lines.push('ここから、日々の挑戦が積み重なっていく。');
-  } else {
-    lines.push('その日の現在地を一度立ち止まって振り返った。');
+    lines.push(pickPhrase([
+      completed.length+'件の次の一歩を実際に動かした。',
+      '考えていたことを行動に変え、'+completed.length+'件を実行した。',
+      '「やる」と決めたことを、'+completed.length+'件現実に移した。'
+    ],seed+3));
+  }else if(acts.length){
+    lines.push(pickPhrase([
+      '次の一歩を決めた。まだ途中のものも残っている。',
+      'やることを具体化し、次に進む準備を整えた。',
+      '次の行動を書き出し、これから進む方向を残した。'
+    ],seed+3));
+  }else if(con.length){
+    lines.push(pickPhrase([
+      '一人で進むだけではなく、支援とのつながりが生まれた。',
+      'この挑戦に、誰かと一緒に進むページが加わった。',
+      '支えてくれる人との接点が、この物語に加わった。'
+    ],seed+3));
+  }else if(day.restarted){
+    lines.push(pickPhrase([
+      '少し間が空いたあと、もう一度この挑戦に戻ってきた。',
+      '止まったところから、再びページをめくった。',
+      '一度離れても、またここに戻ってきた。'
+    ],seed+3));
+  }else if(evs.some(e=>(e.features?.action_type||e.label)==='core_decision')){
+    lines.push(pickPhrase([
+      '迷いながらも、自分で次の選択を決めた。',
+      'いくつかの選択肢から、自分の次の一歩を選んだ。',
+      '「こうしてみる」と、自分なりの方向を決めた。'
+    ],seed+3));
+  }else{
+    lines.push(pickPhrase([
+      '今日の記録が、次のページへ続く材料になった。',
+      '小さな積み重ねを残して、一日を終えた。',
+      '今日の一ページを残し、物語を一つ先へ進めた。'
+    ],seed+3));
   }
 
-  if(con.length){
-    lines.push('支援とのつながりを、この物語に加えた。');
-  } else if(day.autonomyRise){
-    lines.push('前回より「自分で選べている」感覚が上がった。');
-  } else if(completed.length){
-    lines.push('考えたことを行動に移し、次のページへ進んだ。');
-  } else if(day.restarted){
-    lines.push('間が空いても、もう一度この挑戦に戻ってきた。');
-  } else if(unfinished.length){
-    lines.push('まだ途中の一歩も含めて、今日の記録として残した。');
-  } else {
-    lines.push('今日の記録が、次の一ページにつながっていく。');
+  if(con.length && !lines.some(x=>x.includes('支援'))){
+    lines[2]=pickPhrase(['支援とのつながりも、この物語の一部になった。','誰かと進む可能性が、このページに加わった。','一人ではない進み方も、次の選択肢として残った。'],seed+5);
+  }else if(day.restarted && !lines.some(x=>x.includes('戻')||x.includes('再び')||x.includes('めくった'))){
+    lines[2]=pickPhrase(['止まったあとにも、次のページは続いている。','また動き出せたことが、今日の一歩になった。','再開した今日が、新しいページになった。'],seed+5);
+  }else if(completed.length){
+    lines[2]=pickPhrase(['今日の行動が、次のページへの橋になった。','実際に動いたことで、物語が一つ先へ進んだ。','行動した事実が、今日のページに刻まれた。'],seed+5);
+  }else if(unfinished.length){
+    lines[2]=pickPhrase(['まだ決まっていない部分も、次のページへの材料として残った。','途中のままでも、今日の自分を記録できた。','未完了も含めて、今の現在地が見えてきた。'],seed+5);
   }
   return lines.slice(0,3);
 }
 
+function buildJournalResponse(analysis,outcomeStatus=''){
+  const r=analysis||{};
+  const clean=v=>String(v??'').replace(/^(現在地|今日の気づき|FCLの学習結果|今回の解決策|次の一歩|学習結果)：?/,'').replace(/\s+/g,' ').trim();
+  const insight=clean(r.insight), state=clean(r.state);
+  const opening={
+    completed:['今日も一日、お疲れさまでした。','今日もちゃんと前に進めています。','今日の記録、読みました。お疲れさまです。'],
+    partial:['今日もお疲れさまでした。','今日の記録、読みました。','今日も一日、よくやりました。'],
+    not_completed:['今日もお疲れさまでした。','今日は思うようにいかない日だったかもしれませんね。','今日の記録、ちゃんと受け取りました。'],
+    not_started:['今日もお疲れさまでした。','今日の記録、読みました。','ここまで書き残せたことも、ちゃんと一歩です。']
+  }[outcomeStatus]||['今日もお疲れさまでした。','今日の記録、読みました。'];
+  const middle={
+    completed:['できたことは、そのまま素直に喜んでいいと思います。小さくても、続けた一日はちゃんと積み重なっています。','毎日すべてを完璧にする必要はありません。今日できたことが、明日の自分を助けてくれます。'],
+    partial:['全部できなかったとしても大丈夫です。続けられた部分には、ちゃんと意味があります。','今日は全部を取り切る日ではなかっただけ。できたところを残して、また明日につなげれば十分です。'],
+    not_completed:['できなかった日は、失敗として片づけなくて大丈夫です。そういう日も含めて、自分のペースを知る材料になります。','うまくいかない日があるのは自然なことです。今日の自分を責めるより、明日また戻ってこられれば十分です。'],
+    not_started:['まだ動けていなくても、焦らなくて大丈夫です。始める日は、いつでもここから作れます。','今日は準備の日だったのかもしれません。大きく動かなくても、次につながる一日です。']
+  }[outcomeStatus]||['今日できたことも、できなかったことも、どちらも今の自分の大切な記録です。','毎日完璧である必要はありません。続けようとしていること自体に意味があります。'];
+  const closing={
+    completed:['今日の自分に、ひとまず「よくやった」と言ってあげてください。','この調子で、明日も無理のない一歩でいきましょう。'],
+    partial:['明日はまた、できるところからで大丈夫です。','焦らず、自分のペースで続けていきましょう。'],
+    not_completed:['今日は休んでもいい。明日、また一歩戻ってくれば大丈夫です。','続けることは、毎日完璧にやることではありません。また明日で大丈夫です。'],
+    not_started:['明日は3分でもいいので、できそうなところから始めてみましょう。','まずは小さく。動き出せたら、それで十分です。']
+  }[outcomeStatus]||['また明日、自分のペースでいきましょう。','今日も一歩。お疲れさまでした。'];
+  const seed=Array.from((insight||'')+'|'+(state||'')+'|'+outcomeStatus).reduce((sum,ch)=>sum+ch.charCodeAt(0),0);
+  const pick=(pool,offset=0)=>pool[(seed+offset)%pool.length];
+  const personalizedLine=insight&&!/観測|学習|解決策|次の一歩|状態を整理/.test(insight)?'今日の記録から、'+insight.replace(/[。．]$/,'')+'という部分も、ちゃんと伝わってきました。':'';
+  return [pick(opening),personalizedLine,pick(middle,1),pick(closing,2)].filter(Boolean);
+}
 function renderDetails(day){
   const rows=[];
+  if(day.journalReply?.length){
+    rows.push('<div class="journal-history"><div class="journal-history-heading"><span class="section-tag">FCL RESPONSE</span><h4>あなたの日誌への返信</h4></div><div class="journal-history-body">'+day.journalReply.map(p=>'<p>'+esc(p)+'</p>').join('')+'</div></div>');
+  }
   day.checkins.forEach((c,i)=>rows.push('<div class="detail-row"><strong>チェックイン '+(i+1)+'回目</strong><br>自己決定度：'+esc(c.autonomy_total||0)+' / 25　現在の状態：'+esc(c.risk_level||'確認中')+'<br><span class="muted">'+dateTime(c.checked_in_at)+'</span></div>'));
   day.actions.forEach(a=>rows.push('<div class="detail-row"><strong>'+(a.completed?'実行した一歩':'記録した一歩')+'</strong><br>'+esc(a.action_text||'行動記録')+(a.result_note?'<br>結果：'+esc(a.result_note):'')+'<br><span class="muted">'+dateTime(a.completed_at||a.created_at)+'</span></div>'));
   day.events.forEach(e=>{
@@ -160,7 +258,7 @@ async function load(){
         actions:items.filter(x=>x.kind==='action').map(x=>x.data),
         events:items.filter(x=>['core_analysis','core_decision','core_outcome'].includes(x.kind)).map(x=>x.data),
         connections:items.filter(x=>x.kind==='connection').map(x=>x.data),
-        isStart:items.some(x=>x.kind==='start'),restarted:false,newConnection:false,firstCompletedAction:false,autonomyRise:false,autonomyDrop:false,
+        isStart:items.some(x=>x.kind==='start'),restarted:false,newConnection:false,firstCompletedAction:false,autonomyRise:false,autonomyDrop:false,journalReply:[],
         challenge:p.challenge||'挑戦'
       };
       if(d.checkins.length){
@@ -176,13 +274,20 @@ async function load(){
       }
       if(d.connections.length) d.newConnection=true;
       if(d.actions.some(a=>a.completed) && key===firstCompletedKey) d.firstCompletedAction=true;
+      const analysisEvent=d.events.find(e=>(e.features?.action_type||e.label)==='core_analysis');
+      const outcomeEvent=d.events.find(e=>(e.features?.action_type||e.label)==='core_outcome');
+      if(analysisEvent){
+        const analysis=analysisEvent.features?.result||analysisEvent.features||{};
+        const status=outcomeEvent?.features?.outcome_status||outcomeEvent?.features?.result?.outcome_status||'';
+        d.journalReply=buildJournalResponse(analysis,status);
+      }
       return d;
     });
 
     // Page numbers follow check-in history when available; activity-only days receive the nearest page marker.
     let pageNo=1;
     const cards=daily.map((d,idx)=>{
-      const lines=buildDailySummary(d,idx,p.created_at,checkins.length);
+      const lines=buildDailySummary(d);
       const comment=meaningfulComment(d,d.checkins,d.actions,d.events,d.connections,allCheckinsAsc);
       const pageLabel='第'+pageNo+'ページ';
       pageNo++;
