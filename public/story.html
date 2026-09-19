@@ -43,20 +43,17 @@ async function load(){
   const ov=await fetch('/api/users/'+encodeURIComponent(id)+'/overview').then(async r=>{const d=await r.json();if(!r.ok)throw Error(d.error||'取得失敗');return d});
   const participants=ov.challenger?.records||[];
   if(!participants.length){$('story').innerHTML='<div class="card empty">まだ挑戦者登録がありません。まずFCLで挑戦を登録すると、ここに物語が始まります。</div>';$('story').hidden=false;return;}
-  const histories=await Promise.all(participants.map(p=>fetch('/api/core/history/'+encodeURIComponent(p.id)).then(r=>r.ok?r.json():null)));
+  const histories=await Promise.all(participants.map(p=>fetch('/api/story/'+encodeURIComponent(p.id)).then(async r=>r.ok?r.json():null)));
   $('story').innerHTML=participants.map((p,i)=>{
-   const h=histories[i]||{}; const c=h.checkin; const a=h.analysis; const o=h.outcome;
-   const matches=(ov.matches||[]).filter(m=>m.role==='challenger' && (m.challenge||'')===(p.challenge||''));
-   const events=[
-    {at:p.created_at,label:'物語のはじまり',text:'「'+esc(p.challenge||'挑戦')+'」への挑戦を登録しました。目標：'+esc(p.goal||'未登録')},
-    c?{at:c.checked_in_at,label:'今日の1ページ',text:'FCLチェックインを記録。現在の状態：'+esc(c.risk_level||'確認中')}:null,
-    a?{at:a.created_at||c?.checked_in_at,label:'現在地を知る',text:esc(a.summary||a.label||'現在の状態を分析しました。')}:null,
-    o?{at:o.created_at||null,label:'行動の結果',text:esc(o.result_note||o.summary||o.label||'行動結果を記録しました。')}:null,
-    ...matches.filter(m=>m.status==='connected').map(m=>({at:m.updated_at,label:'支援者とつながる',text:'「'+esc(m.counterpart_name||'支援者')+'」と接続が成立しました。'}))
-   ].filter(Boolean).sort((x,y)=>new Date(x.at||0)-new Date(y.at||0));
-   return '<section class="card"><div class="story-head"><span class="pill">挑戦者</span><h2>'+esc(p.challenge||'挑戦')+'</h2><p>目標：'+esc(p.goal||'未登録')+'</p><p class="muted">'+events.length+'つの記録が、この物語に積み重なっています。</p></div><div class="timeline">'+
-   (events.length?events.map(e=>'<div class="event"><div class="date">'+date(e.at)+'</div><div class="tag">'+esc(e.label)+'</div><p>'+e.text+'</p></div>').join(''):'<div class="empty">まだ物語の記録はありません。</div>')+
-   '</div><p class="muted" style="margin-top:20px">あなたの物語は、まだ途中です。次の1ページを記録していきましょう。</p></section>';
+   const h=histories[i]||{}; const checkins=h.checkins||[]; const actions=h.actions||[]; const events=h.events||[]; const matches=h.matches||[];
+   const timeline=[];
+   timeline.push({at:p.created_at,label:'物語のはじまり',text:'「'+esc(p.challenge||'挑戦')+'」への挑戦を登録しました。目標：'+esc(p.goal||'未登録')});
+   checkins.forEach((c,n)=>timeline.push({at:c.checked_in_at,label:'今日の1ページ',text:'FCLチェックイン '+(n+1)+'回目。自己決定度 '+esc(c.autonomy_total||0)+' / 25、現在の状態：'+esc(c.risk_level||'確認中')+'。'}));
+   actions.forEach(a=>timeline.push({at:a.completed_at||a.created_at,label:a.completed?'次の一歩を実行':'次の一歩を記録',text:esc(a.action_text||'行動を記録しました。')+(a.completed?' → 実行できました。':' → まだ実行できていません。')+(a.result_note?' 結果：'+esc(a.result_note):'')}));
+   events.forEach(e=>{const type=e.features?.action_type||e.label; if(type==='core_analysis')timeline.push({at:e.created_at,label:'現在地を知る',text:esc(e.features?.result?.summary||e.features?.result?.insight||'現在の状態を分析しました。')}); else if(type==='core_decision')timeline.push({at:e.created_at,label:'自分で選ぶ',text:'解決策「'+esc(e.features?.selected_option||'未選択')+'」を選びました。'}); else if(type==='core_outcome')timeline.push({at:e.created_at,label:'行動の結果',text:esc(e.features?.result_note||e.features?.outcome_status||'行動結果を記録しました。')});});
+   matches.filter(m=>m.status==='connected').forEach(m=>timeline.push({at:m.updated_at||m.created_at,label:'支援者とつながる',text:'支援者との接続が成立しました。'}));
+   timeline.sort((x,y)=>new Date(x.at||0)-new Date(y.at||0));
+   return '<section class="card"><div class="story-head"><span class="pill">挑戦者</span><h2>'+esc(p.challenge||'挑戦')+'</h2><p>目標：'+esc(p.goal||'未登録')+'</p><p class="muted">'+checkins.length+'回のチェックイン・'+actions.length+'件の行動記録が、この物語に積み重なっています。</p></div><div class="timeline">'+(timeline.length?timeline.map(e=>'<div class="event"><div class="date">'+date(e.at)+'</div><div class="tag">'+esc(e.label)+'</div><p>'+e.text+'</p></div>').join(''):'<div class="empty">まだ物語の記録はありません。</div>')+'</div><p class="muted" style="margin-top:20px">あなたの物語は、まだ途中です。次の1ページを記録していきましょう。</p></section>';
   }).join('');
   $('story').hidden=false;
  }catch(e){$('story').hidden=true;showError(e.message||'物語の取得に失敗しました。')}
