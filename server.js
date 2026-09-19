@@ -1425,6 +1425,17 @@ app.post('/api/participants',async(req,res)=>{
     // another participant record under the same user_id/email.
     const ownParticipants=(await select('participants',{user_id:fclUser.id}))
       .filter(x=>!x.archived_at);
+
+    // The participant name belongs to the person, not to a specific challenge.
+    // When a real name is supplied, repair older records that were saved blank.
+    if(name){
+      for(const existingParticipant of ownParticipants){
+        if(!String(existingParticipant.name||'').trim()){
+          await update('participants',existingParticipant.id,{name,email,updated_at:new Date().toISOString()});
+        }
+      }
+    }
+
     const duplicate=ownParticipants.find(x=>
       String(x.challenge||'').trim()===challenge &&
       String(x.goal||'').trim()===goal
