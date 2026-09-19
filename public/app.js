@@ -114,6 +114,8 @@ if(!participant)return alert('先に挑戦者登録をしてください');
 try { await withLoadingUI(document.getElementById('checkinBtn'), 'AI分析中です。しばらくお待ちください…', async () => {
   const answers={};for(let i=0;i<5;i++)answers[`q${i+1}`]=Number(document.getElementById(`q${i}`).value);
   const x=await api('/api/checkins',{participant_id:participant.id,answers});
+  const checkinCount=Number(x.checkin_count||0);
+  if(checkinCount>0){document.getElementById('checkinCelebration').innerHTML=`<strong>今日も挑戦を記録しました。</strong><span>FCLチェックイン ${checkinCount}回目</span>`;}
   if(x.intervention_record_status === 'failed' || x.intervention_record_error){
     alert('AI分析は完了したが介入記録の保存に失敗しました');
   }
