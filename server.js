@@ -2668,7 +2668,7 @@ app.post('/api/supporter-match', async (req, res) => {
 
 app.post('/api/supporter/execute', async (req, res) => {
   try {
-    const { participant_id, supporter_id, recommendation_type, recommendation_reason, suggested_message, approved, checkin_id } = req.body || {};
+    const { participant_id, supporter_id, recommendation_type, recommendation_reason, suggested_message, approved, checkin_id, match_id } = req.body || {};
     if (!participant_id || !supporter_id) return res.status(400).json({ error: 'invalid participant_id or supporter_id' });
     if (!approved) return res.status(400).json({ error: 'supporter approval required' });
 
@@ -2701,7 +2701,7 @@ app.post('/api/supporter/execute', async (req, res) => {
     const executionEvent = await insert('connection_events', {
       participant_id,
       supporter_id,
-      match_id: null,
+      match_id: match_id || null,
       event_type: 'support_execution',
       note: suggested_message || 'supporter follow-up executed',
       created_at: new Date().toISOString()
@@ -2713,6 +2713,7 @@ app.post('/api/supporter/execute', async (req, res) => {
       features: {
         action_type: 'support_execution',
         supporter_id,
+        match_id: match_id || null,
         recommendation_type: recommendation_type || 'supporter',
         recommendation_reason: recommendation_reason || '',
         suggested_message: suggested_message || '',
