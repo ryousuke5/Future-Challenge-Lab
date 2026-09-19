@@ -1983,10 +1983,14 @@ app.post('/api/core/analyze', async (req, res) => {
     if(response?.analysis_event_id){
       try{
         const participant=(await select('participants',{id:participant_id}))[0];
-        const existing=(await select('journal_replies',{participant_id,source_analysis_event_id:response.analysis_event_id}))[0] || null;
-        if(existing){
-          journalReply=existing;
-          journalReplySource=existing.reply_version === 'v2-ai' ? 'saved_ai' : 'saved_legacy';
+        const today=todayJstDate();
+        const todaysReplies=(await select('journal_replies',{participant_id,reply_date:today}))
+          .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
+        const existingToday=todaysReplies[0] || null;
+
+        if(existingToday){
+          journalReply=existingToday;
+          journalReplySource='saved_today';
         }else{
           const aiReply=await generateJournalReplyWithOpenAI({
             participant,
@@ -2005,7 +2009,8 @@ app.post('/api/core/analyze', async (req, res) => {
             checkin_id:null,
             source_analysis_event_id:response.analysis_event_id,
             reply_text:replyText,
-            reply_version:aiReply ? 'v2-ai' : 'v2-ai-fallback'
+            reply_version:aiReply ? 'v2-ai' : 'v2-ai-fallback',
+            reply_date:today
           });
           journalReplySource=aiReply ? 'openai' : 'fallback';
         }
