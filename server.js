@@ -587,6 +587,81 @@ async function callOpenAiFallback(prompt){
   }
 }
 
+function normalizeAiCoreResult(llmResult, baseResult){
+  if(!llmResult || typeof llmResult !== 'object') return baseResult;
+
+  const normalizeState = (value) => {
+    if(typeof value === 'string') return value;
+    if(value && typeof value === 'object'){
+      return String(value.currentState || value.current_state || value.summary || baseResult.state || 'unknown');
+    }
+    return baseResult.state;
+  };
+
+  const normalizeStateChange = (value) => {
+    if(Array.isArray(value)) return value.map(v=>String(v)).filter(Boolean).join(' ');
+    if(typeof value === 'string' && value.trim()) return value.trim();
+    return baseResult.state_change;
+  };
+
+  const normalizeRisk = (value) => {
+    if(value && !Array.isArray(value) && typeof value === 'object' && value.level){
+      return {
+        level: ['low','medium','high','unknown'].includes(String(value.level).toLowerCase())
+          ? String(value.level).toLowerCase()
+          : baseResult.risk.level,
+        reason: String(value.reason || baseResult.risk.reason)
+      };
+    }
+    return baseResult.risk;
+  };
+
+  const normalizeSolutions = (value) => {
+    if(!Array.isArray(value) || !value.length) return baseResult.solutions;
+    const normalized = value.slice(0,3).map((item,index)=>{
+      if(item && typeof item === 'object'){
+        return {
+          id: ['A','B','C'][index],
+          title: String(item.title || item.name || item.label || baseResult.solutions[index]?.title || '選択肢'),
+          description: String(item.description || item.detail || baseResult.solutions[index]?.description || ''),
+          reason: String(item.reason || baseResult.solutions[index]?.reason || '')
+        };
+      }
+      return {
+        id: ['A','B','C'][index],
+        title: String(item),
+        description: baseResult.solutions[index]?.description || '',
+        reason: baseResult.solutions[index]?.reason || ''
+      };
+    });
+    while(normalized.length < 3) normalized.push(baseResult.solutions[normalized.length]);
+    return normalized;
+  };
+
+  const normalizedSolutions = normalizeSolutions(llmResult.solutions);
+  const rawRecommended = llmResult.recommended_option;
+  const recommended = ['A','B','C'].includes(String(rawRecommended || '').toUpperCase())
+    ? String(rawRecommended).toUpperCase()
+    : normalizedSolutions[0]?.id || 'A';
+
+  return {
+    ...baseResult,
+    state: normalizeState(llmResult.state),
+    state_change: normalizeStateChange(llmResult.state_change),
+    risk: normalizeRisk(llmResult.risk),
+    insight: typeof llmResult.insight === 'string' && llmResult.insight.trim() ? llmResult.insight.trim() : baseResult.insight,
+    problem: typeof llmResult.problem === 'string' && llmResult.problem.trim() ? llmResult.problem.trim() : baseResult.problem,
+    hypothesis: typeof llmResult.hypothesis === 'string' && llmResult.hypothesis.trim() ? llmResult.hypothesis.trim() : baseResult.hypothesis,
+    solutions: normalizedSolutions,
+    recommended_option: recommended,
+    next_action: typeof llmResult.next_action === 'string' && llmResult.next_action.trim() ? llmResult.next_action.trim() : baseResult.next_action,
+    adaptive_questions: Array.isArray(llmResult.adaptive_questions) ? llmResult.adaptive_questions : baseResult.adaptive_questions,
+    personal_support_pattern: llmResult.personal_support_pattern && typeof llmResult.personal_support_pattern === 'object'
+      ? llmResult.personal_support_pattern
+      : baseResult.personal_support_pattern
+  };
+}
+
 async function runFclAiCore({ participant_id, checkin_text, participant_profile = {}, current_goal, answers = {}, recent_context = {} } = {}){
   if(!participant_id) throw new Error('invalid participant_id');
   const participant = (await select('participants',{id:participant_id}))[0];
@@ -650,14 +725,8 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
 
   const prompt = `participant_goal=${coreContext.goal}\ncheckin_text=${coreContext.checkin_text}\nstate=${JSON.stringify(state)}\nstate_changes=${JSON.stringify(stateChanges)}\nrisk_signals=${JSON.stringify(riskSignals)}\nrecent_action=${coreContext.recentAction}\nbarriers=${coreContext.barriers}\n`;
   const llmResult = await callOpenAiFallback(prompt);
-  if(llmResult && llmResult.solutions && llmResult.solutions.length){
-    const result = {
-      ...baseResult,
-      ...llmResult,
-      solutions: Array.isArray(llmResult.solutions) && llmResult.solutions.length ? llmResult.solutions.slice(0, 3) : baseResult.solutions,
-      recommended_option: llmResult.recommended_option || baseResult.recommended_option,
-      next_action: llmResult.next_action || baseResult.next_action
-    };
+  if(llmResult){
+    const result = normalizeAiCoreResult(llmResult, baseResult);
     await insert('model_learning_events',{participant_id,features:{action_type:'core_analysis',result,state:result.state,state_change:result.state_change,insight:result.insight,problem:result.problem,hypothesis:result.hypothesis,adaptive_questions:result.adaptive_questions,personal_support_pattern:result.personal_support_pattern},label:{recommended_option:result.recommended_option,next_action:result.next_action}});
     return result;
   }
