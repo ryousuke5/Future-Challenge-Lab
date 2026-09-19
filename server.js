@@ -565,9 +565,9 @@ function classifyActionMode(text){
 }
 
 function buildIndividualContinuationPattern({ events = [], recommendationLearning = {} } = {}){
-  const legacy=(events||[]).filter(event=>event.features?.action_type==='core_outcome');
+  const legacy=(events||[]).filter(event=>event.features?.action_type==='core_outcome' && !event.features?.action_result_id);
   const modern=(events||[]).filter(event=>event.features?.action_type==='ai_recommendation_outcome');
-  const source=modern.length ? modern : legacy;
+  const source=[...legacy,...modern];
   const rows=source
     .map(event=>{
       const f=event.features||{};
@@ -637,7 +637,7 @@ function buildIndividualContinuationPattern({ events = [], recommendationLearnin
     statement,
     next_step_guidance,
     repeated_failure_mode:repeatedFailureMode ? {mode:repeatedFailureMode[0],trials:repeatedFailureMode[1]} : null,
-    source:modern.length ? 'ai_recommendation_outcome' : legacy.length ? 'core_outcome_legacy' : 'none'
+    source:modern.length && legacy.length ? 'ai_recommendation_outcome+core_outcome_legacy' : modern.length ? 'ai_recommendation_outcome' : legacy.length ? 'core_outcome_legacy' : 'none'
   };
 }
 
