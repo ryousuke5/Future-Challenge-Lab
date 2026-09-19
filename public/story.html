@@ -152,7 +152,7 @@ async function load(){
     });
     connectedMatches.forEach(m=>addItem(map,dayKey(m.updated_at||m.created_at),{kind:'connection',data:m,at:m.updated_at||m.created_at}));
 
-    const ordered=Array.from(map.entries()).sort((a,b)=>a[0]<b[0]?1:-1);
+    const ordered=Array.from(map.entries()).sort((a,b)=>a[0]<b[0]?-1:1);
     const totalDays=ordered.length;
     const allCheckinsAsc=[...checkins].sort((a,b)=>new Date(a.checked_in_at)-new Date(b.checked_in_at));
     const completedAsc=actions.filter(a=>a.completed).sort((a,b)=>new Date(a.completed_at||a.created_at)-new Date(b.completed_at||b.created_at));
@@ -183,14 +183,14 @@ async function load(){
     });
 
     // Page numbers follow check-in history when available; activity-only days receive the nearest page marker.
-    let pageNo=totalDays;
+    let pageNo=1;
     const cards=daily.map((d,idx)=>{
       const lines=buildDailySummary(d,idx,p.created_at,checkins.length);
       const comment=meaningfulComment(d,d.checkins,d.actions,d.events,d.connections,allCheckinsAsc);
       const pageLabel='第'+pageNo+'ページ';
-      pageNo--;
+      pageNo++;
       const details=renderDetails(d);
-      return '<article class="daily-card"><div class="daily-meta"><span class="page-no">'+pageLabel+'</span><span class="daily-date">'+dateOnly(d.key)+'</span></div><h3 style="margin:0 0 8px;">'+(idx===0?'今日のページ':d.isStart?'物語のはじまり':'この日のページ')+'</h3><ol class="daily-lines">'+lines.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ol>'+
+      return '<article class="daily-card"><div class="daily-meta"><span class="page-no">'+pageLabel+'</span><span class="daily-date">'+dateOnly(d.key)+'</span></div><h3 style="margin:0 0 8px;">'+(d.isStart?'物語のはじまり':idx===daily.length-1?'今日のページ':'この日のページ')+'</h3><ol class="daily-lines">'+lines.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ol>'+
         (comment?'<div class="milestone-comment"><strong>FCLからのコメント</strong><br>'+esc(comment)+'</div>':'')+
         '<details><summary>この日の詳細を見る</summary>'+details+'</details></article>';
     }).join('');
@@ -205,7 +205,7 @@ async function load(){
     if(connectedMatches.length) growth.push('支援接続 '+connectedMatches.length+'件');
     const storyText='あなたはこの挑戦を始めてから'+(days??'-')+'日。'+checkins.length+'回、自分の現在地を記録し、'+completedActions+'件の行動を残しました。'+(growth.length?' '+growth.join('・')+'。':'')+'まだ途中です。でも、最初の日から今日までの記録そのものが、あなたの物語です。';
 
-    return '<section class="card"><div class="story-head"><span class="pill">挑戦者</span><h2>'+esc(p.challenge||'挑戦')+'</h2><p>目標：'+esc(p.goal||'未登録')+'</p><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px"><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">挑戦の日数</div><strong style="font-size:22px">'+(days??'-')+'日</strong></div><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">チェックイン</div><strong style="font-size:22px">'+checkins.length+'回</strong></div><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">行動した日</div><strong style="font-size:22px">'+actionDays+'日</strong></div></div><p class="muted" style="margin-top:14px">新しいページから始まり、下へスクロールするほど過去のページへ戻ります。</p></div><div>'+cards+'</div><div class="story-end"><strong>ここまでの物語</strong><p>'+storyText+'</p><div class="next-step"><strong>次の1ページ</strong><p>今日の状態を記録し、今の自分に合った小さな一歩を選んでいきましょう。</p></div></div><p class="muted" style="margin-top:20px">あなたの物語は、まだ途中です。次の1ページを記録していきましょう。</p></section>';
+    return '<section class="card"><div class="story-head"><span class="pill">挑戦者</span><h2>'+esc(p.challenge||'挑戦')+'</h2><p>目標：'+esc(p.goal||'未登録')+'</p><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px"><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">挑戦の日数</div><strong style="font-size:22px">'+(days??'-')+'日</strong></div><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">チェックイン</div><strong style="font-size:22px">'+checkins.length+'回</strong></div><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">行動した日</div><strong style="font-size:22px">'+actionDays+'日</strong></div></div><p class="muted" style="margin-top:14px">第1ページから始まり、下へスクロールするほど現在のページへ進みます。</p></div><div>'+cards+'</div><div class="story-end"><strong>ここまでの物語</strong><p>'+storyText+'</p><div class="next-step"><strong>次の1ページ</strong><p>今日の状態を記録し、今の自分に合った小さな一歩を選んでいきましょう。</p></div></div><p class="muted" style="margin-top:20px">あなたの物語は、まだ途中です。次の1ページを記録していきましょう。</p></section>';
   }).join('');
   $('story').hidden=false;
  }catch(e){$('story').hidden=true;showError(e.message||'物語の取得に失敗しました。')}
