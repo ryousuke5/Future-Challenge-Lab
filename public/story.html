@@ -224,14 +224,17 @@ async function load(){
  if(!id)return showError('FCLユーザーIDを入力してください。');
  $('load').disabled=true;$('load').textContent='取得中…';$('error').hidden=true;
  try{
-  const ov=await fetch('/api/users/'+encodeURIComponent(id)+'/overview').then(async r=>{const d=await r.json();if(!r.ok)throw Error(d.error||'取得失敗');return d});
-  const participants=ov.challenger?.records||[];
+  const response=await fetch('/api/story-user/'+encodeURIComponent(id));
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok) throw Error(data.error||'取得失敗');
+  const records=Array.isArray(data.participants)?data.participants:[];
+  const participants=records.map(item=>item.participant||{}); 
+  const histories=records;
   if(!participants.length){
     $('story').innerHTML='<div class="card empty">まだ挑戦者登録がありません。まずFCLで挑戦を登録すると、ここに物語が始まります。</div>';
     $('story').hidden=false;return;
   }
 
-  const histories=await Promise.all(participants.map(p=>fetch('/api/story/'+encodeURIComponent(p.id)).then(async r=>r.ok?r.json():null)));
   $('story').innerHTML=participants.map((p,i)=>{
     const h=histories[i]||{};
     const checkins=h.checkins||[], actions=h.actions||[], events=h.events||[], matches=h.matches||[];
