@@ -553,6 +553,38 @@ function buildPersonalSupportPattern({ participant_id, assignments, actions, sup
   };
 }
 
+function buildPersonalLearningProfile({ assignments = [], actions = [], supportHistory = [], events = [] } = {}){
+  const actionByIntervention=new Map();
+  for(const row of actions||[]){
+    if(!row.intervention_id) continue;
+    const list=actionByIntervention.get(row.intervention_id)||[];
+    list.push(row);
+    actionByIntervention.set(row.intervention_id,list);
+  }
+  const variants=['A','B'].map(variant=>{
+    const rows=(assignments||[]).filter(row=>row.variant===variant);
+    const outcomes=rows.flatMap(row=>(actionByIntervention.get(row.id)||[]));
+    const completed=outcomes.filter(row=>row.completed===true||row.execution_status==='completed').length;
+    return { variant, label:variant==='A'?'作業分解・自分で一歩を決める':'選択肢整理・選んで進める', trials:outcomes.length, completed, observed_rate:outcomes.length?Number((completed/outcomes.length).toFixed(3)):null };
+  });
+  const supportOutcomes=(supportHistory||[]).filter(row=>row.outcome);
+  const supportSuccesses=supportOutcomes.filter(row=>['restarted','action_completed','connected_and_progressed','positive'].includes(row.outcome)).length;
+  const supportRate=supportOutcomes.length?Number((supportSuccesses/supportOutcomes.length).toFixed(3)):null;
+  const barrierValues=[...(actions||[])].map(row=>String(row.barrier||'').trim()).filter(Boolean);
+  const barrierMap=new Map();
+  for(const value of barrierValues){ const key=value.toLowerCase(); const current=barrierMap.get(key)||{label:value,count:0}; current.count++; barrierMap.set(key,current); }
+  const recurringBarriers=[...barrierMap.values()].filter(row=>row.count>=2).sort((a,b)=>b.count-a.count).slice(0,3);
+  const recentCoreOutcomes=[...(events||[])].filter(event=>['core_outcome','support_execution'].includes(event.features?.action_type)).sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).slice(0,5).map(event=>event.features?.action_type==='core_outcome'?{type:'next_step',status:event.features?.outcome_status||'unknown',option:event.features?.selected_option||null}:{type:'support',status:event.label?.outcome||event.features?.action_type||'unknown'});
+  const observedVariants=variants.filter(row=>row.trials>=3).sort((a,b)=>(b.observed_rate??-1)-(a.observed_rate??-1));
+  let hint='まだ本人の実行データが少ないため、複数の進め方を試しながら観測します。';
+  if(observedVariants.length>=2 && Math.abs((observedVariants[0].observed_rate||0)-(observedVariants[1].observed_rate||0))>=0.15){
+    const best=observedVariants[0];
+    hint=`これまでの観測では「${best.label}」で実行できた割合が比較的高いです。因果効果は断定せず、今後も結果を見ながら更新します。`;
+  }else if(observedVariants.length===1){
+    hint=`「${observedVariants[0].label}」は過去${observedVariants[0].trials}回の観測があります。まだ比較材料が少ないため、次の結果も見ながら判断します。`;
+  }
+  return { variants, support: { trials:supportOutcomes.length, observed_rate:supportRate }, recurring_barriers:recurringBarriers, recent_outcomes:recentCoreOutcomes, hint, evidence_quality: observedVariants.length>=2 ? '比較観測あり' : observedVariants.length===1 ? '一部観測あり' : '観測不足' };
+}
 function buildContinuationProfile({ checkins = [], actions = [], journalReplies = [] } = {}){
   const orderedCheckins=[...(checkins||[])].sort((a,b)=>new Date(a.checked_in_at||0)-new Date(b.checked_in_at||0));
   const recentCheckins=orderedCheckins.slice(-7);
@@ -612,6 +644,11 @@ async function callOpenAiFallback(prompt){
   }
 }
 
+function normalizePersonalLearning(value, baseResult){
+  const base=baseResult.personal_learning||{};
+  if(!value||typeof value!=='object'||Array.isArray(value)) return base;
+  return { ...base, hint:typeof value.hint==='string'&&value.hint.trim()?value.hint.trim():base.hint, evidence_quality:base.evidence_quality||'観測不足', variants:Array.isArray(base.variants)?base.variants:[], support:base.support||{}, recurring_barriers:base.recurring_barriers||[], recent_outcomes:base.recent_outcomes||[] };
+}
 function normalizeContinuationRisk(value, baseResult){
   const base=baseResult.continuation_risk||{};
   if(!value||typeof value!=='object'||Array.isArray(value)) return base;
@@ -680,6 +717,7 @@ function normalizeAiCoreResult(llmResult, baseResult){
     state_change: normalizeStateChange(llmResult.state_change),
     risk: normalizeRisk(llmResult.risk),
     continuation_risk: normalizeContinuationRisk(llmResult.continuation_risk, baseResult),
+    personal_learning: normalizePersonalLearning(llmResult.personal_learning, baseResult),
     insight: typeof llmResult.insight === 'string' && llmResult.insight.trim() ? llmResult.insight.trim() : baseResult.insight,
     problem: typeof llmResult.problem === 'string' && llmResult.problem.trim() ? llmResult.problem.trim() : baseResult.problem,
     hypothesis: typeof llmResult.hypothesis === 'string' && llmResult.hypothesis.trim() ? llmResult.hypothesis.trim() : baseResult.hypothesis,
@@ -700,11 +738,12 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
 
   const checkins = (await select('checkins',{participant_id})).sort((a,b) => new Date(b.checked_in_at) - new Date(a.checked_in_at));
   const latestCheckin = checkins[0] || null;
-  const recentActions = (await select('action_results',{participant_id})).sort((a,b) => new Date(b.created_at || b.completed_at || 0) - new Date(a.created_at || a.completed_at || 0)).slice(0, 5);
-  const recentAssignments = (await select('intervention_assignments',{participant_id})).sort((a,b) => new Date(b.assigned_at) - new Date(a.assigned_at)).slice(0, 5);
-  const supportHistory = (await select('supporter_outcomes',{participant_id})).sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
+  const recentActions = (await select('action_results',{participant_id})).sort((a,b) => new Date(b.created_at || b.completed_at || 0) - new Date(a.created_at || a.completed_at || 0)).slice(0, 20);
+  const recentAssignments = (await select('intervention_assignments',{participant_id})).sort((a,b) => new Date(b.assigned_at) - new Date(a.assigned_at)).slice(0, 20);
+  const supportHistory = (await select('supporter_outcomes',{participant_id})).sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 10);
   const journalReplies = (await select('journal_replies',{participant_id})).sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0)).slice(0, 5);
   const continuationProfile = buildContinuationProfile({ checkins, actions: recentActions, journalReplies });
+  const personalLearning = buildPersonalLearningProfile({ assignments: recentAssignments, actions: recentActions, supportHistory, events: await select('model_learning_events',{participant_id}) });
 
   const coreContext = buildCoreSummary(participant, latestCheckin, checkins, recentActions, recentAssignments);
   coreContext.goal = current_goal || participant.goal || coreContext.goal;
@@ -746,6 +785,7 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
     state_change: stateChanges.join(' ') || '変化の有無はまだ不明ですが、継続の基準を確認する必要があります。',
     risk: normalizedRisk,
     continuation_risk: { level: normalizedRisk.level, score: Number(latestCheckin?.risk_score ?? 0), reasons: riskSignals.slice(0,3), signals: continuationProfile.repeated_barriers.map(item=>'同じ障壁が複数回観測: '+item.barrier), evidence: { recent_action_completion_rate: continuationProfile.recent_action_completion_rate, latest_gap_days: continuationProfile.latest_gap_days, risk_direction: continuationProfile.risk_direction } },
+    personal_learning: personalLearning,
     insight: coreInsight.insight,
     problem: coreInsight.problem,
     hypothesis: coreInsight.hypothesis,
@@ -757,7 +797,7 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
     exploration: { mode: personalSupportPattern.status==='observational' ? 'exploit_with_exploration' : 'explore', reason: personalSupportPattern.statement }
   };
 
-  const prompt = 'participant_goal=' + coreContext.goal + '\ncheckin_text=' + coreContext.checkin_text + '\nstate=' + JSON.stringify(state) + '\nstate_changes=' + JSON.stringify(stateChanges) + '\nrisk_signals=' + JSON.stringify(riskSignals) + '\ncontinuation_profile=' + JSON.stringify(continuationProfile) + '\nrecent_action=' + coreContext.recentAction + '\nbarriers=' + coreContext.barriers + '\nUse continuation_profile to identify concrete continuation risks. Do not diagnose health or personality. Distinguish observed signals from hypotheses. Prefer a small actionable next step and avoid repeating previous journal wording.';
+  const prompt = 'participant_goal=' + coreContext.goal + '\ncheckin_text=' + coreContext.checkin_text + '\nstate=' + JSON.stringify(state) + '\nstate_changes=' + JSON.stringify(stateChanges) + '\nrisk_signals=' + JSON.stringify(riskSignals) + '\ncontinuation_profile=' + JSON.stringify(continuationProfile) + '\npersonal_learning=' + JSON.stringify(personalLearning) + '\nrecent_action=' + coreContext.recentAction + '\nbarriers=' + coreContext.barriers + '\nUse continuation_profile to identify concrete continuation risks. Do not diagnose health or personality. Distinguish observed signals from hypotheses. Prefer a small actionable next step and avoid repeating previous journal wording.';
   const llmResult = await callOpenAiFallback(prompt);
   if(llmResult){
     const result = normalizeAiCoreResult(llmResult, baseResult);
