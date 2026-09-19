@@ -390,7 +390,12 @@ async function submitCoreCheckin(){
     renderSolutions(data);
     document.getElementById('coreNextAction').value = data?.result?.next_action || '';
     if(data?.journal_reply?.reply_text && typeof window.renderJournalReplyText === 'function'){
-      window.renderJournalReplyText(data.journal_reply.reply_text);
+      window.renderJournalReplyText(data.journal_reply.reply_text, data.journal_reply_source === 'saved_today'
+        ? '今日はすでに「あなたの日誌への返信」は済んでいます。'
+        : '');
+      if(typeof window.markJournalReplySeen === 'function' && data.journal_reply_source !== 'saved_today'){
+        window.markJournalReplySeen(participant?.id);
+      }
     }
   }); } catch(error) { showUiError(document.getElementById('coreInsight'),'分析に失敗しました。もう一度お試しください。'); }
 }
