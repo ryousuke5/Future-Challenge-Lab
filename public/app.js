@@ -161,6 +161,7 @@ async function match(){
   if(!participant)return alert('先に挑戦者登録をしてください');
   await withLoadingUI(document.getElementById('matchBtn'), 'マッチング処理中です。しばらくお待ちください…', async () => {
     const r=await api('/api/matches',{participant_id:participant.id});
+    const esc=(value)=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
     matches.innerHTML=r.map(x=>{
       const status=x.status||'pending';
       const requestDone=['requested','challenger_approved','supporter_approved','connected'].includes(status);
@@ -168,14 +169,14 @@ async function match(){
       const accessUrl=x.access_url||'';
       let actionHtml='';
       if(connected && accessUrl){
-        actionHtml=`<a href="${accessUrl.replaceAll('"','&quot;')}" class="secondary-btn">接続ページを開く</a>`;
+        actionHtml=`<a href="${esc(accessUrl)}" class="secondary-btn">接続ページを開く</a><div class="support-outcome-box"><strong>支援後の結果</strong><p class="muted">どんな関わり方が次の一歩につながったか、FCLに残します。</p><select data-support-outcome-status="${esc(x.id)}"><option value="action_completed">行動につながった</option><option value="partial_progress">一部前進した</option><option value="no_progress">まだ前進しなかった</option><option value="restarted">再開につながった</option><option value="not_used">支援をまだ使っていない</option></select><textarea data-support-outcome-note="${esc(x.id)}" rows="2" placeholder="支援を受けて、何が起きた？"></textarea><button type="button" onclick="saveSupportOutcome('${esc(x.id)}','${esc(x.supporter_id || x.supporter?.id || '')}',this)">支援結果を保存</button><span data-support-outcome-status-text="${esc(x.id)}"></span></div>`;
       } else if(requestDone){
         const label=status==='supporter_approved' ? '支援者承認済み・接続待ち' : '接続依頼済み';
         actionHtml=`<button type="button" disabled>${label}</button>`;
       } else {
-        actionHtml=`<button type="button" onclick="requestConnection('${x.id}', this)">この支援者に支援をお願いする</button>`;
+        actionHtml=`<button type="button" onclick="requestConnection('${esc(x.id)}', this)">この支援者に支援をお願いする</button>`;
       }
-      return `<div class="match"><strong>${x.supporter?.organization_name||'支援者'}</strong> / ${x.supporter?.supporter_name||''}<div>マッチ度 ${x.score}点</div><p>${x.reason}</p><div data-match-status="${x.id}">状態: ${status}</div>${actionHtml}</div>`;
+      return `<div class="match"><strong>${esc(x.supporter?.organization_name||'支援者')}</strong> / ${esc(x.supporter?.supporter_name||'')}<div>マッチ度 ${esc(x.score)}点</div><p>${esc(x.reason)}</p><div data-match-status="${esc(x.id)}">状態: ${esc(status)}</div>${actionHtml}</div>`;
     }).join('')||'<p>現在候補がありません。支援パートナーを登録してください。</p>';
   });
 }
@@ -496,9 +497,16 @@ async function submitCoreOutcome(){
 }
 
 async function saveSupportOutcome(matchId,supporterId,btn){
- if(!participant||!supporterId)return;
- try { await withLoadingUI(btn, '保存処理中です。しばらくお待ちください…', async () => {
-   await api('/api/supporter-outcomes',{participant_id:participant.id,match_id:matchId,supporter_id:supporterId,outcome:'connected_and_progressed',outcome_score:1,note:'支援後に前進した'});
-   alert('支援成果を学習データに保存しました。次回の支援者推薦に反映されます。');
- }); } catch(error) { showUiError(btn.closest('.match')?.querySelector(`[data-match-status="${matchId}"]`),'支援成果の保存に失敗しました。'); }
+  if(!participant||!supporterId)return;
+  const statusEl=btn.closest('.support-outcome-box')?.querySelector(`[data-support-outcome-status-text="${matchId}"]`);
+  const outcome=document.querySelector(`[data-support-outcome-status="${matchId}"]`)?.value||'positive';
+  const note=document.querySelector(`[data-support-outcome-note="${matchId}"]`)?.value||'';
+  try { await withLoadingUI(btn, '支援結果を保存しています。しばらくお待ちください…', async () => {
+    const data=await api('/api/supporter-outcomes',{participant_id:participant.id,match_id:matchId,supporter_id:supporterId,outcome,outcome_score:outcome==='action_completed'||outcome==='restarted'||outcome==='positive'?1:outcome==='partial_progress'?0.5:0,note,support_style:'supporter'});
+    if(statusEl) statusEl.textContent=' 支援方法の学習データに保存しました。';
+    if(typeof window.refreshFclDailyLoop==='function') window.refreshFclDailyLoop();
+    btn.disabled=true;
+    btn.textContent='支援結果を保存済み';
+    return data;
+  }); } catch(error) { if(statusEl) statusEl.textContent=' 保存できませんでした。もう一度お試しください。'; }
 }
