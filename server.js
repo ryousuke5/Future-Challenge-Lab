@@ -2064,7 +2064,10 @@ app.post('/api/journal-replies/generate', async (req, res) => {
     if(!participant) return res.status(404).json({error:'participant not found'});
 
     const existing=(await select('journal_replies',{participant_id,source_analysis_event_id}))[0] || null;
-    if(existing) return res.json({ok:true,reply:existing,source:'saved'});
+    if(existing && existing.reply_version === 'v2-ai') return res.json({ok:true,reply:existing,source:'saved'});
+    // Upgrade older deterministic replies to the AI-generated version while keeping
+    // the same analysis event as the immutable anchor for this day's reply.
+
 
     const aiReply=await generateJournalReplyWithOpenAI({
       participant,
@@ -2080,13 +2083,40 @@ app.post('/api/journal-replies/generate', async (req, res) => {
       analysis?.next_action ? `次の一歩は「${analysis.next_action}」とあります。まずは自分に合う形で進めてみてください。` : '次に何をするかは、その日の自分に合う小さな一歩で大丈夫です。'
     ].join('\\n\\n');
 
-    const saved=await saveJournalReply({
-      participant_id,
-      checkin_id:checkin_id || null,
-      source_analysis_event_id,
-      reply_text:replyText,
-      reply_version:'v2-ai'
-    });
+    let saved;
+    if(existing){
+      const q=db('journal_replies');
+      if(q){
+        const {data,error}=await q
+          .update({
+            checkin_id:checkin_id || null,
+            reply_text:replyText,
+            reply_version:'v2-ai',
+            displayed_at:new Date().toISOString()
+          })
+          .eq('id',existing.id)
+          .select()
+          .single();
+        if(error) throw error;
+        saved=data;
+      }else{
+        saved=await saveJournalReply({
+          participant_id,
+          checkin_id:checkin_id || null,
+          source_analysis_event_id,
+          reply_text:replyText,
+          reply_version:'v2-ai'
+        });
+      }
+    }else{
+      saved=await saveJournalReply({
+        participant_id,
+        checkin_id:checkin_id || null,
+        source_analysis_event_id,
+        reply_text:replyText,
+        reply_version:'v2-ai'
+      });
+    }
     return res.json({ok:true,reply:saved,source:aiReply?'openai':'fallback'});
   } catch(error){
     console.error('journal reply generation error',error);
