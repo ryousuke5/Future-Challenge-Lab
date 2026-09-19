@@ -155,7 +155,8 @@ async function load(){
     const ordered=Array.from(map.entries()).sort((a,b)=>a[0]<b[0]?1:-1);
     const totalDays=ordered.length;
     const allCheckinsAsc=[...checkins].sort((a,b)=>new Date(a.checked_in_at)-new Date(b.checked_in_at));
-    let completedSeen=false, previousCheck=null;
+    const completedAsc=actions.filter(a=>a.completed).sort((a,b)=>new Date(a.completed_at||a.created_at)-new Date(b.completed_at||b.created_at));
+    const firstCompletedKey=completedAsc[0]?dayKey(completedAsc[0].completed_at||completedAsc[0].created_at):'';
     const daily=ordered.map(([key,items],idx)=>{
       const d={
         key,items,checkins:items.filter(x=>x.kind==='checkin').map(x=>x.data).sort((a,b)=>new Date(a.checked_in_at)-new Date(b.checked_in_at)),
@@ -166,19 +167,18 @@ async function load(){
         challenge:p.challenge||'挑戦'
       };
       if(d.checkins.length){
-        const current=d.checkins[d.checkins.length-1], prev=previousCheck;
+        const current=d.checkins[d.checkins.length-1];
+        const currentIndex=allCheckinsAsc.findIndex(x=>x.id===current.id || x.checked_in_at===current.checked_in_at);
+        const prev=currentIndex>0?allCheckinsAsc[currentIndex-1]:null;
         if(prev){
           const gap=(new Date(current.checked_in_at)-new Date(prev.checked_in_at))/86400000;
           d.restarted=gap>1;
           const diff=Number(current.autonomy_total||0)-Number(prev.autonomy_total||0);
           d.autonomyRise=diff>=2; d.autonomyDrop=diff<=-2; d.steady=Math.abs(diff)<2;
         }
-        previousCheck=current;
       }
-      if(d.connections.length && connectedMatches.find(m=>dayKey(m.updated_at||m.created_at)===key)) d.newConnection=true;
-      const doneToday=d.actions.some(a=>a.completed);
-      if(doneToday && !completedSeen) d.firstCompletedAction=true;
-      if(doneToday) completedSeen=true;
+      if(d.connections.length) d.newConnection=true;
+      if(d.actions.some(a=>a.completed) && key===firstCompletedKey) d.firstCompletedAction=true;
       return d;
     });
 
