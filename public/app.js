@@ -446,7 +446,7 @@ async function submitCoreOutcome(){
       next_action: nextAction,
       outcome_status: document.getElementById('coreOutcomeStatus').value || 'not_completed',
       result_note: document.getElementById('coreOutcomeNote').value || '',
-      target_date: document.getElementById('coreTargetDate').value || new Date().toISOString().slice(0,10)
+      target_date: document.getElementById('coreTargetDate').value || todayJstDateForInput()
     };
 
     const data = await fetch('/api/core/outcome', {
