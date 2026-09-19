@@ -491,13 +491,19 @@ function renderCoreResult(data){
   `;
 }
 function renderAdaptiveQuestions(value){
+  const escape=(item)=>String(item ?? '')
+    .replaceAll('&','&amp;')
+    .replaceAll('<','&lt;')
+    .replaceAll('>','&gt;')
+    .replaceAll('"','&quot;')
+    .replaceAll("'","&#39;");
   const questions=(value||[])
     .map(item=>typeof item==='string' ? item : (item?.question || item?.text || item?.prompt || ''))
     .map(item=>String(item).trim())
     .filter(Boolean)
     .slice(0,2);
   return questions.length
-    ? '<div><strong>追加で確認したいこと</strong><ul class="bullet-list">'+questions.map(item=>'<li>'+esc(item)+'</li>').join('')+'</ul></div>'
+    ? '<div><strong>追加で確認したいこと</strong><ul class="bullet-list">'+questions.map(item=>'<li>'+escape(item)+'</li>').join('')+'</ul></div>'
     : '';
 }
 
