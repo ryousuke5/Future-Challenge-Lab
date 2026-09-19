@@ -1110,6 +1110,133 @@ app.get('/api/story-index', async (req,res)=>{
   }
 });
 
+app.get('/api/story-person/:participant_id', async (req,res)=>{
+  try{
+    const participant=(await select('participants',{id:req.params.participant_id}))[0];
+    if(!participant || participant.archived_at) return res.status(404).json({error:'story not found'});
+
+    const approvedStories=await select('challenge_stories',{participant_id:participant.id,approved_by_participant:true,share_scope:'story'});
+    if(!approvedStories.length) return res.status(403).json({error:'この物語は現在公開されていません。'});
+
+    const [checkins,actions]=await Promise.all([
+      select('checkins',{participant_id:participant.id}),
+      select('action_results',{participant_id:participant.id})
+    ]);
+
+    const checks=[...checkins].sort((a,b)=>new Date(a.checked_in_at||0)-new Date(b.checked_in_at||0));
+    const acts=[...actions].sort((a,b)=>new Date(a.created_at||a.completed_at||0)-new Date(b.created_at||b.completed_at||0));
+
+    const days=new Map();
+    function addDay(date){
+      if(!date) return;
+      if(!days.has(date)) days.set(date,{date,checkins:[],actions:[]});
+      return days.get(date);
+    }
+
+    checks.forEach(c=>{
+      const at=new Date(c.checked_in_at||0);
+      if(Number.isNaN(at.getTime())) return;
+      addDay(at.toISOString().slice(0,10)).checkins.push(c);
+    });
+    acts.forEach(a=>{
+      const at=new Date(a.completed_at||a.created_at||0);
+      if(Number.isNaN(at.getTime())) return;
+      addDay(at.toISOString().slice(0,10)).actions.push(a);
+    });
+
+    const ordered=[...days.values()].sort((a,b)=>a.date.localeCompare(b.date));
+    let previousCheck=null;
+
+    const timeline=ordered.map(day=>{
+      const currentCheck=day.checkins[day.checkins.length-1] || null;
+      const completed=day.actions.filter(a=>a.completed).length;
+      const notCompleted=day.actions.filter(a=>!a.completed).length;
+
+      let growth='今日の記録が、次のページにつながっています。';
+      if(day===ordered[0]){
+        growth='この挑戦を始めて、最初の一歩を記録した。';
+      }else if(currentCheck && previousCheck){
+        const gap=(new Date(currentCheck.checked_in_at)-new Date(previousCheck.checked_in_at))/86400000;
+        if(gap>1){
+          growth='少し間が空いても、もう一度戻って記録した。再開することも、この挑戦の成長の一つ。';
+        }else if(completed>0){
+          const delta=Number(currentCheck.autonomy_total??previousCheck.autonomy_total??0)-Number(previousCheck.autonomy_total??0);
+          growth=delta>=2
+            ? '自分で選んだ行動を実行しながら、「自分で決めて進む」感覚にも変化が見えた。'
+            : '決めたことを実際の行動に移し、挑戦を一つ前へ進めた。';
+        }else{
+          growth='今日も現在地を確認し、続けるための材料を一つ積み重ねた。';
+        }
+      }else if(completed>0){
+        growth='考えていたことを行動に変え、実際に一歩進めた。';
+      }else if(notCompleted>0){
+        growth='思うように進まない日も、そのまま記録して次につなげた。';
+      }
+
+      const actionItems=day.actions.map(a=>({
+        text:String(a.action_text||'').trim(),
+        completed:Boolean(a.completed),
+        result:String(a.result_note||'').trim()
+      })).filter(a=>a.text || a.result);
+
+      const summary=[];
+      if(day.checkins.length) summary.push('現在地を確認した');
+      actionItems.filter(a=>a.text).forEach(a=>summary.push((a.completed?'実行した：':'取り組もうとした：')+a.text));
+
+      previousCheck=currentCheck || previousCheck;
+
+      return {
+        date:day.date,
+        headline:completed>0 ? '行動した日' : day.checkins.length ? '現在地を記録した日' : '挑戦を記録した日',
+        summary:summary.slice(0,4),
+        actions:actionItems,
+        growth
+      };
+    });
+
+    const completedActions=acts.filter(a=>a.completed);
+    const actionDays=new Set(acts.map(a=>{
+      const at=new Date(a.completed_at||a.created_at||0);
+      return Number.isNaN(at.getTime()) ? '' : at.toISOString().slice(0,10);
+    }).filter(Boolean));
+
+    const firstCheck=checks[0] || null;
+    const lastCheck=checks[checks.length-1] || null;
+    let overallGrowth='まだ物語の途中です。';
+    if(completedActions.length && checks.length>=2){
+      const delta=Number(lastCheck?.autonomy_total??0)-Number(firstCheck?.autonomy_total??0);
+      overallGrowth=delta>=2
+        ? '記録を重ねる中で、自分で選んで行動する感覚に変化が見えています。'
+        : '記録と行動を重ねながら、自分なりの進み方が少しずつ形になっています。';
+    }else if(completedActions.length){
+      overallGrowth='考えているだけで終わらせず、実際の行動を積み重ねています。';
+    }else if(checks.length>=2){
+      overallGrowth='自分の状態を何度も記録し、挑戦を見つめ続けています。';
+    }
+
+    res.json({
+      participant:{
+        id:participant.id,
+        name:participant.name || '匿名の挑戦者',
+        challenge:participant.challenge || '挑戦',
+        goal:participant.goal || ''
+      },
+      overview:{
+        recorded_days:ordered.length,
+        checkins:checks.length,
+        completed_actions:completedActions.length,
+        action_days:actionDays.size,
+        growth:overallGrowth
+      },
+      timeline,
+      story_title:'自分の行動と成長の物語'
+    });
+  }catch(e){
+    console.error('story person error',e);
+    res.status(500).json({error:e.message || 'story detail failed'});
+  }
+});
+
 app.get('/api/story/:participant_id',async(req,res)=>{
   try{
     const participant=(await select('participants',{id:req.params.participant_id}))[0];
