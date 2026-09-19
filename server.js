@@ -1346,7 +1346,8 @@ app.get('/api/users/:user_id/overview', async (req,res)=>{
           challenge:participant?.challenge||'未登録',goal:participant?.goal||'未登録',
           counterpart_name:supporter?.supporter_name||'支援者',counterpart_organization:supporter?.organization_name||'',
           updated_at:match.updated_at||match.created_at||null,latest_checkin:latestCheckinMap.get(match.participant_id)||null,
-          access_url:token?`${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(token)}`:null
+          support_method_learning:priority.support_method_learning,
+        access_url:token?`${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(token)}`:null
         });
       }
       if(supporterIds.includes(match.supporter_id)){
@@ -1803,9 +1804,84 @@ app.post('/api/actions',async(req,res)=>{
 
 app.post('/api/supporter-outcomes',async(req,res)=>{
   try{
-    const row=await insert('supporter_outcomes',{participant_id:req.body.participant_id,supporter_id:req.body.supporter_id,match_id:req.body.match_id||null,outcome:req.body.outcome||'positive',outcome_score:Number(req.body.outcome_score??1),note:req.body.note||'',created_at:new Date().toISOString()});
-    await insert('model_learning_events',{participant_id:req.body.participant_id,features:{action_type:'supporter',supporter_id:req.body.supporter_id,match_id:req.body.match_id||null},label:{outcome:row.outcome,outcome_score:row.outcome_score}});
-    res.json(row);
+    const participant_id=req.body.participant_id;
+    const supporter_id=req.body.supporter_id;
+    const match_id=req.body.match_id||null;
+    if(!participant_id||!supporter_id) return res.status(400).json({error:'invalid participant_id or supporter_id'});
+
+    const outcomeKey=String(req.body.outcome||'positive').toLowerCase();
+    const allowedOutcome=new Set(['restarted','action_completed','connected_and_progressed','partial_progress','no_progress','not_used','positive']);
+    const outcome=allowedOutcome.has(outcomeKey)?outcomeKey:'positive';
+    const outcomeScore=Number.isFinite(Number(req.body.outcome_score))
+      ? Number(req.body.outcome_score)
+      : ['restarted','action_completed','connected_and_progressed','positive'].includes(outcome) ? 1
+        : outcome==='partial_progress' ? 0.5
+        : 0;
+    const note=String(req.body.note||'').trim();
+    const executionEventId=req.body.support_execution_event_id||null;
+
+    const allSupportEvents=await select('connection_events');
+    const learningEvents=await select('model_learning_events',{participant_id});
+    const executionLearning=executionEventId
+      ? learningEvents.find(event=>event.features?.action_type==='support_execution' && event.features?.support_execution_event_id===executionEventId) || null
+      : [...learningEvents]
+          .filter(event=>event.features?.action_type==='support_execution' && event.features?.supporter_id===supporter_id)
+          .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0] || null;
+    const supportStyle=String(req.body.support_style||req.body.recommendation_type||executionLearning?.features?.recommendation_type||'supporter').trim();
+    const executionEvent=executionEventId
+      ? allSupportEvents.find(event=>event.id===executionEventId) || null
+      : [...allSupportEvents]
+          .filter(event=>event.participant_id===participant_id && event.supporter_id===supporter_id && event.event_type==='support_execution' && (!match_id || event.match_id===match_id))
+          .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0] || null;
+
+    const row=await insert('supporter_outcomes',{
+      participant_id,
+      supporter_id,
+      match_id,
+      outcome,
+      outcome_score:outcomeScore,
+      note,
+      created_at:new Date().toISOString()
+    });
+
+    await insert('model_learning_events',{
+      participant_id,
+      features:{
+        action_type:'support_method_outcome',
+        supporter_id,
+        match_id,
+        support_execution_event_id:executionEvent?.id||executionEventId||null,
+        support_style:supportStyle,
+        outcome,
+        outcome_score:outcomeScore,
+        progressed:['restarted','action_completed','connected_and_progressed','partial_progress','positive'].includes(outcome),
+        note,
+        observed_at:new Date().toISOString()
+      },
+      label:{outcome,outcome_score:outcomeScore,support_style:supportStyle}
+    });
+
+    await insert('model_learning_events',{
+      participant_id,
+      features:{
+        action_type:'supporter',
+        supporter_id,
+        match_id,
+        support_execution_event_id:executionEvent?.id||executionEventId||null,
+        support_style:supportStyle
+      },
+      label:{outcome,outcome_score:outcomeScore}
+    });
+
+    res.json({
+      ...row,
+      learning:{
+        support_execution_event_id:executionEvent?.id||executionEventId||null,
+        support_style:supportStyle,
+        outcome,
+        outcome_score:outcomeScore
+      }
+    });
   }catch(e){res.status(500).json({error:e.message});}
 });
 
@@ -1845,6 +1921,42 @@ function supportModeKeywords(mode){
   return map[mode]||[];
 }
 
+function buildSupportMethodLearning({events=[],participant_id,supporter_id}={}){
+  const rows=(events||[])
+    .filter(event=>event.features?.action_type==='support_method_outcome'
+      && (!participant_id || event.participant_id===participant_id)
+      && (!supporter_id || event.features?.supporter_id===supporter_id))
+    .map(event=>({
+      support_style:String(event.features?.support_style||'supporter'),
+      outcome:String(event.features?.outcome||'unknown'),
+      progressed:Boolean(event.features?.progressed),
+      outcome_score:Number(event.features?.outcome_score||0)
+    }));
+
+  const byStyle=new Map();
+  for(const row of rows){
+    const current=byStyle.get(row.support_style)||{support_style:row.support_style,trials:0,progressed:0,score_total:0};
+    current.trials++;
+    if(row.progressed) current.progressed++;
+    current.score_total+=row.outcome_score;
+    byStyle.set(row.support_style,current);
+  }
+  const styles=[...byStyle.values()].map(row=>({
+    ...row,
+    progress_rate:Number((row.progressed/row.trials).toFixed(3)),
+    average_score:Number((row.score_total/row.trials).toFixed(3))
+  })).sort((a,b)=>(b.progress_rate-a.progress_rate)||(b.trials-a.trials));
+
+  const best=styles.find(row=>row.trials>=2)||null;
+  return {
+    total_trials:rows.length,
+    styles,
+    best_style:best?.support_style||null,
+    best_progress_rate:best?.progress_rate??null,
+    evidence:best ? `本人×支援方法で${best.trials}回の観測` : '本人×支援方法の観測不足'
+  };
+}
+
 function buildAdaptiveSupportFit({participant,supporter,last,pattern={},supporterOutcomes=[]}={}){
   const reasons=[];
   let extra=0;
@@ -1867,6 +1979,19 @@ function buildAdaptiveSupportFit({participant,supporter,last,pattern={},supporte
   const sameSupporter=supporterOutcomes.filter(row=>row.supporter_id===supporter.id && row.participant_id===participant.id);
   const sameSuccess=sameSupporter.filter(row=>['restarted','action_completed','connected_and_progressed','positive'].includes(row.outcome)).length;
   if(sameSuccess>0){ extra+=12; reasons.push(`この本人と過去に${sameSuccess}回の前進につながる支援記録あり`); }
+
+  const methodLearning=buildSupportMethodLearning({
+    events:pattern?.support_method_events||[],
+    participant_id:participant.id,
+    supporter_id:supporter.id
+  });
+  if(methodLearning.best_style){
+    reasons.push(`この本人では支援方法「${methodLearning.best_style}」で前進が観測されています`);
+  }
+  const failedStyles=(methodLearning.styles||[]).filter(row=>row.trials>=2&&row.progress_rate<0.5);
+  if(failedStyles.length){
+    reasons.push(`過去に前進が少なかった支援方法: ${failedStyles.slice(0,2).map(row=>row.support_style).join(' / ')}`);
+  }
 
   const supporterAll=supporterOutcomes.filter(row=>row.supporter_id===supporter.id);
   const supporterAllSuccess=supporterAll.filter(row=>['restarted','action_completed','connected_and_progressed','positive'].includes(row.outcome)).length;
@@ -2069,7 +2194,7 @@ function buildActionActivityFromRows(checkins=[],actions=[]){
   };
 }
 
-function buildSupporterPriorityFromRows(participant_id,participant,checkins=[],actions=[],assignments=[]){
+function buildSupporterPriorityFromRows(participant_id,participant,checkins=[],actions=[],assignments=[],events=[]){
   const orderedCheckins=[...(checkins||[])].sort((a,b)=>new Date(b.checked_in_at||0)-new Date(a.checked_in_at||0));
   const latest=orderedCheckins[0]||null;
   const recentActions=[...(actions||[])].sort((a,b)=>new Date(b.created_at||b.completed_at||0)-new Date(a.created_at||a.completed_at||0)).slice(0,5);
@@ -2108,13 +2233,16 @@ function buildSupporterPriorityFromRows(participant_id,participant,checkins=[],a
     recommendation_reason:recommendationReason,suggested_message:suggestedMessage,
     supporter_can_edit:true,requires_explicit_approval:true,recommendation_label:'recommendation',
     recent_assignments:recentAssignments,
-    action_completion_rate:recentActions.length?completed/recentActions.length:0
+    action_completion_rate:recentActions.length?completed/recentActions.length:0,
+    support_method_learning:buildSupportMethodLearning({events,participant_id})
   };
 }
 
 async function buildSupporterPriority(participant_id){
   const participant=(await select('participants',{id:participant_id}))[0];
   if(!participant) throw new Error('participant not found');
+  const personalEvents=await select('model_learning_events',{participant_id});
+  const supportMethodLearning=buildSupportMethodLearning({events:personalEvents,participant_id});
 
   const checkins=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
   const latest=checkins[0] || null;
@@ -2138,9 +2266,12 @@ async function buildSupporterPriority(participant_id){
   const recommendationReason = riskScore >= 70
     ? '高リスクのため、支援者の視点で行動の定着を支える必要があると判断されたためです。'
     : '直近のチェックインと行動実行の状況から、支援者が支援の入口を作ると改善しやすい可能性があります。';
-  const suggestedMessage = priority === 'high'
-    ? '今日は最初の一歩を10分だけに絞って、支援者と一緒に進めることを検討してください。'
-    : '今の困りごとを一度整理し、今日の一歩を一緒に決めると続けやすくなります。';
+  const learnedSupportStyle=supportMethodLearning.best_style;
+  const suggestedMessage = learnedSupportStyle==='supporter'
+    ? '過去に支援者と一緒に進めた結果を踏まえ、今回も一人で抱えず最初の一歩を一緒に整理する形を試します。'
+    : priority === 'high'
+      ? '今日は最初の一歩を10分だけに絞って、支援者と一緒に進めることを検討してください。'
+      : '今の困りごとを一度整理し、今日の一歩を一緒に決めると続けやすくなります。';
 
   return {
     participant_id,
@@ -2167,7 +2298,8 @@ async function buildSupporterPriority(participant_id){
     requires_explicit_approval: true,
     recommendation_label: 'recommendation',
     recent_assignments: recentAssignments,
-    action_completion_rate: recentActions.length ? completed / recentActions.length : 0
+    action_completion_rate: recentActions.length ? completed / recentActions.length : 0,
+    support_method_learning: supportMethodLearning
   };
 }
 
@@ -2181,6 +2313,7 @@ async function getSupporterCandidates(participant_id){
   const supporters=uniqueProductionContacts((await select('supporters')).filter(s=>s.active!==false && s.accepting_new_matches!==false));
   const events=await select('model_learning_events',{participant_id});
   const personalLearning=buildPersonalLearningProfile({events});
+  personalLearning.support_method_events=events.filter(event=>event.features?.action_type==='support_method_outcome');
   const supporterOutcomes=await select('supporter_outcomes');
 
   const candidates=supporters.map(s=>{
@@ -2220,6 +2353,7 @@ app.post('/api/matches',async(req,res)=>{
     const last=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0];
     const personalEvents=await select('model_learning_events',{participant_id});
     const personalLearning=buildPersonalLearningProfile({events:personalEvents});
+    personalLearning.support_method_events=personalEvents.filter(event=>event.features?.action_type==='support_method_outcome');
     const supporterOutcomes=await select('supporter_outcomes');
     const ranked=ss.map(s=>{
       const adaptiveSupportFit=buildAdaptiveSupportFit({participant:ps||{},supporter:s,last,pattern:personalLearning,supporterOutcomes});
@@ -2534,7 +2668,7 @@ app.post('/api/supporter-match', async (req, res) => {
 
 app.post('/api/supporter/execute', async (req, res) => {
   try {
-    const { participant_id, supporter_id, recommendation_type, recommendation_reason, suggested_message, approved, checkin_id } = req.body || {};
+    const { participant_id, supporter_id, recommendation_type, recommendation_reason, suggested_message, approved, checkin_id, match_id } = req.body || {};
     if (!participant_id || !supporter_id) return res.status(400).json({ error: 'invalid participant_id or supporter_id' });
     if (!approved) return res.status(400).json({ error: 'supporter approval required' });
 
@@ -2567,22 +2701,25 @@ app.post('/api/supporter/execute', async (req, res) => {
     const executionEvent = await insert('connection_events', {
       participant_id,
       supporter_id,
-      match_id: null,
+      match_id: match_id || null,
       event_type: 'support_execution',
       note: suggested_message || 'supporter follow-up executed',
       created_at: new Date().toISOString()
     });
 
-    await insert('model_learning_events', {
+    const executionLearningEvent=await insert('model_learning_events', {
       participant_id,
       intervention_id: assignment?.id || null,
       features: {
         action_type: 'support_execution',
         supporter_id,
+        match_id: match_id || null,
         recommendation_type: recommendation_type || 'supporter',
         recommendation_reason: recommendation_reason || '',
         suggested_message: suggested_message || '',
-        approved: Boolean(approved)
+        approved: Boolean(approved),
+        support_execution_event_id: executionEvent?.id || null,
+        intervention_assignment_id: assignment?.id || null
       },
       label: {
         outcome: 'support_execution_logged',
@@ -2590,7 +2727,7 @@ app.post('/api/supporter/execute', async (req, res) => {
       }
     });
 
-    res.json({ ok: true, status: 'saved', assignment, execution_event: executionEvent });
+    res.json({ ok: true, status: 'saved', assignment, execution_event: executionEvent, execution_learning_event_id: executionLearningEvent?.id || null });
   } catch (error) {
     res.status(500).json({ error: error.message || 'support execution failed' });
   }
@@ -2624,13 +2761,14 @@ app.get('/api/supporter/dashboard', async (req,res)=>{
     const hydratedMatches=matches.map(hydrateMatchApprovalState);
     const participantIds=[...new Set(hydratedMatches.map(m=>m.participant_id).filter(Boolean))];
 
-    let participants=[],checkins=[],actions=[],assignments=[],outcomes=[],executionEvents=[];
+    let participants=[],checkins=[],actions=[],assignments=[],modelEvents=[],outcomes=[],executionEvents=[];
     if(db('participants')){
       const queries=[
         db('participants').select('*').in('id',participantIds),
         participantIds.length?db('checkins').select('*').in('participant_id',participantIds):Promise.resolve({data:[],error:null}),
         participantIds.length?db('action_results').select('*').in('participant_id',participantIds):Promise.resolve({data:[],error:null}),
         participantIds.length?db('intervention_assignments').select('*').in('participant_id',participantIds):Promise.resolve({data:[],error:null}),
+        participantIds.length?db('model_learning_events').select('*').in('participant_id',participantIds):Promise.resolve({data:[],error:null}),
         db('supporter_outcomes').select('*').eq('supporter_id',supporter_id),
         db('connection_events').select('*').eq('supporter_id',supporter_id)
       ];
@@ -2640,23 +2778,26 @@ app.get('/api/supporter/dashboard', async (req,res)=>{
       checkins=results[1].data||[];
       actions=results[2].data||[];
       assignments=results[3].data||[];
-      outcomes=results[4].data||[];
-      executionEvents=(results[5].data||[]).filter(x=>x.event_type==='support_execution');
+      modelEvents=results[4].data||[];
+      outcomes=results[5].data||[];
+      executionEvents=(results[6].data||[]).filter(x=>x.event_type==='support_execution');
     }else{
       participants=memory.participants.filter(x=>participantIds.includes(x.id));
       checkins=memory.checkins.filter(x=>participantIds.includes(x.participant_id));
       actions=memory.action_results.filter(x=>participantIds.includes(x.participant_id));
       assignments=memory.intervention_assignments.filter(x=>participantIds.includes(x.participant_id));
+      modelEvents=memory.model_learning_events.filter(x=>participantIds.includes(x.participant_id));
       outcomes=memory.supporter_outcomes.filter(x=>x.supporter_id===supporter_id);
       executionEvents=memory.connection_events.filter(x=>x.supporter_id===supporter_id&&x.event_type==='support_execution');
     }
 
     const participantMap=new Map(participants.map(p=>[p.id,p]));
-    const checkinsBy=new Map(),actionsBy=new Map(),assignmentsBy=new Map();
-    for(const id of participantIds){checkinsBy.set(id,[]);actionsBy.set(id,[]);assignmentsBy.set(id,[]);}
+    const checkinsBy=new Map(),actionsBy=new Map(),assignmentsBy=new Map(),eventsBy=new Map();
+    for(const id of participantIds){checkinsBy.set(id,[]);actionsBy.set(id,[]);assignmentsBy.set(id,[]);eventsBy.set(id,[]);}
     for(const row of checkins) checkinsBy.get(row.participant_id)?.push(row);
     for(const row of actions) actionsBy.get(row.participant_id)?.push(row);
     for(const row of assignments) assignmentsBy.get(row.participant_id)?.push(row);
+    for(const row of modelEvents) eventsBy.get(row.participant_id)?.push(row);
 
     const publicUrl=(process.env.FCL_PUBLIC_URL||'http://localhost:3000').replace(/\/$/,'');
     const targets=[];
@@ -2668,7 +2809,8 @@ app.get('/api/supporter/dashboard', async (req,res)=>{
         participant,
         checkinsBy.get(match.participant_id)||[],
         actionsBy.get(match.participant_id)||[],
-        assignmentsBy.get(match.participant_id)||[]
+        assignmentsBy.get(match.participant_id)||[],
+        eventsBy.get(match.participant_id)||[]
       );
       const status=effectiveMatchStatus(match);
       const token=status==='connected'?createAccessToken(match.id,'supporter'):'';
