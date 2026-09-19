@@ -1092,8 +1092,7 @@ app.get('/api/story-index', async (req,res)=>{
           past:parsed.past || '',
           current_state_public:parsed.current_state_public || '',
           hope:parsed.hope || '',
-          support_need:parsed.support_need || '',
-          story_text:row.story_text || ''
+          support_need:parsed.support_need || ''
         },
         generated_at:row.generated_at || row.created_at || null
       };
