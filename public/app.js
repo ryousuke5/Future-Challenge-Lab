@@ -326,14 +326,23 @@ function renderCoreResult(data){
 
 function renderInsight(data){
   const result = data?.result || {};
+  const esc = (value) => String(value ?? '')
+    .replaceAll('&','&amp;')
+    .replaceAll('<','&lt;')
+    .replaceAll('>','&gt;')
+    .replaceAll('"','&quot;')
+    .replaceAll("'","&#39;");
+  const personalHint = result.personal_learning?.hint || '';
+  const evidenceQuality = result.personal_learning?.evidence_quality || '観測中';
   document.getElementById('coreInsight').innerHTML = `
     <div class="result-card highlight">
       <span class="section-tag">💡 今日の気づき</span>
-      <p>${result.insight || '気づきを確認できませんでした。'}</p>
-      <p><strong>今の問題:</strong> ${result.problem || '問題を整理してください。'}</p>
-      <p><strong>仮説:</strong> ${result.hypothesis || result.hypotheses?.[0] || '次の一歩を小さくすると実行しやすくなる可能性があります。'}</p>
-      ${(result.adaptive_questions || []).length ? `<div><strong>追加で確認したいこと</strong><ul class="bullet-list">${result.adaptive_questions.map(question => `<li>${question.question}</li>`).join('')}</ul></div>` : ''}
-      ${result.personal_support_pattern?.statement ? `<p><strong>個人別の観測:</strong> ${result.personal_support_pattern.statement}</p>` : ''}
+      <p>${esc(result.insight || '気づきを確認できませんでした。')}</p>
+      <p><strong>今の問題:</strong> ${esc(result.problem || '問題を整理してください。')}</p>
+      <p><strong>仮説:</strong> ${esc(result.hypothesis || result.hypotheses?.[0] || '次の一歩を小さくすると実行しやすくなる可能性があります。')}</p>
+      ${(result.adaptive_questions || []).length ? `<div><strong>追加で確認したいこと</strong><ul class="bullet-list">${result.adaptive_questions.map(question => `<li>${esc(question.question)}</li>`).join('')}</ul></div>` : ''}
+      ${result.personal_support_pattern?.statement ? `<p><strong>個人別の観測:</strong> ${esc(result.personal_support_pattern.statement)}</p>` : ''}
+      ${personalHint ? `<div class="personal-learning-hint"><strong>あなたの過去の記録からのヒント</strong><p>${esc(personalHint)}</p><small>観測の確かさ：${esc(evidenceQuality)}</small></div>` : ''}
     </div>
   `;
 }
