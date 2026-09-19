@@ -48,3 +48,8 @@ button:disabled{opacity:.6;cursor:not-allowed}
   .daily-loop-grid{grid-template-columns:1fr}
   .daily-loop-welcome{align-items:flex-start;flex-direction:column}
 }
+
+.personal-ai-profile{margin-top:14px;padding:16px;border:1px solid #cbd5e1;border-radius:14px;background:linear-gradient(135deg,#f8fafc,#ffffff)}
+.personal-ai-profile strong{display:block;margin-bottom:8px}
+.personal-ai-profile p{margin:0 0 8px;line-height:1.8;color:#334155}
+.personal-ai-profile small{display:block;margin-top:5px;color:#64748b;line-height:1.6}
