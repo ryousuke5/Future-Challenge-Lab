@@ -19,7 +19,7 @@ app.use(express.static('public'));
 const port = process.env.PORT || 3000;
 const hasSupabase = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 const supabase = hasSupabase ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY) : null;
-const memory = { fcl_users: [], participants: [], checkins: [], interventions: [], intervention_assignments: [], action_results: [], supporters: [], supporter_matches: [], connection_events: [], intervention_outcomes: [], model_learning_events: [], intervention_policy_decisions: [], supporter_outcomes: [], journal_replies: [], challenge_story_pages: [] };
+const memory = { fcl_users: [], participants: [], checkins: [], interventions: [], intervention_assignments: [], action_results: [], supporters: [], supporter_matches: [], connection_events: [], intervention_outcomes: [], model_learning_events: [], intervention_policy_decisions: [], supporter_outcomes: [], journal_replies: [], challenge_story_pages: [], supporter_ai_summaries: [] };
 const supporterApprovalState = new Map();
 
 function readSupporterApprovalState(matchId){
@@ -2702,6 +2702,94 @@ app.post('/api/matches/:id/send-email', async (req, res) => {
   }
 });
 
+function supporterSummaryFingerprint({participant,supporter,match,latestCheckin,recentActions,priority,personalLearning,supportHistory}={}) {
+  return hashSha256(JSON.stringify(stableValue({
+    participant_id:participant?.id||null, supporter_id:supporter?.id||null, match_id:match?.id||null,
+    challenge:participant?.challenge||'', goal:participant?.goal||'',
+    latest_checkin:latestCheckin ? { id:latestCheckin.id||null, checked_in_at:latestCheckin.checked_in_at||null, autonomy_total:latestCheckin.autonomy_total??null, risk_score:latestCheckin.risk_score??null, risk_level:latestCheckin.risk_level||null, analysis:latestCheckin.analysis||{} } : null,
+    recent_actions:(recentActions||[]).slice(0,7).map(row=>({id:row.id||null,action_text:row.action_text||'',completed:Boolean(row.completed),barrier:row.barrier||'',result_note:row.result_note||'',created_at:row.created_at||null,completed_at:row.completed_at||null})),
+    recommendation:{priority:priority?.priority||null,challenger_status:priority?.challenger_status||null,recommendation_type_code:priority?.recommendation_type_code||null,recommended_support_type:priority?.recommended_support_type||null,recommendation_reason:priority?.recommendation_reason||null,suggested_message:priority?.suggested_message||null},
+    personal_learning:{individual_continuation_pattern:personalLearning?.individual_continuation_pattern||{},recommendation_learning:personalLearning?.recommendation_learning||{},recurring_barriers:personalLearning?.recurring_barriers||[],recent_outcomes:personalLearning?.recent_outcomes||[]},
+    same_supporter_history:(supportHistory||[]).map(row=>({outcome:row.outcome||'',outcome_score:row.outcome_score??null,note:row.note||'',created_at:row.created_at||null}))
+  })));
+}
+
+function buildSupporterAiSummaryFallback({participant,priority,personalLearning,supportHistory}={}) {
+  const pattern=personalLearning?.individual_continuation_pattern||{};
+  const recommendationLearning=personalLearning?.recommendation_learning||{};
+  const barriers=Array.isArray(recommendationLearning.recurring_barriers)?recommendationLearning.recurring_barriers:[];
+  const supportTrials=(supportHistory||[]).length;
+  const supportSuccess=(supportHistory||[]).filter(row=>['restarted','action_completed','connected_and_progressed','positive'].includes(row.outcome)).length;
+  const riskReasons=[priority?.recommendation_reason].filter(Boolean);
+  const supportPoints=[];
+  if(pattern.strongest_mode) supportPoints.push('本人の観測では「'+pattern.strongest_mode+'」に近い進め方で前進が見られています。');
+  if(['shrink_and_adjust','smaller_step'].includes(recommendationLearning.adjustment?.mode)) supportPoints.push(recommendationLearning.adjustment?.next_action_hint || '前回より小さい単位で始められる形にします。');
+  if(barriers[0]?.label) supportPoints.push('繰り返し観測された障壁は「'+barriers[0].label+'」です。');
+  if(!supportPoints.length) supportPoints.push(priority?.suggested_message||'まず本人の現在の困りごとを聞き、次の一歩を一緒に整理します。');
+  const currentState=priority?.challenger_status||'現在地を確認中';
+  const continuationRisk=priority?.risk_level||'unknown';
+  const summary=['現在は「'+currentState+'」。','継続リスクは「'+continuationRisk+'」として観測されています。',pattern.statement||priority?.recommendation_reason||'直近の記録から、今の負担と次の一歩を確認します。',supportTrials?'この支援者との過去の記録は'+supportTrials+'回で、そのうち前進につながる結果は'+supportSuccess+'回です。':'この支援者との過去の支援結果はまだ十分にありません。'].join(' ');
+  const recommendedFirstMove=priority?.suggested_message||'まず今一番困っていることを聞き、10分以内でできる一歩を一緒に決める。';
+  const caution=barriers[0]?.label?'「'+barriers[0].label+'」が繰り返されているため、同じ進め方をそのまま繰り返さない。':'本人の選択を優先し、AIの推薦をそのまま押しつけない。';
+  return {summary,current_state:currentState,continuation_risk:continuationRisk,risk_reasons:riskReasons.slice(0,3),support_points:supportPoints.slice(0,3),recommended_first_move:recommendedFirstMove,caution};
+}
+
+async function generateSupporterAiSummariesWithOpenAI({supporter,cases=[]}={}) {
+  const key=process.env.OPENAI_API_KEY; if(!key||!cases.length)return {};
+  const prompt=[
+    'FCLの支援者画面に表示する「挑戦者ごとのAI要約」を作成してください。',
+    '支援者が短時間で本人の現在地を理解し、最初の支援を考えられるようにします。',
+    '入力された事実だけを使い、推測を事実として書かない。健康・人格・能力の診断はしない。',
+    '継続リスクの理由は観測された具体的な変化・障壁・行動結果を優先する。',
+    '過去に前進した進め方があれば「観測上の傾向」として示す。AI推薦を押しつけず本人の選択を確認する前提にする。',
+    'summaryは120〜240文字程度。current_stateは短文。continuation_riskはlow/medium/high/unknown。risk_reasonsとsupport_pointsは最大3つ。recommended_first_moveとcautionは各1文。',
+    'JSONだけを返す。形式は summaries 配列で、各要素に match_id, summary, current_state, continuation_risk, risk_reasons, support_points, recommended_first_move, caution を含める。',
+    '支援者：'+JSON.stringify({name:supporter?.supporter_name||'',organization:supporter?.organization_name||'',category:supporter?.support_category||''}),
+    '対象者ごとの素材：', JSON.stringify(cases,null,2)
+  ].join('\n');
+  try{
+    const response=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+key},body:JSON.stringify({model:'gpt-4o-mini',temperature:0.5,response_format:{type:'json_object'},messages:[{role:'system',content:'FCLの支援者向け要約編集者です。観測事実と仮説を分け、短く具体的にまとめます。'},{role:'user',content:prompt}]})});
+    if(!response.ok) throw new Error('OpenAI '+response.status+': '+await response.text());
+    const json=await response.json(); const raw=json?.choices?.[0]?.message?.content; if(!raw) throw new Error('supporter summary response missing content');
+    const parsed=JSON.parse(raw),byMatch={};
+    for(const item of Array.isArray(parsed?.summaries)?parsed.summaries:[]){
+      const matchId=String(item?.match_id||''); if(!matchId) continue; const risk=['low','medium','high','unknown'].includes(String(item?.continuation_risk||'').toLowerCase())?String(item.continuation_risk).toLowerCase():'unknown';
+      const cleanList=v=>Array.isArray(v)?v.map(x=>String(x||'').trim()).filter(Boolean).slice(0,3):[]; const summary=String(item?.summary||'').trim(); if(!summary) continue;
+      byMatch[matchId]={summary,current_state:String(item?.current_state||'現在地を確認中').trim(),continuation_risk:risk,risk_reasons:cleanList(item?.risk_reasons),support_points:cleanList(item?.support_points),recommended_first_move:String(item?.recommended_first_move||'本人と相談して最初の一歩を決める').trim(),caution:String(item?.caution||'AIの提案を押しつけず、本人の選択を確認する').trim()};
+    }
+    return byMatch;
+  }catch(error){console.error('[supporter-ai-summary] OpenAI generation failed',error?.message||error);return {};}
+}
+
+async function saveSupporterAiSummary(row={}) {
+  const payload={participant_id:row.participant_id,supporter_id:row.supporter_id,match_id:row.match_id||null,summary:String(row.summary||'').trim(),current_state:String(row.current_state||'').trim(),continuation_risk:String(row.continuation_risk||'unknown').trim(),risk_reasons:Array.isArray(row.risk_reasons)?row.risk_reasons.slice(0,3):[],support_points:Array.isArray(row.support_points)?row.support_points.slice(0,3):[],recommended_first_move:String(row.recommended_first_move||'').trim(),caution:String(row.caution||'').trim(),source_fingerprint:String(row.source_fingerprint||''),model_version:String(row.model_version||'v3-ai'),updated_at:new Date().toISOString()};
+  const q=db('supporter_ai_summaries');
+  if(q){const {data,error}=await q.upsert(payload,{onConflict:'participant_id,supporter_id,match_id'}).select('*').single();if(error)throw error;return data;}
+  const existing=memory.supporter_ai_summaries.find(x=>x.participant_id===payload.participant_id&&x.supporter_id===payload.supporter_id&&x.match_id===payload.match_id);
+  if(existing){Object.assign(existing,payload);return existing;}
+  const created={id:uuid(),...payload,generated_at:new Date().toISOString(),created_at:new Date().toISOString()}; memory.supporter_ai_summaries.push(created); return created;
+}
+
+async function buildSupporterAiSummaries({supporter,targets=[]}={}) {
+  if(!supporter||!targets.length)return new Map();
+  const prepared=[];
+  for(const target of targets){
+    const participant=target.participant||{}, checkins=target.checkins||[], actions=target.actions||[], modelEvents=target.modelEvents||[], supportHistory=target.supportHistory||[];
+    const latestCheckin=[...checkins].sort((a,b)=>new Date(b.checked_in_at||0)-new Date(a.checked_in_at||0))[0]||null;
+    const recentActions=[...actions].sort((a,b)=>new Date(b.created_at||b.completed_at||0)-new Date(a.created_at||a.completed_at||0)).slice(0,7);
+    const personalLearning=buildPersonalLearningProfile({participant_id:participant.id,assignments:target.assignments||[],actions:recentActions,supportHistory,events:modelEvents});
+    const priority=target.priority||{}; const fingerprint=supporterSummaryFingerprint({participant,supporter,match:target.match,latestCheckin,recentActions,priority,personalLearning,supportHistory});
+    prepared.push({target,participant,latestCheckin,recentActions,personalLearning,priority,fingerprint,supportHistory});
+  }
+  const matchIds=prepared.map(x=>x.target.match.id).filter(Boolean); let existing=[];
+  if(db('supporter_ai_summaries')&&matchIds.length){const result=await db('supporter_ai_summaries').select('*').in('match_id',matchIds);if(result.error)throw result.error;existing=result.data||[];}else if(matchIds.length){existing=memory.supporter_ai_summaries.filter(row=>matchIds.includes(row.match_id));}
+  const existingByMatch=new Map(existing.map(row=>[row.match_id,row]));
+  const cases=prepared.filter(x=>!existingByMatch.has(x.target.match.id)||existingByMatch.get(x.target.match.id).source_fingerprint!==x.fingerprint);
+  const aiInput=cases.map(x=>({match_id:x.target.match.id,participant:{name:x.participant.name||'挑戦者',challenge:x.participant.challenge||'',goal:x.participant.goal||''},current_state:{risk_level:x.latestCheckin?.risk_level||x.priority.risk_level||'unknown',risk_score:x.latestCheckin?.risk_score??null,autonomy_total:x.latestCheckin?.autonomy_total??null,summary:x.latestCheckin?.analysis?.summary||''},recent_actions:x.recentActions.map(a=>({action_text:String(a.action_text||'').slice(0,160),completed:Boolean(a.completed),barrier:String(a.barrier||'').slice(0,120),result_note:String(a.result_note||'').slice(0,160)})),priority:{priority:x.priority.priority||null,recommended_support_type:x.priority.recommended_support_type||'',recommendation_reason:x.priority.recommendation_reason||'',suggested_message:x.priority.suggested_message||''},personal_pattern:x.personalLearning.individual_continuation_pattern||{},recommendation_learning:x.personalLearning.recommendation_learning||{},recurring_barriers:x.personalLearning.recurring_barriers||[],recent_outcomes:x.personalLearning.recent_outcomes||[],same_supporter_history:x.supportHistory.map(o=>({outcome:o.outcome||'',outcome_score:o.outcome_score??null,note:String(o.note||'').slice(0,160),created_at:o.created_at||null}))}));
+  const generated=await generateSupporterAiSummariesWithOpenAI({supporter,cases:aiInput});
+  for(const item of cases){const ai=generated[item.target.match.id];const fallback=buildSupporterAiSummaryFallback({participant:item.participant,priority:item.priority,personalLearning:item.personalLearning,supportHistory:item.supportHistory});const result=ai||fallback;const saved=await saveSupporterAiSummary({participant_id:item.participant.id,supporter_id:supporter.id,match_id:item.target.match.id,...result,source_fingerprint:item.fingerprint,model_version:ai?'v3-ai':'v3-fallback'});existingByMatch.set(item.target.match.id,saved);}
+  const final=new Map(); for(const item of prepared){const row=existingByMatch.get(item.target.match.id);if(row)final.set(item.target.match.id,row);} return final;
+}
 async function updateMatchApprovalStatus(matchId, actor, action, note=''){  const match = (await select('supporter_matches',{id:matchId}))[0];
   if (!match) throw new Error('match not found');
   const currentStatus = effectiveMatchStatus(match);
@@ -3007,7 +3095,7 @@ app.get('/api/supporter/dashboard', async (req,res)=>{
     for(const row of modelEvents) eventsBy.get(row.participant_id)?.push(row);
 
     const publicUrl=(process.env.FCL_PUBLIC_URL||'http://localhost:3000').replace(/\/$/,'');
-    const targets=[];
+    const targetContexts=[];
     for(const match of hydratedMatches){
       const participant=participantMap.get(match.participant_id);
       if(!participant||participant.archived_at) continue;
@@ -3021,7 +3109,7 @@ app.get('/api/supporter/dashboard', async (req,res)=>{
       );
       const status=effectiveMatchStatus(match);
       const token=status==='connected'?createAccessToken(match.id,'supporter'):'';
-      targets.push({
+      targetContexts.push({
         match_id:match.id,participant_id:match.participant_id,participant_name:participant.name||'挑戦者',
         priority:priority.priority,challenger_status:priority.challenger_status,
         latest_checkin:priority.latest_checkin,risk_level:priority.risk_level,
@@ -3032,9 +3120,21 @@ app.get('/api/supporter/dashboard', async (req,res)=>{
         recent_action_count:priority.recent_action_count,recent_completed_action_count:priority.recent_completed_action_count,
         recent_checkin_days:priority.recent_checkin_days,last_activity_at:priority.last_activity_at,
         match_status:status,recommendation_type_code:priority.recommendation_type_code,
-        access_url:token?`${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(token)}`:null
+        access_url:token?`${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(token)}`:null,
+        participant,match,
+        priority,
+        checkins:checkinsBy.get(match.participant_id)||[],
+        actions:actionsBy.get(match.participant_id)||[],
+        assignments:assignmentsBy.get(match.participant_id)||[],
+        modelEvents:eventsBy.get(match.participant_id)||[],
+        supportHistory:outcomes.filter(o=>o.participant_id===match.participant_id)
       });
     }
+    const supporterAiSummaries=await buildSupporterAiSummaries({supporter,targets:targetContexts});
+    const targets=targetContexts.map(target=>{
+      const summary=supporterAiSummaries.get(target.match_id);
+      return summary ? {...target,ai_summary:{summary:summary.summary,current_state:summary.current_state,continuation_risk:summary.continuation_risk,risk_reasons:summary.risk_reasons||[],support_points:summary.support_points||[],recommended_first_move:summary.recommended_first_move||'',caution:summary.caution||'',model_version:summary.model_version||''}} : target;
+    });
 
     const weekAgo=Date.now()-7*24*60*60*1000;
     const weekly_count=executionEvents.filter(x=>new Date(x.created_at||0).getTime()>weekAgo).length;
