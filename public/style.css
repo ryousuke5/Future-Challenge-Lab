@@ -14,3 +14,5 @@ button:disabled{opacity:.6;cursor:not-allowed}
 
 /* --- 人生OSアップデート日誌への返信 --- */
 .journal-reply-panel{margin-top:20px}.journal-reply-box{border:1px solid #cbd5e1;background:#f8fafc;border-radius:18px;padding:20px}.journal-reply-heading h3{margin:10px 0 16px;font-size:1.35rem}.journal-reply-body{white-space:normal;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:18px;line-height:1.9;margin-bottom:14px}.journal-reply-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.journal-reply-solution{margin-top:14px}.journal-reply-list{margin:12px 0 0;padding-left:20px;line-height:1.8}.journal-reply-next{margin-top:14px;background:#f0fdf4;border-color:#bbf7d0}.journal-reply-next h3{line-height:1.6}.journal-reply-note{font-size:.86rem;color:#64748b;margin-bottom:0}@media(max-width:700px){.journal-reply-grid{grid-template-columns:1fr}}
+
+.journal-reply-status{margin:0 16px 12px;padding:9px 12px;border-radius:10px;background:#f8fafc;color:#64748b;font-size:12px;line-height:1.6;text-align:center}
