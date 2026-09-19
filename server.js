@@ -1834,13 +1834,60 @@ app.post('/api/supporters/register',async(req,res)=>{
   }catch(e){res.status(500).json({error:e.message});}
 });
 
-function matchScore(p,s,last){
+function supportModeKeywords(mode){
+  const map={
+    '発信・共有':['発信','sns','広報','pr','マーケ','コミュニティ','共有'],
+    '整理・計画':['計画','整理','企画','コーチ','伴走','設計','戦略'],
+    '作成・実行':['作成','制作','実装','開発','実務','運用','手を動か'],
+    '相談・接続':['相談','壁打ち','メンタリング','コーチ','伴走','接続','紹介'],
+    '学習・調査':['学習','教育','研修','研究','調査','指導','勉強']
+  };
+  return map[mode]||[];
+}
+
+function buildAdaptiveSupportFit({participant,supporter,last,pattern={},supporterOutcomes=[]}={}){
+  const reasons=[];
+  let extra=0;
+  const recentBarriers=Array.isArray(pattern?.recommendation_learning?.recurring_barriers) ? pattern.recommendation_learning.recurring_barriers : [];
+
+  const strongestMode=pattern?.individual_continuation_pattern?.strongest_mode || null;
+  const searchable=`${supporter?.support_category||''} ${(supporter?.strengths||[]).join(' ')} ${supporter?.description||''}`.toLowerCase();
+  if(strongestMode){
+    const hits=supportModeKeywords(strongestMode).filter(keyword=>searchable.includes(keyword.toLowerCase()));
+    if(hits.length){ extra+=10; reasons.push(`本人の観測上の進め方「${strongestMode}」を支えやすい内容`); }
+  }
+
+  const timingTags=(supporter?.timing_tags||[]).map(v=>String(v));
+  const riskHigh=last?.risk_level==='high' || Number(last?.risk_score||0)>=70;
+  const resumed=Boolean(last?.analysis?.resumed);
+  const adjusting=['shrink_and_adjust','smaller_step'].includes(pattern?.recommendation_learning?.adjustment?.mode);
+  const timingMatch=(riskHigh && timingTags.some(t=>['離脱前','停滞時','伴走'].includes(t))) || (resumed && timingTags.includes('再開時')) || (adjusting && timingTags.some(t=>['停滞時','再開時','伴走'].includes(t)));
+  if(timingMatch){ extra+=10; reasons.push('現在の継続状態に合う支援タイミング'); }
+
+  const sameSupporter=supporterOutcomes.filter(row=>row.supporter_id===supporter.id && row.participant_id===participant.id);
+  const sameSuccess=sameSupporter.filter(row=>['restarted','action_completed','connected_and_progressed','positive'].includes(row.outcome)).length;
+  if(sameSuccess>0){ extra+=12; reasons.push(`この本人と過去に${sameSuccess}回の前進につながる支援記録あり`); }
+
+  const supporterAll=supporterOutcomes.filter(row=>row.supporter_id===supporter.id);
+  const supporterAllSuccess=supporterAll.filter(row=>['restarted','action_completed','connected_and_progressed','positive'].includes(row.outcome)).length;
+  if(supporterAll.length>=3 && supporterAllSuccess/supporterAll.length>=0.67){ extra+=6; reasons.push('支援成果の観測実績あり'); }
+
+  if(recentBarriers.length && timingTags.includes('伴走')){ extra+=4; reasons.push('繰り返し観測された障壁への伴走支援と適合'); }
+  return {
+    extra_score:extra, strongest_mode:strongestMode, reasons,
+    evidence:{ personal_pattern_observed:Boolean(strongestMode), same_participant_support_trials:sameSupporter.length, same_participant_support_successes:sameSuccess, supporter_outcome_trials:supporterAll.length, supporter_outcome_successes:supporterAllSuccess }
+  };
+}
+
+function matchScore(p,s,last,adaptiveSupportFit={}){
   const text=`${p.challenge||''} ${p.goal||''}`.toLowerCase();
   let score=40; const reason=[];
   for(const tag of (s.strengths||[])) if(text.includes(String(tag).toLowerCase())){score+=15;reason.push(`強み「${tag}」が挑戦内容と近い`);}
   if(last && last.risk_level==='high' && (s.timing_tags||[]).some(t=>['離脱前','停滞時','再開時','伴走'].includes(t))){score+=20;reason.push('支援タイミングが現在地に適合');}
   if(last?.analysis?.resumed && (s.timing_tags||[]).includes('再開時')){score+=15;reason.push('再開直後の支援に適合');}
-  return {score:Math.min(score,100),reason:reason.join('。')||'挑戦分野と支援内容の近さを基礎スコアとして算出'};
+  const adaptiveExtra=Number(adaptiveSupportFit.extra_score||0);
+  if(adaptiveExtra>0){ score+=adaptiveExtra; reason.push(...(adaptiveSupportFit.reasons||[])); }
+  return {score:Math.min(score,100),reason:reason.join('。')||'挑戦分野と支援内容の近さを基礎スコアとして算出',adaptive_support_fit:adaptiveSupportFit};
 }
 
 function normalizeMatchStatus(status){
@@ -2132,25 +2179,26 @@ async function getSupporterCandidates(participant_id){
   const checkins=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
   const last=checkins[0] || null;
   const supporters=uniqueProductionContacts((await select('supporters')).filter(s=>s.active!==false && s.accepting_new_matches!==false));
+  const events=await select('model_learning_events',{participant_id});
+  const personalLearning=buildPersonalLearningProfile({events});
+  const supporterOutcomes=await select('supporter_outcomes');
 
-  const candidates=supporters.map(s=>({
-    supporter_id:s.id,
-    supporter_name:s.supporter_name,
-    organization_name:s.organization_name,
-    support_category:s.support_category,
-    ...matchScore(participant,s,last),
-    recommendation_type_code: priorityData.recommendation_type_code,
-    recommended_support_type: priorityData.recommended_support_type,
-    recommendation_reason: priorityData.recommendation_reason,
-    suggested_message: priorityData.suggested_message
-  })).sort((a,b)=>b.score-a.score).slice(0,5);
+  const candidates=supporters.map(s=>{
+    const adaptiveSupportFit=buildAdaptiveSupportFit({participant,supporter:s,last,pattern:personalLearning,supporterOutcomes});
+    return {
+      supporter_id:s.id, supporter_name:s.supporter_name, organization_name:s.organization_name, support_category:s.support_category,
+      ...matchScore(participant,s,last,adaptiveSupportFit),
+      recommendation_type_code:priorityData.recommendation_type_code,
+      recommended_support_type:priorityData.recommended_support_type,
+      recommendation_reason:priorityData.recommendation_reason,
+      suggested_message:priorityData.suggested_message
+    };
+  }).sort((a,b)=>b.score-a.score).slice(0,5);
 
   return {
-    status: priorityData.priority === 'low' && priorityData.action_completion_rate >= 0.7 ? 'not_required' : 'ok',
-    priority: priorityData.priority,
-    candidate_count: candidates.length,
-    priority_data: priorityData,
-    candidates
+    status:priorityData.priority==='low'&&priorityData.action_completion_rate>=0.7?'not_required':'ok',
+    priority:priorityData.priority, candidate_count:candidates.length,
+    priority_data:{...priorityData,personal_learning:personalLearning}, candidates
   };
 }
 
@@ -2170,7 +2218,13 @@ app.post('/api/matches',async(req,res)=>{
     }
     const ss = allSupporters.filter(s => (Number(s.capacity ?? 5) > (activeCounts.get(s.id) || 0)));
     const last=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0];
-    const ranked=ss.map(s=>({s,...matchScore(ps||{},s,last)})).sort((a,b)=>b.score-a.score).slice(0,5);
+    const personalEvents=await select('model_learning_events',{participant_id});
+    const personalLearning=buildPersonalLearningProfile({events:personalEvents});
+    const supporterOutcomes=await select('supporter_outcomes');
+    const ranked=ss.map(s=>{
+      const adaptiveSupportFit=buildAdaptiveSupportFit({participant:ps||{},supporter:s,last,pattern:personalLearning,supporterOutcomes});
+      return {s,...matchScore(ps||{},s,last,adaptiveSupportFit)};
+    }).sort((a,b)=>b.score-a.score).slice(0,5);
     const rows=[];
     const publicUrl = (process.env.FCL_PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
     for(const x of ranked){
@@ -2197,7 +2251,8 @@ app.post('/api/matches',async(req,res)=>{
           match_type:'matching_candidate',
           challenger_support_need: ps?.challenge || '',
           expected_support_frequency: '1-2回/週',
-          recommendation_score: Number(x.score)
+          recommendation_score: Number(x.score),
+          adaptive_support_fit: x.adaptive_support_fit || null
         },
         created_at:new Date().toISOString(),
         updated_at:new Date().toISOString()
