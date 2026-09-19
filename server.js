@@ -2235,7 +2235,9 @@ app.post('/api/matches',async(req,res)=>{
         rows.push({
           ...existing,
           supporter: x.s,
-          match_score: Number(existing.score),
+          match_score: Number(x.score),
+          reason: x.reason,
+          adaptive_support_fit: x.adaptive_support_fit || null,
           status,
           access_url: token ? `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(existing.id)}&token=${encodeURIComponent(token)}` : null
         });
