@@ -61,7 +61,7 @@ async function register(){
   await withLoadingUI(document.getElementById('registerBtn'), '登録処理中です。しばらくお待ちください…', async () => {
     participant=await api('/api/participants',{name:name.value,email:email.value,challenge:challenge.value,goal:goal.value});
     localStorage.setItem('fcl-participant-id',participant.id); localStorage.setItem('fcl-user-id',participant.user_id || '');
-    participantStatus.textContent=` ユーザーID: ${participant.user_id || '未取得'}`; const userPageLink=document.getElementById('participantUserPageLink'); if(userPageLink&&participant.user_id){ userPageLink.href='/user.html?user_id='+encodeURIComponent(participant.user_id); userPageLink.hidden=false; }
+    participantStatus.textContent=` ユーザーID: ${participant.user_id || '未取得'}`; window.refreshFclDailyLoop?.(); const userPageLink=document.getElementById('participantUserPageLink'); if(userPageLink&&participant.user_id){ userPageLink.href='/user.html?user_id='+encodeURIComponent(participant.user_id); userPageLink.hidden=false; }
   });
 }
 function buildAnalysisCards(data){
@@ -121,7 +121,7 @@ try { await withLoadingUI(document.getElementById('checkinBtn'), 'AI分析中で
   const answers={};for(let i=0;i<5;i++)answers[`q${i+1}`]=Number(document.getElementById(`q${i}`).value);
   const x=await api('/api/checkins',{participant_id:participant.id,answers});
   const checkinCount=Number(x.checkin_count||0);
-  if(checkinCount>0){const userId=participant.user_id||localStorage.getItem('fcl-user-id')||'';const storyLink=userId?`<a href="/story.html?user_id=${encodeURIComponent(userId)}" class="secondary-btn" style="display:inline-block;margin-top:12px;padding:12px 18px;border-radius:12px;background:#111827;color:#ffffff!important;text-decoration:none;font-weight:700;border:1px solid #111827;box-shadow:0 4px 12px rgba(15,23,42,.12);">あなたの挑戦の物語を見る</a>`:'';document.getElementById('checkinCelebration').innerHTML=`<strong>今日も挑戦を記録しました。</strong><span>FCLチェックイン ${checkinCount}回目</span><small>あなたの物語に、今日の1ページが加わりました。</small>${storyLink}`;}
+  if(checkinCount>0){const userId=participant.user_id||localStorage.getItem('fcl-user-id')||'';const storyLink=userId?`<a href="/story.html?user_id=${encodeURIComponent(userId)}" class="secondary-btn" style="display:inline-block;margin-top:12px;padding:12px 18px;border-radius:12px;background:#111827;color:#ffffff!important;text-decoration:none;font-weight:700;border:1px solid #111827;box-shadow:0 4px 12px rgba(15,23,42,.12);">あなたの挑戦の物語を見る</a>`:'';document.getElementById('checkinCelebration').innerHTML=`<strong>今日も挑戦を記録しました。</strong><span>FCLチェックイン ${checkinCount}回目</span><small>あなたの物語に、今日の1ページが加わりました。</small>${storyLink}`; window.refreshFclDailyLoop?.();}
   if(x.intervention_record_status === 'failed' || x.intervention_record_error){
     alert('AI分析は完了したが介入記録の保存に失敗しました');
   }
@@ -137,7 +137,7 @@ async function saveAction(){
   if(!participant||!intervention)return alert('先にチェックインしてください');
   try { await withLoadingUI(document.getElementById('saveActionBtn'), '保存処理中です。しばらくお待ちください…', async () => {
     const x=await api('/api/actions',{participant_id:participant.id,intervention_id:intervention.id,action_text:action.value,completed:completed.checked,barrier:barrier.value,result_note:resultNote.value});
-    actionStatus.textContent=x.status==='duplicate'?' 既存の結果を表示しました。':' 保存しました。介入効果データも蓄積されました。';
+    actionStatus.textContent=x.status==='duplicate'?' 既存の結果を表示しました。':' 保存しました。介入効果データも蓄積されました。'; window.refreshFclDailyLoop?.();
   }); } catch(error) { showUiError(document.getElementById('actionStatus')); }
 }
 async function registerSupporter(){
