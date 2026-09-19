@@ -30,7 +30,7 @@ function initializeCoreTargetDate(){
 }
 document.getElementById('questions').innerHTML=qs.map((q,i)=>`<div class="q"><strong>Q${i+1}.</strong> ${q}<select id="q${i}">${[1,2,3,4,5].map(x=>`<option value="${x}">${x}</option>`).join('')}</select></div>`).join('');
 fetch('/api/health').then(r=>r.json()).then(x=>document.getElementById('mode').textContent=x.supabase?'Supabase接続中':'ローカル開発モード');
-async function api(url,body){const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json',credentials:'same-origin'},body:JSON.stringify(body)});const x=await r.json().catch(()=>({}));if(!r.ok)throw Error(x.error||'error');return x;}
+async function api(url,body){const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',body:JSON.stringify(body)});const x=await r.json().catch(()=>({}));if(!r.ok)throw Error(x.error||'error');return x;}
 async function ensureFclSession(emailValue){
   const emailAddress=String(emailValue||'').trim().toLowerCase();
   if(!emailAddress)throw new Error('メールアドレスを入力してください');
