@@ -227,7 +227,15 @@ async function load(){
   const response=await fetch('/api/story-user/'+encodeURIComponent(id));
   const data=await response.json().catch(()=>({}));
   if(!response.ok) throw Error(data.error||'取得失敗');
-  const records=Array.isArray(data.participants)?data.participants:[];
+  const participantRecords=Array.isArray(data.participants)?data.participants:[];
+  let storyPages=[];
+  try{
+    const pageResponse=await fetch('/api/story-pages/generate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({participant_id:participantRecords[0]?.participant?.id||''})});
+    const pageData=await pageResponse.json().catch(()=>({}));
+    if(pageResponse.ok&&Array.isArray(pageData.story_pages)) storyPages=pageData.story_pages;
+  }catch(pageError){ console.warn('story pages generation unavailable',pageError); }
+  const pageByDate=new Map(storyPages.map(page=>[String(page.page_date||''),page]));
+  const records=participantRecords;
   const participants=records.map(item=>item.participant||{}); 
   const histories=records;
   if(!participants.length){
@@ -287,10 +295,11 @@ async function load(){
       return d;
     });
 
+    daily.forEach(d=>{ const page=pageByDate.get(d.key); if(page?.lines) d.aiStoryLines=Array.isArray(page.lines)?page.lines:[]; });
     // Page numbers follow check-in history when available; activity-only days receive the nearest page marker.
     let pageNo=1;
     const cards=daily.map((d,idx)=>{
-      const lines=buildDailySummary(d);
+      const lines=d.aiStoryLines?.length ? d.aiStoryLines : buildDailySummary(d);
       const comment=meaningfulComment(d,d.checkins,d.actions,d.events,d.connections,allCheckinsAsc);
       const pageLabel='第'+pageNo+'ページ';
       pageNo++;
