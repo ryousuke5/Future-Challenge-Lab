@@ -18,7 +18,7 @@ button:disabled{opacity:.6}.error{padding:12px;border-radius:12px;background:#fe
 .event:before{content:"";position:absolute;left:-32px;top:4px;width:12px;height:12px;border-radius:50%;background:#64748b;border:3px solid #fff;box-shadow:0 0 0 2px #e2e8f0}
 .date{font-size:12px;color:#64748b;margin-bottom:3px}.tag{font-size:12px;font-weight:700;color:#475569}.empty{padding:14px;background:#f8fafc;border-radius:12px;color:#64748b}.comment{margin-top:10px;padding:12px 14px;border-radius:12px;background:#f8fafc;color:#334155;font-size:14px;line-height:1.7}.growth{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin:12px 0}.growth-item{padding:14px;border:1px solid #e5e7eb;border-radius:14px;background:#fff}.growth-item strong{display:block;margin-bottom:5px}.story-ending{margin-top:18px;padding:18px;border-radius:16px;background:#f8fafc}.next-step{margin-top:14px;padding:14px;border-radius:14px;background:#fff}
 @media(max-width:650px){.user-bar{flex-direction:column;align-items:stretch}.story-head>div[style*="grid-template-columns"]{grid-template-columns:1fr!important}}
-.daily-card{padding:18px;border:1px solid #e5e7eb;border-radius:16px;background:#fff;margin-bottom:12px}.daily-meta{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.page-no{font-size:12px;color:#64748b;font-weight:700}.daily-date{font-size:13px;color:#64748b}.daily-lines{margin:0;padding-left:20px}.daily-lines li{margin:7px 0;line-height:1.7}.daily-card details{margin-top:12px}.daily-card summary{cursor:pointer;color:#334155;font-weight:700}.detail-body{margin-top:10px;padding:12px 14px;border-radius:12px;background:#f8fafc}.detail-row{padding:8px 0;border-bottom:1px solid #e5e7eb;line-height:1.6}.detail-row:last-child{border-bottom:0}.milestone-comment{margin:12px 0;padding:14px 16px;border-left:4px solid #94a3b8;background:#f8fafc;border-radius:10px;line-height:1.7}.story-end{margin-top:18px;padding:20px;border-radius:16px;background:#f8fafc}@media(max-width:650px){.daily-meta{align-items:flex-start;flex-direction:column}}</style>
+.daily-card{padding:18px;border:1px solid #e5e7eb;border-radius:16px;background:#fff;margin-bottom:12px}.daily-meta{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.page-no{font-size:12px;color:#64748b;font-weight:700}.daily-date{font-size:13px;color:#64748b}.daily-lines{margin:0;padding-left:20px}.daily-lines li{margin:7px 0;line-height:1.7}.daily-card details{margin-top:12px}.daily-card summary{cursor:pointer;color:#334155;font-weight:700}.detail-body{margin-top:10px;padding:12px 14px;border-radius:12px;background:#f8fafc}.detail-row{padding:8px 0;border-bottom:1px solid #e5e7eb;line-height:1.6}.detail-row:last-child{border-bottom:0}.milestone-comment{margin:12px 0;padding:14px 16px;border-left:4px solid #94a3b8;background:#f8fafc;border-radius:10px;line-height:1.7}.roadmap{margin:16px 0 4px;padding:16px;border:1px solid #e5e7eb;border-radius:16px;background:#fff}.roadmap-title{font-size:14px;font-weight:700;margin-bottom:12px}.roadmap-track{display:flex;align-items:flex-start;gap:0;overflow-x:auto;padding:4px 2px 8px}.roadmap-step{min-width:150px;position:relative;text-align:center}.roadmap-step:not(:last-child):after{content:"";position:absolute;top:12px;left:50%;width:100%;height:2px;background:#e2e8f0}.roadmap-dot{position:relative;z-index:1;width:24px;height:24px;margin:0 auto 7px;border-radius:50%;border:2px solid #cbd5e1;background:#fff}.roadmap-step.done .roadmap-dot{background:#334155;border-color:#334155}.roadmap-step.current .roadmap-dot{box-shadow:0 0 0 4px #e2e8f0}.roadmap-label{font-size:12px;font-weight:700}.roadmap-note{font-size:11px;color:#64748b;margin-top:3px;line-height:1.4}.story-end{margin-top:18px;padding:20px;border-radius:16px;background:#f8fafc}@media(max-width:650px){.daily-meta{align-items:flex-start;flex-direction:column}}</style>
 </head>
 <body><main>
 <section class="hero">
@@ -58,8 +58,7 @@ function meaningfulComment(day, checkins, actions, events, matches, allCheckins)
   if(day.firstCompletedAction) return '考えていたことを、実際の行動に移しました。今日の記録が現実の一歩になっています。';
   if(day.autonomyRise) return '前回より自己決定度が上がりました。少しずつ自分で選べる感覚の変化が記録されています。';
   if(day.autonomyDrop) return '今日は前回より自己決定度が下がっています。迷った日も止まった日も、挑戦の大切な一ページです。';
-  if(day.steady) return '大きな変化がない日も、記録を続けています。その積み重ねが次の一歩をつくります。';
-  return '';
+    return '';
 }
 
 function buildDailySummary(day, index, startAt, totalCheckins){
@@ -139,8 +138,6 @@ async function load(){
     const h=histories[i]||{};
     const checkins=h.checkins||[], actions=h.actions||[], events=h.events||[], matches=h.matches||[];
     const connectedMatches=matches.filter(m=>m.status==='connected');
-    const allItems=[];
-    addItem(new Map(),'x',{}); // keep helper warm for older browsers
     const map=new Map();
 
     if(p.created_at) addItem(map,dayKey(p.created_at),{kind:'start',at:p.created_at});
@@ -163,7 +160,7 @@ async function load(){
         actions:items.filter(x=>x.kind==='action').map(x=>x.data),
         events:items.filter(x=>['core_analysis','core_decision','core_outcome'].includes(x.kind)).map(x=>x.data),
         connections:items.filter(x=>x.kind==='connection').map(x=>x.data),
-        isStart:items.some(x=>x.kind==='start'),restarted:false,newConnection:false,firstCompletedAction:false,autonomyRise:false,autonomyDrop:false,steady:false,
+        isStart:items.some(x=>x.kind==='start'),restarted:false,newConnection:false,firstCompletedAction:false,autonomyRise:false,autonomyDrop:false,
         challenge:p.challenge||'挑戦'
       };
       if(d.checkins.length){
@@ -174,7 +171,7 @@ async function load(){
           const gap=(new Date(current.checked_in_at)-new Date(prev.checked_in_at))/86400000;
           d.restarted=gap>1;
           const diff=Number(current.autonomy_total||0)-Number(prev.autonomy_total||0);
-          d.autonomyRise=diff>=2; d.autonomyDrop=diff<=-2; d.steady=Math.abs(diff)<2;
+          d.autonomyRise=diff>=2; d.autonomyDrop=diff<=-2;
         }
       }
       if(d.connections.length) d.newConnection=true;
@@ -199,13 +196,22 @@ async function load(){
     const days=startAt?Math.max(1,Math.floor((Date.now()-startAt.getTime())/86400000)+1):null;
     const completedActions=actions.filter(a=>a.completed).length;
     const actionDays=new Set(actions.map(a=>dayKey(a.completed_at||a.created_at))).size;
+    const roadmapSteps=[
+      {label:'挑戦を始める',note:'出発点',done:true},
+      {label:'現在地を記録する',note:checkins.length?checkins.length+'回記録':'これから',done:checkins.length>0},
+      {label:'次の一歩を実行する',note:completedActions?completedActions+'件実行':'これから',done:completedActions>0},
+      {label:'支援とつながる',note:connectedMatches.length?connectedMatches.length+'件接続':'必要なときに',done:connectedMatches.length>0},
+      {label:'今日',note:'ここから先へ',done:true,current:true}
+    ];
+    const roadmapHtml='<div class="roadmap"><div class="roadmap-title">あなたの挑戦のロードマップ</div><div class="roadmap-track">'+roadmapSteps.map(s=>'<div class="roadmap-step '+(s.done?'done ':'')+(s.current?'current':'')+'"><div class="roadmap-dot"></div><div class="roadmap-label">'+esc(s.label)+'</div><div class="roadmap-note">'+esc(s.note)+'</div></div>').join('')+'</div><p class="muted" style="margin-top:8px">できたことだけでなく、まだ途中の場所も見えるようにしています。</p></div>';
+
     const growth=[];
     if(checkins.length) growth.push('チェックイン '+checkins.length+'回');
     if(completedActions) growth.push('次の一歩を '+completedActions+'件実行');
     if(connectedMatches.length) growth.push('支援接続 '+connectedMatches.length+'件');
     const storyText='あなたはこの挑戦を始めてから'+(days??'-')+'日。'+checkins.length+'回、自分の現在地を記録し、'+completedActions+'件の行動を残しました。'+(growth.length?' '+growth.join('・')+'。':'')+'まだ途中です。でも、最初の日から今日までの記録そのものが、あなたの物語です。';
 
-    return '<section class="card"><div class="story-head"><span class="pill">挑戦者</span><h2>'+esc(p.challenge||'挑戦')+'</h2><p>目標：'+esc(p.goal||'未登録')+'</p><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px"><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">挑戦の日数</div><strong style="font-size:22px">'+(days??'-')+'日</strong></div><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">チェックイン</div><strong style="font-size:22px">'+checkins.length+'回</strong></div><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">行動した日</div><strong style="font-size:22px">'+actionDays+'日</strong></div></div><p class="muted" style="margin-top:14px">第1ページから始まり、下へスクロールするほど現在のページへ進みます。</p></div><div>'+cards+'</div><div class="story-end"><strong>ここまでの物語</strong><p>'+storyText+'</p><div class="next-step"><strong>次の1ページ</strong><p>今日の状態を記録し、今の自分に合った小さな一歩を選んでいきましょう。</p></div></div><p class="muted" style="margin-top:20px">あなたの物語は、まだ途中です。次の1ページを記録していきましょう。</p></section>';
+    return '<section class="card"><div class="story-head"><span class="pill">挑戦者</span><h2>'+esc(p.challenge||'挑戦')+'</h2><p>目標：'+esc(p.goal||'未登録')+'</p><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px"><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">挑戦の日数</div><strong style="font-size:22px">'+(days??'-')+'日</strong></div><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">チェックイン</div><strong style="font-size:22px">'+checkins.length+'回</strong></div><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">行動した日</div><strong style="font-size:22px">'+actionDays+'日</strong></div></div><p class="muted" style="margin-top:14px">第1ページから始まり、下へスクロールするほど現在のページへ進みます。</p></div>+roadmapHtml+<div>'+cards+'</div><div class="story-end"><strong>ここまでの物語</strong><p>'+storyText+'</p><div class="next-step"><strong>次の1ページ</strong><p>今日の状態を記録し、今の自分に合った小さな一歩を選んでいきましょう。</p></div></div><p class="muted" style="margin-top:20px">あなたの物語は、まだ途中です。次の1ページを記録していきましょう。</p></section>';
   }).join('');
   $('story').hidden=false;
  }catch(e){$('story').hidden=true;showError(e.message||'物語の取得に失敗しました。')}
