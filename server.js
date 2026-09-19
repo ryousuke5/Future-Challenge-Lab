@@ -1818,9 +1818,15 @@ app.post('/api/supporter-outcomes',async(req,res)=>{
         : 0;
     const note=String(req.body.note||'').trim();
     const executionEventId=req.body.support_execution_event_id||null;
-    const supportStyle=String(req.body.support_style||req.body.recommendation_type||'supporter').trim();
 
     const allSupportEvents=await select('connection_events');
+    const learningEvents=await select('model_learning_events',{participant_id});
+    const executionLearning=executionEventId
+      ? learningEvents.find(event=>event.features?.action_type==='support_execution' && event.features?.support_execution_event_id===executionEventId) || null
+      : [...learningEvents]
+          .filter(event=>event.features?.action_type==='support_execution' && event.features?.supporter_id===supporter_id)
+          .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0] || null;
+    const supportStyle=String(req.body.support_style||req.body.recommendation_type||executionLearning?.features?.recommendation_type||'supporter').trim();
     const executionEvent=executionEventId
       ? allSupportEvents.find(event=>event.id===executionEventId) || null
       : [...allSupportEvents]
@@ -1979,12 +1985,10 @@ function buildAdaptiveSupportFit({participant,supporter,last,pattern={},supporte
     supporter_id:supporter.id
   });
   if(methodLearning.best_style){
-    extra+=6;
     reasons.push(`この本人では支援方法「${methodLearning.best_style}」で前進が観測されています`);
   }
   const failedStyles=(methodLearning.styles||[]).filter(row=>row.trials>=2&&row.progress_rate<0.5);
   if(failedStyles.length){
-    extra-=4;
     reasons.push(`過去に前進が少なかった支援方法: ${failedStyles.slice(0,2).map(row=>row.support_style).join(' / ')}`);
   }
 
@@ -2235,6 +2239,8 @@ function buildSupporterPriorityFromRows(participant_id,participant,checkins=[],a
 async function buildSupporterPriority(participant_id){
   const participant=(await select('participants',{id:participant_id}))[0];
   if(!participant) throw new Error('participant not found');
+  const personalEvents=await select('model_learning_events',{participant_id});
+  const supportMethodLearning=buildSupportMethodLearning({events:personalEvents,participant_id});
 
   const checkins=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
   const latest=checkins[0] || null;
@@ -2258,9 +2264,12 @@ async function buildSupporterPriority(participant_id){
   const recommendationReason = riskScore >= 70
     ? '高リスクのため、支援者の視点で行動の定着を支える必要があると判断されたためです。'
     : '直近のチェックインと行動実行の状況から、支援者が支援の入口を作ると改善しやすい可能性があります。';
-  const suggestedMessage = priority === 'high'
-    ? '今日は最初の一歩を10分だけに絞って、支援者と一緒に進めることを検討してください。'
-    : '今の困りごとを一度整理し、今日の一歩を一緒に決めると続けやすくなります。';
+  const learnedSupportStyle=supportMethodLearning.best_style;
+  const suggestedMessage = learnedSupportStyle==='supporter'
+    ? '過去に支援者と一緒に進めた結果を踏まえ、今回も一人で抱えず最初の一歩を一緒に整理する形を試します。'
+    : priority === 'high'
+      ? '今日は最初の一歩を10分だけに絞って、支援者と一緒に進めることを検討してください。'
+      : '今の困りごとを一度整理し、今日の一歩を一緒に決めると続けやすくなります。';
 
   return {
     participant_id,
@@ -2287,7 +2296,8 @@ async function buildSupporterPriority(participant_id){
     requires_explicit_approval: true,
     recommendation_label: 'recommendation',
     recent_assignments: recentAssignments,
-    action_completion_rate: recentActions.length ? completed / recentActions.length : 0
+    action_completion_rate: recentActions.length ? completed / recentActions.length : 0,
+    support_method_learning: supportMethodLearning
   };
 }
 
