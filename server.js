@@ -2641,7 +2641,7 @@ async function getSupporterCandidates(participant_id){
   const priorityData=await buildSupporterPriority(participant_id);
   const checkins=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
   const last=checkins[0] || null;
-  const supporters=uniqueProductionContacts((await select('supporters')).filter(s=>s.active!==false && s.accepting_new_matches!==false));
+  const supporters=uniqueProductionContacts((await select('supporters')).filter(s=>s.active!==false && s.accepting_new_matches!==false && s.user_id!==participant.user_id));
   const events=await select('model_learning_events',{participant_id});
   const personalLearning=buildPersonalLearningProfile({events});
   personalLearning.support_method_events=events.filter(event=>event.features?.action_type==='support_method_outcome');
