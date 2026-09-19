@@ -290,8 +290,8 @@ let selectedCoreOption = null;
 function renderCoreResult(data){
   const result = data?.result || {};
   const summary = [
-    { title: '現在の状態', value: result.state || 'unknown' },
-    { title: '変化', value: result.state_change || '変化の有無はまだ不明です。' },
+    { title: '現在の状態', value: typeof result.state === 'object' ? (result.state.currentState || result.state.current_state || 'unknown') : (result.state || 'unknown') },
+    { title: '変化', value: Array.isArray(result.state_change) ? result.state_change.join(' ') : (result.state_change || '変化の有無はまだ不明です。') },
     { title: 'リスク', value: `${result.risk?.level || 'unknown'} / ${result.risk?.reason || 'reason unknown'}` },
     { title: '推奨次の一歩', value: result.next_action || '次の一歩を整理してください。' }
   ];
