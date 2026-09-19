@@ -128,6 +128,19 @@
           <p>${esc(item.recommendation_reason || '最近の状態から、支援者との対話が役立つ可能性があります。')}</p>
         </div>
 
+        ${item.ai_summary ? 
+          '<div class="supporter-ai-summary">' +
+            '<div class="supporter-ai-summary-title"><span class="section-tag">AI要約</span><span class="supporter-ai-summary-badge">本人の記録から整理</span></div>' +
+            '<p class="supporter-ai-summary-main">' + esc(item.ai_summary.summary || '') + '</p>' +
+            '<div class="supporter-ai-summary-grid">' +
+              '<div><span class="section-tag">継続リスク</span><p>' + esc(item.ai_summary.continuation_risk || 'unknown') + '</p></div>' +
+              '<div><span class="section-tag">今の支援ポイント</span><p>' + esc((item.ai_summary.support_points || []).join(' ')) + '</p></div>' +
+            '</div>' +
+            ((item.ai_summary.risk_reasons || []).length ? '<div class="supporter-ai-summary-list"><strong>リスクとして観測されたこと</strong><ul>' + item.ai_summary.risk_reasons.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul></div>' : '') +
+            (item.ai_summary.recommended_first_move ? '<div class="supporter-ai-next"><strong>最初の支援で考えられる一歩</strong><p>' + esc(item.ai_summary.recommended_first_move) + '</p></div>' : '') +
+            (item.ai_summary.caution ? '<div class="supporter-ai-caution"><strong>支援時の注意</strong><p>' + esc(item.ai_summary.caution) + '</p></div>' : '') +
+          '</div>' : ''}
+
         <div class="supporter-response-box" data-response-box="${matchId}">
           <h4>支援者として回答する</h4>
           <div class="supporter-form-group">
