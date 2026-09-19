@@ -19,7 +19,7 @@ app.use(express.static('public'));
 const port = process.env.PORT || 3000;
 const hasSupabase = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 const supabase = hasSupabase ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY) : null;
-const memory = { fcl_users: [], participants: [], checkins: [], interventions: [], intervention_assignments: [], action_results: [], supporters: [], supporter_matches: [], connection_events: [], intervention_outcomes: [], model_learning_events: [], intervention_policy_decisions: [], supporter_outcomes: [], journal_replies: [] };
+const memory = { fcl_users: [], participants: [], checkins: [], interventions: [], intervention_assignments: [], action_results: [], supporters: [], supporter_matches: [], connection_events: [], intervention_outcomes: [], model_learning_events: [], intervention_policy_decisions: [], supporter_outcomes: [], journal_replies: [], challenge_story_pages: [] };
 const supporterApprovalState = new Map();
 
 function readSupporterApprovalState(matchId){
@@ -1524,6 +1524,145 @@ app.get('/api/users/:user_id/overview', async (req,res)=>{
     console.error('user overview error',error);
     res.status(500).json({error:error.message||'user overview failed'});
   }
+});
+
+
+function storyDateKey(value){
+  const d=new Date(value||0);
+  if(Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo'}).format(d);
+}
+
+function buildStorySourceDays({participant,checkins=[],actions=[],events=[],matches=[]}){
+  const map=new Map();
+  const add=(date,patch={})=>{
+    if(!date)return;
+    if(!map.has(date))map.set(date,{page_date:date,is_start:false,checkins:[],actions:[],events:[],connected:false,checkin_text:'',analysis_summary:'',insight:'',decision:'',outcome_status:'',result_note:'',autonomy_total:null,risk_level:'',score_change:null,restarted:false});
+    Object.assign(map.get(date),patch);
+  };
+  const start=storyDateKey(participant?.created_at);
+  if(start)add(start,{is_start:true});
+  for(const c of checkins){
+    const date=storyDateKey(c.checked_in_at);
+    add(date);
+    const d=map.get(date);
+    const item={id:c.id||null,autonomy_total:Number(c.autonomy_total||0),risk_level:c.risk_level||'',risk_score:Number(c.risk_score||0),checked_in_at:c.checked_in_at||null};
+    d.checkins.push(item);d.autonomy_total=item.autonomy_total;d.risk_level=item.risk_level;
+  }
+  for(const a of actions){
+    const date=storyDateKey(a.completed_at||a.created_at);add(date);
+    map.get(date).actions.push({action_text:String(a.action_text||'').slice(0,180),completed:Boolean(a.completed),barrier:String(a.barrier||'').slice(0,140),result_note:String(a.result_note||'').slice(0,180)});
+  }
+  for(const e of events){
+    const date=storyDateKey(e.created_at);const type=e.features?.action_type||e.label||'';
+    if(!date||!['core_analysis','core_decision','core_outcome'].includes(type))continue;
+    add(date);const d=map.get(date);d.events.push({type,at:e.created_at||null});
+    if(type==='core_analysis'){d.checkin_text=String(e.features?.checkin_text||d.checkin_text||'').slice(0,240);const result=e.features?.result||e.features||{};d.analysis_summary=String(result.summary||'').slice(0,220);d.insight=String(result.insight||'').slice(0,220);}
+    if(type==='core_decision')d.decision=String(e.features?.selected_option||'').slice(0,120);
+    if(type==='core_outcome'){d.outcome_status=String(e.features?.outcome_status||e.features?.result?.outcome_status||'').slice(0,60);d.result_note=String(e.features?.result_note||e.features?.result?.result_note||'').slice(0,180);}
+  }
+  for(const m of matches){if(m.status!=='connected')continue;const date=storyDateKey(m.updated_at||m.created_at);add(date,{connected:true});}
+  const days=[...map.values()].sort((a,b)=>String(a.page_date).localeCompare(String(b.page_date)));
+  let previous=null;
+  for(const day of days){
+    const current=day.checkins[day.checkins.length-1];
+    if(current&&previous){day.score_change=current.autonomy_total-previous.autonomy_total;day.restarted=(new Date(current.checked_in_at)-new Date(previous.checked_in_at))/86400000>1;}
+    if(current)previous=current;
+  }
+  return days.map((day,index)=>({...day,page_no:index+1,challenge:participant?.challenge||'挑戦',goal:participant?.goal||''}));
+}
+
+function storyFallbackLines(source={}){
+  const seed=Array.from(String(source.page_date||'')).reduce((sum,ch)=>sum+ch.charCodeAt(0),0)+Number(source.page_no||0)*11+Number(source.autonomy_total||0)*3;
+  const pick=(a,n=0)=>a[Math.abs(seed+n)%a.length];
+  const note=String(source.checkin_text||'').trim();
+  const action=(source.actions||[]).find(x=>x.completed&&x.action_text)?.action_text||'';
+  const anyAction=(source.actions||[]).find(x=>x.action_text)?.action_text||'';
+  let first,second;
+  if(source.is_start) first=pick(['今日から、この挑戦の物語が始まった。','挑戦したいことを言葉にして、最初のページを開いた。','「'+String(source.challenge||'この挑戦')+'」へ向けて、ここから記録を始めた。']);
+  else if(note){const short=note.replace(/\s+/g,' ').slice(0,62);first=pick(['今日の記録には、「'+short+'」という感覚が残った。','今日、言葉にした「'+short+'」がこのページの中心になった。','今日の一言から、今の自分が見えてきた。「'+short+'」']);}
+  else if(action){const short=action.replace(/\s+/g,' ').slice(0,70);first=pick(['今日は「'+short+'」を実際に動かした。','考えていた「'+short+'」を、今日の行動に変えた。','今日はひとつ、具体的な行動を現実に移した。']);}
+  else first=pick(['今日の現在地を記録し、この挑戦の続きにページを加えた。','今日の状態を残して、挑戦の途中経過を一ページにした。','この日の感覚を記録して、今の自分を見える形にした。']);
+  if(source.restarted)second=pick(['間が空いたあと、もう一度この挑戦に戻ってきた。','止まった時間を経て、今日またページをめくった。','一度離れても、ここから再び動き出した。'],1);
+  else if(source.connected)second=pick(['一人だけではない進み方が、この挑戦に加わった。','支えてくれる人とのつながりが、このページに残った。','誰かと進む可能性が、今日の物語に加わった。'],1);
+  else if(action||anyAction)second=source.outcome_status==='completed'?pick(['決めた一歩を実行し、行動の結果まで記録した。','やると決めたことを動かし、今日の変化を残した。','考えたことが、具体的な行動として形になった。'],1):pick(['次の行動を具体化し、まだ途中の部分もそのまま残した。','やることを決めた一方で、越えきれなかった部分も見えてきた。','今日の行動と、まだ動かせていない部分の両方を記録した。'],1);
+  else if(Number.isFinite(Number(source.score_change))&&Number(source.score_change)!==0)second=Number(source.score_change)>0?pick(['前回より自己決定度が上がり、今日の変化が数字にも表れた。','自分で選べる感覚が少し強くなり、その変化が記録に残った。','前のページとの違いから、今日の小さな変化が見えてきた。'],1):pick(['前回より少し揺れた。その変化も、今の自分を知る材料になった。','今日は数字が下がった。思うように進まない日も、この物語の一部だ。','前のページとの違いに、今日の負担や迷いが表れた。'],1);
+  else second=pick(['大きな変化がなくても、今日のことを自分の言葉で残した。','目立つ出来事がなくても、この日の現在地を記録した。','今日という一日を残したことが、次のページにつながった。'],1);
+  const third=pick(['今日の一ページが、次に進むときの手がかりとして残った。','この記録も、次の一歩を選ぶための材料になっていく。','今日の自分を残したことで、物語はまた一つ先へ進んだ。','できたことも途中のことも、次のページにつながっている。'],2);
+  return [first,second,third];
+}
+
+async function generateStoryPagesWithOpenAI({participant,sources=[]}={}){
+  const key=process.env.OPENAI_API_KEY;
+  if(!key||!sources.length)return {};
+  const prompt=[
+    'あなたはFuture Challenge Lab（FCL）の「あなたの挑戦の物語」を書く担当です。',
+    '入力された一日ごとの事実だけを使い、各日の「この日のページ」を3行で書いてください。',
+    '',
+    '日報・分析レポートではなく、本人が後から読み返したときに「この日はこういう一日だった」と感じられる短い物語にする。',
+    '日ごとに文章の入り方、語彙、リズム、焦点を変える。同じ定型文を繰り返さない。',
+    '「今日の自分の状態を、立ち止まって確かめた」「変化の大きさより、続けて記録したことに意味がある」「行動した事実が、今日のページに刻まれた」などの定型表現は使わない。',
+    '自由記述がある日は、その具体的な内容を必ず活かす。行動、再開、支援との接続、自己決定度の変化など、実際に起きた出来事を優先する。',
+    '事実にない出来事や感情を作らない。無理に感動的にしない。評価・説教・過度な励ましをしない。',
+    '各ページは日本語で3行。1行20〜70文字程度。ページ同士で同じ書き出しや似た一文を繰り返さない。',
+    'JSONだけを返す。',
+    '',
+    '挑戦テーマ：'+String(participant?.challenge||''),
+    '目標：'+String(participant?.goal||''),
+    '',
+    '日ごとの素材：',
+    JSON.stringify(sources.map(s=>({page_date:s.page_date,page_no:s.page_no,is_start:Boolean(s.is_start),checkin_text:s.checkin_text,autonomy_total:s.autonomy_total,risk_level:s.risk_level,score_change:s.score_change,actions:s.actions,connected:Boolean(s.connected),restarted:Boolean(s.restarted),decision:s.decision,outcome_status:s.outcome_status,result_note:s.result_note})),null,2),
+    '',
+    '出力形式：{"pages":[{"page_date":"YYYY-MM-DD","lines":["1行目","2行目","3行目"]}]}'
+  ].join('\n');
+  try{
+    const response=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+key},body:JSON.stringify({
+      model:'gpt-5.6-luna',temperature:0.9,response_format:{type:'json_object'},
+      messages:[{role:'system',content:'FCLの物語編集者です。入力された事実だけを使い、日ごとの表現を明確に変えてください。'},{role:'user',content:prompt}]
+    })});
+    if(!response.ok)throw new Error('OpenAI '+response.status+': '+await response.text());
+    const json=await response.json();const raw=json?.choices?.[0]?.message?.content;if(!raw)throw new Error('story AI response missing content');
+    const parsed=JSON.parse(raw),byDate={};
+    for(const page of Array.isArray(parsed?.pages)?parsed.pages:[]){
+      const date=String(page?.page_date||''),lines=Array.isArray(page?.lines)?page.lines.map(x=>String(x||'').trim()).filter(Boolean).slice(0,3):[];
+      if(/^\d{4}-\d{2}-\d{2}$/.test(date)&&lines.length===3)byDate[date]=lines;
+    }
+    return byDate;
+  }catch(error){console.error('[story-pages] OpenAI generation failed',error?.message||error);return {};}
+}
+
+async function saveStoryPage(row={}){
+  const payload={participant_id:row.participant_id,page_date:row.page_date,page_no:Number(row.page_no||0),lines:Array.isArray(row.lines)?row.lines.slice(0,3):[],source_checkin_id:row.source_checkin_id||null,generation_version:row.generation_version||'v1-ai',updated_at:new Date().toISOString()};
+  const q=db('challenge_story_pages');
+  if(q){const {data,error}=await q.upsert(payload,{onConflict:'participant_id,page_date'}).select('*').single();if(error)throw error;return data;}
+  const existing=memory.challenge_story_pages.find(x=>x.participant_id===payload.participant_id&&x.page_date===payload.page_date);
+  if(existing){Object.assign(existing,payload);return existing;}
+  const created={id:uuid(),...payload,generated_at:new Date().toISOString(),created_at:new Date().toISOString()};memory.challenge_story_pages.push(created);return created;
+}
+
+app.post('/api/story-pages/generate',async(req,res)=>{
+  try{
+    const participant_id=String(req.body?.participant_id||'').trim();
+    if(!participant_id)return res.status(400).json({error:'participant_id is required'});
+    const participant=(await select('participants',{id:participant_id}))[0];
+    if(!participant||participant.archived_at)return res.status(404).json({error:'participant not found'});
+    const [checkins,actions,events,matches,existingPages]=await Promise.all([
+      select('checkins',{participant_id}),select('action_results',{participant_id}),select('model_learning_events',{participant_id}),select('supporter_matches',{participant_id}),select('challenge_story_pages',{participant_id})
+    ]);
+    const sources=buildStorySourceDays({participant,checkins,actions,events,matches});
+    const existingByDate=new Map(existingPages.map(row=>[String(row.page_date),row]));
+    const missing=sources.filter(source=>!existingByDate.has(source.page_date));
+    const generated=missing.length?await generateStoryPagesWithOpenAI({participant,sources:missing}):{};
+    const saved=[];
+    for(const source of missing){
+      const latestCheckin=source.checkins[source.checkins.length-1];
+      const lines=generated[source.page_date]||storyFallbackLines(source);
+      saved.push(await saveStoryPage({participant_id,page_date:source.page_date,page_no:source.page_no,lines,source_checkin_id:latestCheckin?.id||null,generation_version:generated[source.page_date]?'v2-ai':'v2-fallback'}));
+    }
+    const unique=new Map(existingPages.concat(saved).map(row=>[String(row.page_date),row]));
+    const story_pages=[...unique.values()].sort((a,b)=>String(a.page_date).localeCompare(String(b.page_date)));
+    res.json({ok:true,story_pages,generated_count:saved.length,ai_generated_count:saved.filter(x=>x.generation_version==='v2-ai').length});
+  }catch(error){console.error('story pages generation error',error);res.status(500).json({error:error.message||'story pages generation failed'});}
 });
 
 app.get('/api/story-user/:user_id', async (req,res)=>{
