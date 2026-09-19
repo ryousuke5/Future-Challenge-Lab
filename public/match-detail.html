@@ -67,7 +67,20 @@
       <button id="refreshBtn" type="button">更新</button>
     </div>
     <div id="noToken" class="error" hidden>
-      このページはメールに記載された「FCLを開く」リンクから開いてください。安全な接続用リンクが必要です。
+      <strong>接続ページを開けませんでした。</strong>
+      <div style="margin-top:6px">メールの古いリンクや、直接URLを開いた場合は、FCLにログインするとこの接続ページを開けます。</div>
+      <div id="loginBox" style="margin-top:14px;padding:14px;background:#fff;border-radius:12px;color:#1f2937">
+        <div style="font-weight:700;margin-bottom:8px">FCLにログインして開く</div>
+        <div style="display:grid;gap:8px">
+          <input id="loginEmail" type="email" autocomplete="email" placeholder="FCLに登録したメールアドレス">
+          <button id="requestLoginCodeBtn" type="button">認証コードを送る</button>
+          <div id="loginCodeArea" hidden style="display:grid;gap:8px">
+            <input id="loginCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="メールに届いた6桁の認証コード">
+            <button id="verifyLoginCodeBtn" type="button">ログインする</button>
+          </div>
+          <div id="loginStatus" class="muted"></div>
+        </div>
+      </div>
     </div>
     <div id="messages" class="messages"></div>
     <div id="emptyMessages" class="muted" hidden>まだメッセージはありません。最初の一言を送ってみましょう。</div>
@@ -91,6 +104,7 @@
   const token = params.get('token');
   const $ = (id) => document.getElementById(id);
   let viewerRole = null;
+  let accessToken = token || '';
 
   function showError(message){ const box=$('errorBox'); box.textContent=message; box.hidden=false; }
   function clearError(){ $('errorBox').hidden=true; $('errorBox').textContent=''; }
@@ -103,25 +117,48 @@
     return data;
   }
 
+  function showNoToken(){
+    $('noToken').hidden=false;
+    $('composer').hidden=true;
+    $('viewerRole').textContent='ログインまたは接続ページ用リンクが必要です';
+  }
+
+  function clearNoToken(){
+    $('noToken').hidden=true;
+  }
+
+  function setLoadingFailure(){
+    $('challenge').textContent='取得できませんでした';
+    $('goal').textContent='取得できませんでした';
+    $('participant').textContent='取得できませんでした';
+    $('supporter').textContent='取得できませんでした';
+    $('matchStatus').textContent='接続状態を取得できませんでした';
+  }
+
   async function loadDetail(){
     if(!matchId) throw new Error('match_idがありません');
     const data = await getJson(`/api/matches/${encodeURIComponent(matchId)}/detail`);
+
+    if(data.access_token) accessToken = data.access_token;
+    if(data.viewer_role) viewerRole = data.viewer_role;
+
     $('challenge').textContent = data.participant?.challenge || '未登録';
     $('goal').textContent = data.participant?.goal || '未登録';
     $('participant').textContent = data.participant?.name || '挑戦者';
     $('supporter').textContent = data.supporter?.name || '支援者';
     const status = data.match?.status || 'pending';
     $('matchStatus').textContent = status === 'connected' ? '接続成立' : status;
+    clearNoToken();
+    if(viewerRole) $('viewerRole').textContent = `あなた：${roleLabel(viewerRole)}`;
+    return data;
   }
 
   async function loadMessages(){
-    if(!token){
-      $('noToken').hidden=false;
-      $('composer').hidden=true;
-      $('viewerRole').textContent='安全な接続用リンクが必要です';
+    if(!accessToken){
+      showNoToken();
       return;
     }
-    const data = await getJson(`/api/matches/${encodeURIComponent(matchId)}/messages?token=${encodeURIComponent(token)}`);
+    const data = await getJson(`/api/matches/${encodeURIComponent(matchId)}/messages?token=${encodeURIComponent(accessToken)}`);
     viewerRole = data.viewer_role;
     $('viewerRole').textContent = `あなた：${roleLabel(viewerRole)}`;
     $('composer').hidden=false;
@@ -144,10 +181,83 @@
 
   async function refresh(){
     clearError();
-    try{ await loadDetail(); await loadMessages(); }
-    catch(error){ showError(error.message || '読み込みに失敗しました'); }
+    try{
+      await loadDetail();
+      await loadMessages();
+    }catch(error){
+      setLoadingFailure();
+      if(/login|access token|トークン|ログイン|認証/i.test(error.message || '')){
+        showNoToken();
+      }
+      showError(error.message || '読み込みに失敗しました');
+    }
   }
 
+  async function requestLoginCode(){
+    const email=$('loginEmail').value.trim().toLowerCase();
+    if(!email){
+      $('loginStatus').textContent='メールアドレスを入力してください。';
+      return;
+    }
+    const btn=$('requestLoginCodeBtn');
+    btn.disabled=true;
+    btn.textContent='送信中…';
+    $('loginStatus').textContent='';
+    try{
+      const response=await fetch('/api/auth/request-code',{
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        credentials:'same-origin',
+        body:JSON.stringify({email})
+      });
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok) throw new Error(data.error||'認証コードの送信に失敗しました。');
+      $('loginCodeArea').hidden=false;
+      if(data.development_code) $('loginCode').value=data.development_code;
+      $('loginStatus').textContent=data.development_code
+        ? '開発用認証コードを入力済みです。ログインしてください。'
+        : '認証コードをメールで送信しました。';
+    }catch(error){
+      $('loginStatus').textContent=error.message||'認証コードの送信に失敗しました。';
+    }finally{
+      btn.disabled=false;
+      btn.textContent='認証コードを送る';
+    }
+  }
+
+  async function verifyLoginCode(){
+    const email=$('loginEmail').value.trim().toLowerCase();
+    const code=$('loginCode').value.replace(/\D/g,'');
+    if(!email||code.length!==6){
+      $('loginStatus').textContent='メールアドレスと6桁の認証コードを入力してください。';
+      return;
+    }
+    const btn=$('verifyLoginCodeBtn');
+    btn.disabled=true;
+    btn.textContent='ログイン中…';
+    $('loginStatus').textContent='';
+    try{
+      const response=await fetch('/api/auth/verify-code',{
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        credentials:'same-origin',
+        body:JSON.stringify({email,code})
+      });
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok) throw new Error(data.error||'ログインに失敗しました。');
+      $('loginStatus').textContent='ログインしました。接続ページを読み込みます。';
+      accessToken='';
+      await refresh();
+    }catch(error){
+      $('loginStatus').textContent=error.message||'ログインに失敗しました。';
+    }finally{
+      btn.disabled=false;
+      btn.textContent='ログインする';
+    }
+  }
+
+  $('requestLoginCodeBtn').addEventListener('click', requestLoginCode);
+  $('verifyLoginCodeBtn').addEventListener('click', verifyLoginCode);
   $('refreshBtn').addEventListener('click', refresh);
   $('sendBtn').addEventListener('click', async () => {
     const btn=$('sendBtn');
@@ -159,7 +269,7 @@
     btn.textContent='送信中…';
     try{
       const result = await getJson(`/api/matches/${encodeURIComponent(matchId)}/messages`, {
-        method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({token,body})
+        method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({token:accessToken,body})
       });
       input.value='';
       if(result.notification_status === 'sent'){
