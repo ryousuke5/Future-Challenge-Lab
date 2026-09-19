@@ -167,7 +167,6 @@
           <h3>今日のあなたを、ここから1ページ。</h3>
           <p>記録すると、FCLが「今日のほめポイント」「今日の発見」「次の一歩」を返します。</p>
         </div>
-        <a href="#challenger-registration" class="daily-loop-cta">まず挑戦者登録をする</a>
       </div>
     `;
   }
@@ -218,13 +217,6 @@
           </article>
         </div>
 
-        <div class="daily-loop-footer">
-          <p><strong>この先が楽しみになる仕組み。</strong> 今日の記録が増えるほど、FCLがあなた自身の変化を見つけやすくなります。</p>
-          <div class="daily-loop-actions">
-            <a href="#challenger-registration" class="secondary-btn daily-loop-record">今日を記録する</a>
-            <a href="${esc(storyUrl)}" class="secondary-btn daily-loop-story">あなたの挑戦の物語を見る</a>
-          </div>
-        </div>
       `;
     }catch(error){
       console.warn('FCL daily loop load failed', error);
