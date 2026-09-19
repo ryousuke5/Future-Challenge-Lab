@@ -1,3 +1,19 @@
+function journalReplyDateKey(){
+  return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo'}).format(new Date());
+}
+
+function journalReplySeenKey(participantId){
+  return 'fcl-journal-reply-seen-' + String(participantId || '') + '-' + journalReplyDateKey();
+}
+
+function markJournalReplySeen(participantId){
+  try{ localStorage.setItem(journalReplySeenKey(participantId),'1'); }catch(error){}
+}
+
+function hasSeenJournalReply(participantId){
+  try{ return localStorage.getItem(journalReplySeenKey(participantId)) === '1'; }catch(error){ return false; }
+}
+
 function journalReplyEscape(value){
   return String(value ?? '')
     .replace(/&/g,'&amp;')
@@ -165,7 +181,12 @@ async function loadJournalReply(){
     if(!response.ok) return;
     const history = await response.json();
     if(history.journal_reply?.reply_text){
-      renderJournalReplyText(history.journal_reply.reply_text, '今日はすでに「あなたの日誌への返信」は済んでいます。');
+      const alreadySeen=hasSeenJournalReply(history.participant?.id);
+      renderJournalReplyText(
+        history.journal_reply.reply_text,
+        alreadySeen ? '今日はすでに「あなたの日誌への返信」は済んでいます。' : ''
+      );
+      markJournalReplySeen(history.participant?.id);
       return;
     }
 
@@ -186,7 +207,12 @@ async function loadJournalReply(){
         });
         const data=await response.json().catch(()=>({}));
         if(response.ok && data.reply?.reply_text){
-          renderJournalReplyText(data.reply.reply_text, data.source === 'saved_today' ? '今日はすでに「あなたの日誌への返信」は済んでいます。' : '');
+          const alreadyDoneToday=data.source === 'saved_today' || hasSeenJournalReply(history.participant?.id);
+          renderJournalReplyText(
+            data.reply.reply_text,
+            alreadyDoneToday ? '今日はすでに「あなたの日誌への返信」は済んでいます。' : ''
+          );
+          markJournalReplySeen(history.participant?.id);
           return;
         }
       }catch(error){
@@ -232,3 +258,7 @@ if(document.readyState !== 'loading'){
   installJournalReplyHooks();
   loadJournalReply();
 }
+
+window.renderJournalReplyText = renderJournalReplyText;
+window.markJournalReplySeen = markJournalReplySeen;
+window.hasSeenJournalReply = hasSeenJournalReply;
