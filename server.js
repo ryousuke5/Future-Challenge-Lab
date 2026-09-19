@@ -1050,6 +1050,102 @@ app.get('/api/users/:user_id/overview', async (req, res) => {
   }
 });
 
+
+app.get('/api/story-user/:user_id', async (req,res)=>{
+  const startedAt = Date.now();
+  try{
+    const userId=String(req.params.user_id||'').trim();
+    if(!userId) return res.status(400).json({error:'user_id is required'});
+
+    const [userResult, participantResult] = await Promise.all([
+      db('fcl_users')?.select('id').eq('id',userId).maybeSingle(),
+      db('participants')?.select('id,name,email,challenge,goal,created_at,archived_at').eq('user_id',userId)
+    ]);
+
+    if(db('fcl_users')){
+      if(userResult?.error) throw userResult.error;
+      if(!userResult?.data) return res.status(404).json({error:'user not found'});
+    }
+
+    let participants;
+    if(db('participants')){
+      if(participantResult?.error) throw participantResult.error;
+      participants=(participantResult?.data||[]).filter(row=>!row.archived_at);
+    }else{
+      const user=(await select('fcl_users',{id:userId}))[0];
+      if(!user) return res.status(404).json({error:'user not found'});
+      participants=(await select('participants',{user_id:userId})).filter(row=>!row.archived_at);
+    }
+
+    if(!participants.length){
+      return res.json({user_id:userId,participants:[],server_ms:Date.now()-startedAt});
+    }
+
+    const ids=participants.map(row=>row.id);
+
+    if(db('checkins') && db('action_results') && db('model_learning_events') && db('supporter_matches')){
+      const [checkinsResult,actionsResult,eventsResult,matchesResult]=await Promise.all([
+        db('checkins').select('*').in('participant_id',ids),
+        db('action_results').select('*').in('participant_id',ids),
+        db('model_learning_events').select('*').in('participant_id',ids),
+        db('supporter_matches').select('*').in('participant_id',ids)
+      ]);
+
+      for(const result of [checkinsResult,actionsResult,eventsResult,matchesResult]){
+        if(result?.error) throw result.error;
+      }
+
+      const checkinsBy=new Map(), actionsBy=new Map(), eventsBy=new Map(), matchesBy=new Map();
+      for(const id of ids){
+        checkinsBy.set(id,[]);
+        actionsBy.set(id,[]);
+        eventsBy.set(id,[]);
+        matchesBy.set(id,[]);
+      }
+
+      (checkinsResult.data||[]).forEach(row=>checkinsBy.get(row.participant_id)?.push(row));
+      (actionsResult.data||[]).forEach(row=>actionsBy.get(row.participant_id)?.push(row));
+      (eventsResult.data||[]).forEach(row=>eventsBy.get(row.participant_id)?.push(row));
+      (matchesResult.data||[]).forEach(row=>matchesBy.get(row.participant_id)?.push(hydrateMatchApprovalState(row)));
+
+      const payload=participants.map(participant=>({
+        participant:{
+          id:participant.id,
+          name:participant.name||'',
+          challenge:participant.challenge||'',
+          goal:participant.goal||'',
+          created_at:participant.created_at||null
+        },
+        checkins:(checkinsBy.get(participant.id)||[]).sort((a,b)=>new Date(a.checked_in_at||0)-new Date(b.checked_in_at||0)),
+        actions:(actionsBy.get(participant.id)||[]).sort((a,b)=>new Date(a.completed_at||a.created_at||0)-new Date(b.completed_at||b.created_at||0)),
+        events:(eventsBy.get(participant.id)||[]).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0)),
+        matches:(matchesBy.get(participant.id)||[]).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0))
+      }));
+
+      return res.json({user_id:userId,participants:payload,server_ms:Date.now()-startedAt});
+    }
+
+    // Memory-mode fallback.
+    const histories=await Promise.all(participants.map(async participant=>({
+      participant:{
+        id:participant.id,
+        name:participant.name||'',
+        challenge:participant.challenge||'',
+        goal:participant.goal||'',
+        created_at:participant.created_at||null
+      },
+      checkins:(await select('checkins',{participant_id:participant.id})).sort((a,b)=>new Date(a.checked_in_at||0)-new Date(b.checked_in_at||0)),
+      actions:(await select('action_results',{participant_id:participant.id})).sort((a,b)=>new Date(a.completed_at||a.created_at||0)-new Date(b.completed_at||b.created_at||0)),
+      events:(await select('model_learning_events',{participant_id:participant.id})).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0)),
+      matches:(await select('supporter_matches',{participant_id:participant.id})).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0))
+    })));
+    return res.json({user_id:userId,participants:histories,server_ms:Date.now()-startedAt});
+  }catch(e){
+    console.error('story user error',e);
+    res.status(500).json({error:e.message||'story user failed'});
+  }
+});
+
 app.get('/api/story-index', async (req,res)=>{
   try{
     const [storyRows, participantRows] = await Promise.all([
