@@ -1255,25 +1255,73 @@ app.use('/api',async(req,res,next)=>{
   if(publicRoute)return next();
   try{
     const user=await getAuthenticatedFclUser(req); if(!user)return res.status(401).json({error:'FCLログインが必要です。メール認証コードでログインしてください。'}); req.fclUser=user;
-    const participantId=String(req.body?.participant_id||req.query?.participant_id||req.params?.participant_id||(/^\/participants\/[^/]+$/.test(path)?req.params.id:'')).trim();
+
+    // Express route params are not populated yet inside app.use('/api', ...).
+    // Extract dynamic path parameters explicitly for authorization checks.
+    const participantRoute=path.match(/^\/participants\/([^/]+)$/);
+    const supporterStatusRoute=path.match(/^\/supporters\/([^/]+)\/status$/);
+    const supporterOutcomeHistoryRoute=path.match(/^\/supporter\/outcomes\/([^/]+)$/);
+    const supporterCandidateRoute=path.match(/^\/supporter-candidates\/([^/]+)$/);
+    const userRoute=path.match(/^\/users\/([^/]+)(?:\/overview)?$/);
+    const matchRoute=path.match(/^\/matches\/([^/]+)(?:\/(request|challenger-approve|supporter-approve|decline))?$/);
+    const matchId=matchRoute?.[1] || '';
+    const matchAction=matchRoute?.[2] || '';
+
+    const participantId=String(req.body?.participant_id||req.query?.participant_id||participantRoute?.[1]||supporterCandidateRoute?.[1]||'').trim();
     if(participantId&&!(await requireParticipantOwnership(user.id,participantId)))return res.status(403).json({error:'この挑戦者データへアクセスする権限がありません。'});
+
     const supporterId=String(req.body?.supporter_id||req.query?.supporter_id||'').trim();
-    const supporterOwnershipExempt=path==='/supporter-outcomes';
-    if(supporterId&&!supporterOwnershipExempt&&!(await requireSupporterOwnership(user.id,supporterId)))return res.status(403).json({error:'この支援者データへアクセスする権限がありません。'});
-    if(/^\/users\/[^/]+(?:\/overview)?$/.test(path)||/^\/story-user\/[^/]+$/.test(path)){const target=String(req.params?.user_id||'').trim();if(target&&target!==user.id)return res.status(403).json({error:'このユーザー情報へアクセスする権限がありません。'});}
-    if(/^\/matches\/[^/]+\/(request|challenger-approve)$/.test(path)){const match=(await select('supporter_matches',{id:req.params.id}))[0];if(!match||!(await requireParticipantOwnership(user.id,match.participant_id)))return res.status(403).json({error:'挑戦者本人のみ操作できます。'});req.fclMatch=match;}
-    else if(/^\/matches\/[^/]+\/supporter-approve$/.test(path)){const match=(await select('supporter_matches',{id:req.params.id}))[0];if(!match||!(await requireSupporterOwnership(user.id,match.supporter_id)))return res.status(403).json({error:'支援者本人のみ操作できます。'});req.fclMatch=match;}
-    else if(/^\/matches\/[^/]+\/decline$/.test(path)){const match=(await select('supporter_matches',{id:req.params.id}))[0];if(!match||!(await userOwnsMatch(user.id,match)))return res.status(403).json({error:'接続当事者のみ操作できます。'});const actor=String(req.body?.actor||'challenger');if((actor==='challenger'&&!(await requireParticipantOwnership(user.id,match.participant_id)))||(actor==='supporter'&&!(await requireSupporterOwnership(user.id,match.supporter_id)))||!['challenger','supporter'].includes(actor))return res.status(403).json({error:'この接続の当事者本人のみ辞退できます。'});req.fclMatch=match;}
-    else if(/^\/matches\/[^/]+$/.test(path)){const match=(await select('supporter_matches',{id:req.params.id}))[0];if(!match||!(await userOwnsMatch(user.id,match)))return res.status(403).json({error:'この接続情報へアクセスする権限がありません。'});req.fclMatch=match;}
+    if(supporterId&&path!=='/supporter-outcomes'&&!(await requireSupporterOwnership(user.id,supporterId)))return res.status(403).json({error:'この支援者データへアクセスする権限がありません。'});
+
+    if(userRoute){
+      const target=String(userRoute[1]||'').trim();
+      if(target&&target!==user.id)return res.status(403).json({error:'このユーザー情報へアクセスする権限がありません。'});
+    }
+
+    if(matchRoute?.[1]){
+      const match=(await select('supporter_matches',{id:matchId}))[0];
+      if(!match)return res.status(404).json({error:'match not found'});
+      if(matchAction==='request'||matchAction==='challenger-approve'){
+        if(!(await requireParticipantOwnership(user.id,match.participant_id)))return res.status(403).json({error:'挑戦者本人のみ操作できます。'});
+        req.fclMatch=match;
+      }else if(matchAction==='supporter-approve'){
+        if(!(await requireSupporterOwnership(user.id,match.supporter_id)))return res.status(403).json({error:'支援者本人のみ操作できます。'});
+        req.fclMatch=match;
+      }else if(matchAction==='decline'){
+        if(!(await userOwnsMatch(user.id,match)))return res.status(403).json({error:'接続当事者のみ操作できます。'});
+        const actor=String(req.body?.actor||'challenger');
+        if((actor==='challenger'&&!(await requireParticipantOwnership(user.id,match.participant_id)))||(actor==='supporter'&&!(await requireSupporterOwnership(user.id,match.supporter_id)))||!['challenger','supporter'].includes(actor)){
+          return res.status(403).json({error:'この接続の当事者本人のみ辞退できます。'});
+        }
+        req.fclMatch=match;
+      }else{
+        if(!(await userOwnsMatch(user.id,match)))return res.status(403).json({error:'この接続情報へアクセスする権限がありません。'});
+        req.fclMatch=match;
+      }
+    }
+
     if(path==='/supporter/dashboard'&&req.query?.user_id&&String(req.query.user_id)!==user.id)return res.status(403).json({error:'この支援者画面へアクセスする権限がありません。'});
-    if(/^\/supporter\/outcomes\/[^/]+$/.test(path)&&!(await requireSupporterOwnership(user.id,req.params.supporter_id)))return res.status(403).json({error:'この支援者の結果を確認する権限がありません。'});
+    if(supporterOutcomeHistoryRoute&&!(await requireSupporterOwnership(user.id,supporterOutcomeHistoryRoute[1])))return res.status(403).json({error:'この支援者の結果を確認する権限がありません。'});
     if(path==='/dashboard'&&!isFclAdmin(user))return res.status(403).json({error:'管理者権限が必要です。'});
-    if(path==='/supporters/register'){const email=normalizeContactEmail(req.body?.email);if(email!==normalizeContactEmail(user.email))return res.status(403).json({error:'登録メールアドレスを認証してください。'});}
-    if(path==='/participants'){const email=normalizeContactEmail(req.body?.email);if(email!==normalizeContactEmail(user.email))return res.status(403).json({error:'登録メールアドレスを認証してください。'});}
+    if(path==='/supporters/register'){
+      const email=normalizeContactEmail(req.body?.email);
+      if(email!==normalizeContactEmail(user.email))return res.status(403).json({error:'登録メールアドレスを認証してください。'});
+    }
+    if(path==='/participants'){
+      const email=normalizeContactEmail(req.body?.email);
+      if(email!==normalizeContactEmail(user.email))return res.status(403).json({error:'登録メールアドレスを認証してください。'});
+    }
     if(path==='/supporter/execute'&&!await requireSupporterOwnership(user.id,req.body?.supporter_id))return res.status(403).json({error:'支援者本人のみ支援を実行できます。'});
     if(path==='/supporter-match'&&!await requireSupporterOwnership(user.id,req.body?.supporter_id))return res.status(403).json({error:'支援者本人のみ支援先を選択できます。'});
-    if(path==='/supporter-outcomes'&&!await requireParticipantOwnership(user.id,req.body?.participant_id))return res.status(403).json({error:'挑戦者本人のみ支援結果を記録できます。'});
-    if(/^\/supporters\/[^/]+\/status$/.test(path)&&!await requireSupporterOwnership(user.id,req.params.id))return res.status(403).json({error:'支援者本人のみ状態を変更できます。'});
+
+    if(path==='/supporter-outcomes'){
+      const outcomeMatchId=String(req.body?.match_id||'').trim();
+      const match=outcomeMatchId ? (await select('supporter_matches',{id:outcomeMatchId}))[0] : null;
+      if(!match||!(await userOwnsMatch(user.id,match)))return res.status(403).json({error:'接続当事者本人のみ支援結果を記録できます。'});
+      req.fclMatch=match;
+    }
+
+    if(supporterStatusRoute&&!await requireSupporterOwnership(user.id,supporterStatusRoute[1]))return res.status(403).json({error:'支援者本人のみ状態を変更できます。'});
     next();
   }catch(error){console.error('[fcl-auth] guard',error);res.status(500).json({error:'認可確認に失敗しました。'});}
 });
@@ -1436,7 +1484,6 @@ app.get('/api/users/:user_id/overview', async (req,res)=>{
           challenge:participant?.challenge||'未登録',goal:participant?.goal||'未登録',
           counterpart_name:supporter?.supporter_name||'支援者',counterpart_organization:supporter?.organization_name||'',
           updated_at:match.updated_at||match.created_at||null,latest_checkin:latestCheckinMap.get(match.participant_id)||null,
-          support_method_learning:priority.support_method_learning,
         access_url:token?`${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(token)}`:null
         });
       }
