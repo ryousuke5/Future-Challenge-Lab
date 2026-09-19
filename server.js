@@ -1831,7 +1831,7 @@ app.post('/api/supporter-outcomes',async(req,res)=>{
     const executionEvent=executionEventId
       ? allSupportEvents.find(event=>event.id===executionEventId) || null
       : [...allSupportEvents]
-          .filter(event=>event.participant_id===participant_id && event.supporter_id===supporter_id && event.event_type==='support_execution')
+          .filter(event=>event.participant_id===participant_id && event.supporter_id===supporter_id && event.event_type==='support_execution' && (!match_id || event.match_id===match_id))
           .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0] || null;
 
     const row=await insert('supporter_outcomes',{
