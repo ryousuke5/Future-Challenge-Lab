@@ -553,6 +553,94 @@ function buildPersonalSupportPattern({ participant_id, assignments, actions, sup
   };
 }
 
+function classifyActionMode(text){
+  const value=String(text||'').toLowerCase();
+  if(!value) return 'other';
+  if(/投稿|発信|共有|シェア|sns|記事|メール/.test(value)) return '発信・共有';
+  if(/計画|立案|整理|まとめ|洗い出|設計|考える|検討/.test(value)) return '整理・計画';
+  if(/実装|作成|開発|編集|制作|作る|作成/.test(value)) return '作成・実行';
+  if(/相談|連絡|支援者|話す|聞く|問い合わせ/.test(value)) return '相談・接続';
+  if(/勉強|学習|調査|読む|調べ|情報/.test(value)) return '学習・調査';
+  return 'その他';
+}
+
+function buildIndividualContinuationPattern({ events = [], recommendationLearning = {} } = {}){
+  const legacy=(events||[]).filter(event=>event.features?.action_type==='core_outcome');
+  const modern=(events||[]).filter(event=>event.features?.action_type==='ai_recommendation_outcome');
+  const source=modern.length ? modern : legacy;
+  const rows=source
+    .map(event=>{
+      const f=event.features||{};
+      const status=String(f.outcome_status||'').toLowerCase();
+      return {
+        status,
+        progressed:['completed','partial'].includes(status),
+        completed:status==='completed',
+        option:String(f.selected_option||f.recommended_option||'').toUpperCase(),
+        action:String(f.actual_next_action||f.next_action||'').trim(),
+        mode:classifyActionMode(f.actual_next_action||f.next_action),
+        barrier:String(f.barrier||f.result_note||'').trim()
+      };
+    })
+    .filter(row=>row.status);
+
+  const modeMap=new Map();
+  for(const row of rows){
+    const current=modeMap.get(row.mode)||{mode:row.mode,trials:0,progressed:0,completed:0,barriers:[]};
+    current.trials++;
+    if(row.progressed) current.progressed++;
+    if(row.completed) current.completed++;
+    if(row.barrier) current.barriers.push(row.barrier);
+    modeMap.set(row.mode,current);
+  }
+  const modes=[...modeMap.values()].map(row=>({
+    mode:row.mode,
+    trials:row.trials,
+    progressed:row.progressed,
+    completed:row.completed,
+    progress_rate:Number((row.progressed/row.trials).toFixed(3)),
+    completion_rate:Number((row.completed/row.trials).toFixed(3))
+  })).sort((a,b)=>(b.progress_rate-a.progress_rate)||(b.trials-a.trials));
+
+  const observedModes=modes.filter(row=>row.trials>=2);
+  const best=observedModes[0]||null;
+  const failures=rows.filter(row=>!row.progressed);
+  const failureModeMap=new Map();
+  for(const row of failures){
+    failureModeMap.set(row.mode,(failureModeMap.get(row.mode)||0)+1);
+  }
+  const repeatedFailureMode=[...failureModeMap.entries()].sort((a,b)=>b[1]-a[1])[0]||null;
+
+  let pattern_status='観測不足';
+  let statement='まだ「続きやすい条件」を十分に特定できません。行動結果を重ねて観測します。';
+  let next_step_guidance='まずは今日できる最小の一歩を設定します。';
+
+  if(best){
+    pattern_status=best.trials>=3?'個人パターン観測中':'初期パターン観測';
+    statement=`これまでの観測では「${best.mode}」の行動が、${best.trials}回中${best.progressed}回で完了または一部実行まで進んでいます。これは本人の観測上の傾向であり、因果効果は断定しません。`;
+    next_step_guidance=`次回は「${best.mode}」に近い形で、負担を小さくした一歩を提案します。`;
+  }
+
+  if(repeatedFailureMode && repeatedFailureMode[1]>=2 && (!best || repeatedFailureMode[0]!==best.mode)){
+    pattern_status='調整優先';
+    statement=`「${repeatedFailureMode[0]}」では未実行・未完了が${repeatedFailureMode[1]}回観測されています。次回は同じ形をそのまま繰り返さず、別の進め方か、より小さい一歩を試します。`;
+    next_step_guidance='繰り返し止まっている行動の形を避け、まず負担を下げるか障壁を1つ整理します。';
+  }
+
+  const evidence=best && best.trials>=3 ? '個人データ3回以上' : best ? '個人データ2回以上' : '個人データ不足';
+  return {
+    status:pattern_status,
+    sample_size:rows.length,
+    evidence,
+    strongest_mode:best?.mode||null,
+    modes,
+    statement,
+    next_step_guidance,
+    repeated_failure_mode:repeatedFailureMode ? {mode:repeatedFailureMode[0],trials:repeatedFailureMode[1]} : null,
+    source:modern.length ? 'ai_recommendation_outcome' : legacy.length ? 'core_outcome_legacy' : 'none'
+  };
+}
+
 function buildRecommendationLearningProfile({ events = [] } = {}){
   const rows=(events||[])
     .filter(event=>event.features?.action_type==='ai_recommendation_outcome')
@@ -663,13 +751,15 @@ function buildPersonalLearningProfile({ participant_id, assignments = [], action
     hint=`「${observedVariants[0].label}」は過去${observedVariants[0].trials}回の観測があります。まだ比較材料が少ないため、次の結果も見ながら判断します。`;
   }
   const recommendationLearning=buildRecommendationLearningProfile({events});
+  const individualContinuationPattern=buildIndividualContinuationPattern({events,recommendationLearning});
   return {
     variants,
     support: { trials:supportOutcomes.length, observed_rate:supportRate },
     recurring_barriers:recurringBarriers,
     recent_outcomes:recentCoreOutcomes,
     recommendation_learning:recommendationLearning,
-    hint:recommendationLearning.adjustment.reason ? hint+' '+recommendationLearning.adjustment.reason : hint,
+    individual_continuation_pattern:individualContinuationPattern,
+    hint:individualContinuationPattern.statement ? hint+' '+individualContinuationPattern.statement : (recommendationLearning.adjustment.reason ? hint+' '+recommendationLearning.adjustment.reason : hint),
     evidence_quality: observedVariants.length>=2 ? '比較観測あり' : observedVariants.length===1 ? '一部観測あり' : recommendationLearning.total_trials>0 ? '行動結果を観測中' : '観測不足'
   };
 }
@@ -707,7 +797,7 @@ async function callOpenAiFallback(prompt){
       body: JSON.stringify({
         model: 'gpt-4o-mini',
         temperature: 0.4,
-        messages: [{ role: 'system', content: 'You are a helpful assistant for challenge continuation. Return valid JSON with keys: state, state_change, risk, continuation_risk, insight, problem, solutions, recommended_option, next_action, adaptive_questions, personal_support_pattern. continuation_risk must contain level, reasons (array), and signals (array). Use only observed facts.' }, { role: 'user', content: prompt }],
+        messages: [{ role: 'system', content: 'You are a helpful assistant for challenge continuation. Return valid JSON with keys: state, state_change, risk, continuation_risk, insight, problem, solutions, recommended_option, next_action, adaptive_questions, personal_support_pattern, personal_learning. continuation_risk must contain level, reasons (array), and signals (array). Use only observed facts.' }, { role: 'user', content: prompt }],
         response_format: { type: 'json_object' }
       })
     });
@@ -876,7 +966,9 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
   };
 
   const adaptiveAdjustment=personalLearning.recommendation_learning?.adjustment || {};
-  const adaptiveNextAction=adaptiveAdjustment.next_action_hint
+  const individualPattern=personalLearning.individual_continuation_pattern || {};
+  const adaptiveNextAction=individualPattern.next_step_guidance
+    || adaptiveAdjustment.next_action_hint
     || `今日の最初の一歩として、${solutions[0]?.title || '問題を整理する'}を3分で始めます。`;
 
   const baseResult = {
@@ -897,7 +989,7 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
     exploration: { mode: personalSupportPattern.status==='observational' ? 'exploit_with_exploration' : 'explore', reason: personalSupportPattern.statement }
   };
 
-  const prompt = 'participant_goal=' + coreContext.goal + '\ncheckin_text=' + coreContext.checkin_text + '\nstate=' + JSON.stringify(state) + '\nstate_changes=' + JSON.stringify(stateChanges) + '\nrisk_signals=' + JSON.stringify(riskSignals) + '\ncontinuation_profile=' + JSON.stringify(continuationProfile) + '\npersonal_learning=' + JSON.stringify(personalLearning) + '\nrecommendation_learning=' + JSON.stringify(personalLearning.recommendation_learning||{}) + '\nrecent_action=' + coreContext.recentAction + '\nbarriers=' + coreContext.barriers + '\nUse continuation_profile to identify concrete continuation risks. Use recommendation_learning to adapt the next action from prior outcomes. When adjustment.mode is shrink_and_adjust or smaller_step, do not recommend repeating the same-sized action; use the provided next_action_hint. When adjustment.mode is reuse_observed, you may reuse the observed option but still keep the step small. Do not diagnose health or personality. Distinguish observed signals from hypotheses. Prefer a small actionable next step and avoid repeating previous journal wording.';
+  const prompt = 'participant_goal=' + coreContext.goal + '\ncheckin_text=' + coreContext.checkin_text + '\nstate=' + JSON.stringify(state) + '\nstate_changes=' + JSON.stringify(stateChanges) + '\nrisk_signals=' + JSON.stringify(riskSignals) + '\ncontinuation_profile=' + JSON.stringify(continuationProfile) + '\npersonal_learning=' + JSON.stringify(personalLearning) + '\nrecommendation_learning=' + JSON.stringify(personalLearning.recommendation_learning||{}) + '\nindividual_continuation_pattern=' + JSON.stringify(personalLearning.individual_continuation_pattern||{}) + '\nrecent_action=' + coreContext.recentAction + '\nbarriers=' + coreContext.barriers + '\nUse continuation_profile to identify concrete continuation risks. Use recommendation_learning to adapt the next action from prior outcomes. When adjustment.mode is shrink_and_adjust or smaller_step, do not recommend repeating the same-sized action; use the provided next_action_hint. When adjustment.mode is reuse_observed, you may reuse the observed option but still keep the step small. Do not diagnose health or personality. Distinguish observed signals from hypotheses. Prefer a small actionable next step and avoid repeating previous journal wording.';
   const llmResult = await callOpenAiFallback(prompt);
   if(llmResult){
     const result = normalizeAiCoreResult(llmResult, baseResult);
