@@ -389,6 +389,9 @@ async function submitCoreCheckin(){
     renderInsight(data);
     renderSolutions(data);
     document.getElementById('coreNextAction').value = data?.result?.next_action || '';
+    if(data?.journal_reply?.reply_text && typeof window.renderJournalReplyText === 'function'){
+      window.renderJournalReplyText(data.journal_reply.reply_text);
+    }
   }); } catch(error) { showUiError(document.getElementById('coreInsight'),'分析に失敗しました。もう一度お試しください。'); }
 }
 
