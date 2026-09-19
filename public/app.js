@@ -304,26 +304,32 @@ function renderCoreResult(data){
   const result = data?.result || {};
   const continuation = result.continuation_risk || {};
   const continuationReasons = Array.isArray(continuation.reasons) ? continuation.reasons : [];
+  const esc = (value) => String(value ?? '')
+    .replaceAll('&','&amp;')
+    .replaceAll('<','&lt;')
+    .replaceAll('>','&gt;')
+    .replaceAll('"','&quot;')
+    .replaceAll("'",'&#39;');
   const summary = [
     { title: '現在の状態', value: typeof result.state === 'object' ? (result.state.currentState || result.state.current_state || 'unknown') : (result.state || 'unknown') },
     { title: '変化', value: Array.isArray(result.state_change) ? result.state_change.join(' ') : (result.state_change || '変化の有無はまだ不明です。') },
     { title: 'リスク', value: `${result.risk?.level || 'unknown'} / ${result.risk?.reason || 'reason unknown'}` },
     { title: '継続リスクの理由', value: continuationReasons.length ? continuationReasons.slice(0,2).join(' / ') : '具体的な繰り返し兆候はまだ十分にありません。' },
-    { title: '推奨次の一歩', value: result.next_action || '次の一歩を整理してください。' }
+    { title: '推奨次の一歩', value: result.next_action || '次の一歩を整理してください。' },
+    { title: '次回への調整', value: result.adaptive_next_step_reason || '今回の結果を次回の提案に反映します。' }
   ];
 
   document.getElementById('coreResult').innerHTML = `
     <div class="analysis-grid">
       ${summary.map(item => `
         <div class="result-card">
-          <span class="section-tag">${item.title}</span>
-          <h3>${item.value}</h3>
+          <span class="section-tag">${esc(item.title)}</span>
+          <h3>${esc(item.value)}</h3>
         </div>
       `).join('')}
     </div>
   `;
 }
-
 function renderInsight(data){
   const result = data?.result || {};
   const esc = (value) => String(value ?? '')
@@ -343,6 +349,7 @@ function renderInsight(data){
       ${(result.adaptive_questions || []).length ? `<div><strong>追加で確認したいこと</strong><ul class="bullet-list">${result.adaptive_questions.map(question => `<li>${esc(question.question)}</li>`).join('')}</ul></div>` : ''}
       ${result.personal_support_pattern?.statement ? `<p><strong>個人別の観測:</strong> ${esc(result.personal_support_pattern.statement)}</p>` : ''}
       ${personalHint ? `<div class="personal-learning-hint"><strong>あなたの過去の記録からのヒント</strong><p>${esc(personalHint)}</p><small>観測の確かさ：${esc(evidenceQuality)}</small></div>` : ''}
+      ${result.personal_learning?.recommendation_learning?.total_trials ? `<div class="personal-learning-hint"><strong>AIの自己改善状況</strong><p>これまでの次の一歩を ${esc(result.personal_learning.recommendation_learning.total_trials)}回観測。今回の結果を次の提案に反映します。</p></div>` : ''}
     </div>
   `;
 }
@@ -435,7 +442,7 @@ async function submitCoreDecision(){
       selected_option: selectedCoreOption,
       reason: '本人が選択した解決策',
       next_action: document.getElementById('coreNextAction').value || '今できる一歩を始める',
-      target_date: document.getElementById('coreTargetDate').value || todayJstDateForInput()
+      target_date: document.getElementById('coreTargetDate')?.value || todayJstDateForInput()
     };
 
     const data = await fetch('/api/core/decision', {
@@ -465,7 +472,7 @@ async function submitCoreOutcome(){
       next_action: nextAction,
       outcome_status: document.getElementById('coreOutcomeStatus').value || 'not_completed',
       result_note: document.getElementById('coreOutcomeNote').value || '',
-      target_date: document.getElementById('coreTargetDate').value || todayJstDateForInput()
+      target_date: document.getElementById('coreTargetDate')?.value || todayJstDateForInput()
     };
 
     const data = await fetch('/api/core/outcome', {
@@ -478,7 +485,12 @@ async function submitCoreOutcome(){
       return json;
     });
 
-    document.getElementById('coreOutcomeStatusText').textContent = `行動結果を保存しました: ${payload.outcome_status}`;
+    const recommendation = data?.recommendation || {};
+    const learningMessage = recommendation.followed_recommendation
+      ? '今回の選択と結果を、次回のAI提案に引き継ぎました。'
+      : '今回の結果を、次回のAI提案を調整する学習データとして保存しました。';
+    document.getElementById('coreOutcomeStatusText').textContent = `行動結果を保存しました: ${payload.outcome_status}。 ${learningMessage}`;
+    if(typeof window.refreshFclDailyLoop === 'function') window.refreshFclDailyLoop();
   }); } catch(error) { showUiError(document.getElementById('coreOutcomeStatusText')); }
 }
 
