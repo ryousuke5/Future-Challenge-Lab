@@ -52,7 +52,7 @@
         <h1>FCLマイページ</h1>
         <p>1つのFCLユーザーIDで、自分の「挑戦」と「支援」をまとめて確認します。</p>
       </div>
-      <a href="/"><button class="secondary" type="button">トップへ戻る</button></a>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><a href="/"><button class="secondary" type="button">トップへ戻る</button></a><a id="storyLink" href="/story.html"><button type="button">あなたの挑戦の物語</button></a></div>
     </div>
     <div class="user-bar">
       <input id="userIdInput" placeholder="FCLユーザーID">
@@ -240,6 +240,8 @@
 
   const params = new URLSearchParams(location.search);
   const initialUserId = params.get('user_id') || localStorage.getItem('fcl-user-id') || '';
+  const storyLink = $('storyLink');
+  if (initialUserId) storyLink.href = '/story.html?user_id=' + encodeURIComponent(initialUserId);
   if(initialUserId){
     $('userIdInput').value = initialUserId;
     loadOverview(initialUserId);
