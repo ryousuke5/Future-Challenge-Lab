@@ -153,7 +153,7 @@
             '<div class="match-title">' + escapeHtml(row.challenge || '挑戦テーマ未登録') + '</div>' +
             '<p>目標：' + escapeHtml(row.goal || '未登録') + '</p>' +
             '<div class="match-meta">' + escapeHtml(row.name || '') + ' ・ ' + escapeHtml(latestState) + '</div>' +
-            '<div class="match-actions"><button type="button" onclick="useChallenge(\\'' + escapeHtml(row.id) + '\\')">この挑戦を使う</button></div>' +
+            '<div class="match-actions"><button type="button" data-use-challenge="' + escapeHtml(row.id) + '">この挑戦を使う</button></div>' +
           '</div>';
         }).join('')
       : '<div class="empty">挑戦者登録はありません。</div>';
@@ -201,9 +201,7 @@
   function useChallenge(participantId){
     if(!participantId) return;
     localStorage.setItem('fcl-participant-id',participantId);
-    const currentUserId=localStorage.getItem('fcl-user-id') || '';
-    const url='/?participant_id='+encodeURIComponent(participantId);
-    window.location.href=url;
+    window.location.href='/?participant_id='+encodeURIComponent(participantId);
   }
 
   async function loadOverview(userId){
@@ -244,6 +242,11 @@
       btn.textContent = 'マイページを開く';
     }
   }
+
+  $('participantRecords').addEventListener('click', (event) => {
+    const button=event.target.closest('[data-use-challenge]');
+    if(button) useChallenge(button.dataset.useChallenge);
+  });
 
   $('loadBtn').addEventListener('click', () => loadOverview($('userIdInput').value));
 
