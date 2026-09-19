@@ -647,7 +647,7 @@ async function callOpenAiFallback(prompt){
 function normalizePersonalLearning(value, baseResult){
   const base=baseResult.personal_learning||{};
   if(!value||typeof value!=='object'||Array.isArray(value)) return base;
-  return { ...base, hint:typeof value.hint==='string'&&value.hint.trim()?value.hint.trim():base.hint, evidence_quality:base.evidence_quality||'観測不足', variants:Array.isArray(base.variants)?base.variants:[], support:base.support||{}, recurring_barriers:base.recurring_barriers||[], recent_outcomes:base.recent_outcomes||[] };
+  return { ...base, hint:base.hint||'', evidence_quality:base.evidence_quality||'観測不足', variants:Array.isArray(base.variants)?base.variants:[], support:base.support||{}, recurring_barriers:base.recurring_barriers||[], recent_outcomes:base.recent_outcomes||[] };
 }
 function normalizeContinuationRisk(value, baseResult){
   const base=baseResult.continuation_risk||{};
