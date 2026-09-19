@@ -922,134 +922,142 @@ app.get('/api/users/:user_id', async (req,res)=>{
 });
 
 
-app.get('/api/users/:user_id/overview', async (req, res) => {
-  try {
-    const userId = String(req.params.user_id || '').trim();
-    if (!userId) return res.status(400).json({ error: 'user_id is required' });
+app.get('/api/users/:user_id/overview', async (req,res)=>{
+  try{
+    const userId=String(req.params.user_id||'').trim();
+    if(!userId) return res.status(400).json({error:'user_id is required'});
 
-    const user = (await select('fcl_users', { id: userId }))[0];
-    if (!user) return res.status(404).json({ error: 'user not found' });
-
-    const [participants, supporters, matches, checkins] = await Promise.all([
-      (await select('participants', { user_id: userId })).filter(x => !x.archived_at),
-      (await select('supporters', { user_id: userId })).filter(x => !x.archived_at),
-      select('supporter_matches'),
-      select('checkins')
+    const [userRows,participantsResult,supportersResult]=await Promise.all([
+      select('fcl_users',{id:userId}),
+      select('participants',{user_id:userId}),
+      select('supporters',{user_id:userId})
     ]);
+    const user=userRows[0];
+    if(!user) return res.status(404).json({error:'user not found'});
 
-    const participantIds = new Set(participants.map(row => row.id));
-    const supporterIds = new Set(supporters.map(row => row.id));
-    const participantMap = new Map(participants.map(row => [row.id, row]));
-    const supporterMap = new Map(supporters.map(row => [row.id, row]));
-    const participantCheckins = new Map();
+    const participants=participantsResult.filter(x=>!x.archived_at);
+    const supporters=supportersResult.filter(x=>!x.archived_at);
+    const participantIds=participants.map(row=>row.id);
+    const supporterIds=supporters.map(row=>row.id);
 
-    for (const checkin of checkins) {
-      if (!participantIds.has(checkin.participant_id)) continue;
-      const current = participantCheckins.get(checkin.participant_id);
-      if (!current || new Date(checkin.checked_in_at || 0) > new Date(current.checked_in_at || 0)) {
-        participantCheckins.set(checkin.participant_id, checkin);
+    let matches=[];
+    let participantCheckins=[];
+
+    if(db('supporter_matches') && (participantIds.length||supporterIds.length)){
+      const queries=[];
+      if(participantIds.length) queries.push(db('supporter_matches').select('*').in('participant_id',participantIds));
+      if(supporterIds.length) queries.push(db('supporter_matches').select('*').in('supporter_id',supporterIds));
+      const results=await Promise.all(queries);
+      const byId=new Map();
+      for(const result of results){
+        if(result.error) throw result.error;
+        (result.data||[]).forEach(row=>byId.set(row.id,hydrateMatchApprovalState(row)));
+      }
+      matches=[...byId.values()];
+    }else if(participantIds.length||supporterIds.length){
+      const byId=new Map();
+      for(const row of memory.supporter_matches){
+        if(participantIds.includes(row.participant_id)||supporterIds.includes(row.supporter_id)) byId.set(row.id,hydrateMatchApprovalState(row));
+      }
+      matches=[...byId.values()];
+    }
+
+    if(db('checkins') && participantIds.length){
+      const result=await db('checkins').select('*').in('participant_id',participantIds);
+      if(result.error) throw result.error;
+      participantCheckins=result.data||[];
+    }else if(participantIds.length){
+      participantCheckins=memory.checkins.filter(row=>participantIds.includes(row.participant_id));
+    }
+
+    const participantMap=new Map(participants.map(row=>[row.id,row]));
+    const supporterMap=new Map(supporters.map(row=>[row.id,row]));
+    const missingSupporterIds=[...new Set(matches.map(m=>m.supporter_id).filter(Boolean))].filter(id=>!supporterMap.has(id));
+    const missingParticipantIds=[...new Set(matches.map(m=>m.participant_id).filter(Boolean))].filter(id=>!participantMap.has(id));
+
+    if(db('supporters') && missingSupporterIds.length){
+      const result=await db('supporters').select('*').in('id',missingSupporterIds);
+      if(result.error) throw result.error;
+      (result.data||[]).forEach(row=>supporterMap.set(row.id,row));
+    }else{
+      for(const id of missingSupporterIds){
+        const row=memory.supporters.find(x=>x.id===id);
+        if(row) supporterMap.set(id,row);
       }
     }
 
-    const publicUrl = (process.env.FCL_PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
-    const visibleMatches = [];
-
-    for (const match of matches) {
-      const status = effectiveMatchStatus(match);
-      if (participantIds.has(match.participant_id)) {
-        const participant = participantMap.get(match.participant_id);
-        const supporter = (await select('supporters', { id: match.supporter_id }))[0] || {};
-        if (supporter.archived_at) continue;
-        const token = status === 'connected' ? createAccessToken(match.id, 'challenger') : '';
-        visibleMatches.push({
-          match_id: match.id,
-          role: 'challenger',
-          role_label: '挑戦者',
-          status,
-          challenge: participant?.challenge || '未登録',
-          goal: participant?.goal || '未登録',
-          counterpart_name: supporter?.supporter_name || '支援者',
-          counterpart_organization: supporter?.organization_name || '',
-          updated_at: match.updated_at || match.created_at || null,
-          latest_checkin: participantCheckins.get(match.participant_id) || null,
-          access_url: token
-            ? `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(token)}`
-            : null
-        });
-      }
-
-      if (supporterIds.has(match.supporter_id)) {
-        const participant = participantMap.get(match.participant_id) || (await select('participants', { id: match.participant_id }))[0] || {};
-        const supporter = supporterMap.get(match.supporter_id);
-        if (participant.archived_at) continue;
-        const token = status === 'connected' ? createAccessToken(match.id, 'supporter') : '';
-        visibleMatches.push({
-          match_id: match.id,
-          role: 'supporter',
-          role_label: '支援者',
-          status,
-          challenge: participant?.challenge || '未登録',
-          goal: participant?.goal || '未登録',
-          counterpart_name: participant?.name || '挑戦者',
-          counterpart_organization: '',
-          supporter_name: supporter?.supporter_name || '支援者',
-          updated_at: match.updated_at || match.created_at || null,
-          latest_checkin: participantCheckins.get(match.participant_id) || null,
-          access_url: token
-            ? `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(token)}`
-            : null
-        });
+    if(db('participants') && missingParticipantIds.length){
+      const result=await db('participants').select('*').in('id',missingParticipantIds);
+      if(result.error) throw result.error;
+      (result.data||[]).forEach(row=>participantMap.set(row.id,row));
+    }else{
+      for(const id of missingParticipantIds){
+        const row=memory.participants.find(x=>x.id===id);
+        if(row) participantMap.set(id,row);
       }
     }
 
-    visibleMatches.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+    const latestCheckinMap=new Map();
+    for(const row of participantCheckins){
+      const current=latestCheckinMap.get(row.participant_id);
+      if(!current || new Date(row.checked_in_at||0)>new Date(current.checked_in_at||0)) latestCheckinMap.set(row.participant_id,row);
+    }
 
-    const connectedCount = visibleMatches.filter(row => row.status === 'connected').length;
-    const pendingCount = visibleMatches.filter(row => ['pending', 'challenger_approved', 'supporter_approved'].includes(row.status)).length;
+    const publicUrl=(process.env.FCL_PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/,'');
+    const visibleMatches=[];
+    for(const match of matches){
+      const status=effectiveMatchStatus(match);
+      if(participantIds.includes(match.participant_id)){
+        const participant=participantMap.get(match.participant_id);
+        const supporter=supporterMap.get(match.supporter_id)||{};
+        if(supporter.archived_at) continue;
+        const token=status==='connected'?createAccessToken(match.id,'challenger'):'';
+        visibleMatches.push({
+          match_id:match.id,role:'challenger',role_label:'挑戦者',status,
+          challenge:participant?.challenge||'未登録',goal:participant?.goal||'未登録',
+          counterpart_name:supporter?.supporter_name||'支援者',counterpart_organization:supporter?.organization_name||'',
+          updated_at:match.updated_at||match.created_at||null,latest_checkin:latestCheckinMap.get(match.participant_id)||null,
+          access_url:token?`${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(token)}`:null
+        });
+      }
+      if(supporterIds.includes(match.supporter_id)){
+        const participant=participantMap.get(match.participant_id)||{};
+        if(participant.archived_at) continue;
+        const supporter=supporterMap.get(match.supporter_id)||{};
+        const token=status==='connected'?createAccessToken(match.id,'supporter'):'';
+        visibleMatches.push({
+          match_id:match.id,role:'supporter',role_label:'支援者',status,
+          challenge:participant?.challenge||'未登録',goal:participant?.goal||'未登録',
+          counterpart_name:participant?.name||'挑戦者',counterpart_organization:'',
+          supporter_name:supporter?.supporter_name||'支援者',
+          updated_at:match.updated_at||match.created_at||null,latest_checkin:latestCheckinMap.get(match.participant_id)||null,
+          access_url:token?`${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(token)}`:null
+        });
+      }
+    }
+    visibleMatches.sort((a,b)=>new Date(b.updated_at||0)-new Date(a.updated_at||0));
+    const connectedCount=visibleMatches.filter(row=>row.status==='connected').length;
+    const pendingCount=visibleMatches.filter(row=>['pending','challenger_approved','supporter_approved'].includes(row.status)).length;
 
     res.json({
-      user_id: user.id,
-      roles: {
-        challenger: participants.length > 0,
-        supporter: supporters.length > 0
-      },
-      challenger: {
-        records: participants.map(row => ({
-          id: row.id,
-          name: row.name || '',
-          challenge: row.challenge || '',
-          goal: row.goal || '',
-          created_at: row.created_at || null,
-          latest_checkin: participantCheckins.get(row.id) || null
-        }))
-      },
-      supporter: {
-        records: supporters.map(row => ({
-          id: row.id,
-          organization_name: row.organization_name || '',
-          supporter_name: row.supporter_name || '',
-          support_category: row.support_category || '',
-          active: row.active !== false,
-          capacity: Number(row.capacity ?? 5),
-          accepting_new_matches: row.accepting_new_matches !== false,
-          created_at: row.created_at || null
-        }))
-      },
-      summary: {
-        participant_records: participants.length,
-        supporter_records: supporters.length,
-        total_connections: visibleMatches.length,
-        connected_connections: connectedCount,
-        pending_connections: pendingCount
-      },
-      matches: visibleMatches
+      user_id:user.id,
+      roles:{challenger:participants.length>0,supporter:supporters.length>0},
+      challenger:{records:participants.map(row=>({
+        id:row.id,name:row.name||'',challenge:row.challenge||'',goal:row.goal||'',created_at:row.created_at||null,
+        latest_checkin:latestCheckinMap.get(row.id)||null
+      }))},
+      supporter:{records:supporters.map(row=>({
+        id:row.id,organization_name:row.organization_name||'',supporter_name:row.supporter_name||'',support_category:row.support_category||'',
+        active:row.active!==false,capacity:Number(row.capacity??5),accepting_new_matches:row.accepting_new_matches!==false,created_at:row.created_at||null
+      }))},
+      summary:{participant_records:participants.length,supporter_records:supporters.length,total_connections:visibleMatches.length,connected_connections:connectedCount,pending_connections:pendingCount},
+      matches:visibleMatches
     });
-  } catch (error) {
-    console.error('user overview error', error);
-    res.status(500).json({ error: error.message || 'user overview failed' });
+  }catch(error){
+    console.error('user overview error',error);
+    res.status(500).json({error:error.message||'user overview failed'});
   }
 });
-
 
 app.get('/api/story-user/:user_id', async (req,res)=>{
   const startedAt=Date.now();
@@ -1364,17 +1372,33 @@ app.get('/api/story/:participant_id',async(req,res)=>{
 
 app.get('/api/core/history/:participant_id',async(req,res)=>{
   try{
-    const participant=(await select('participants',{id:req.params.participant_id}))[0];
+    const participantId=req.params.participant_id;
+    const [participantRows,events,checkins,replies]=await Promise.all([
+      select('participants',{id:participantId}),
+      select('model_learning_events',{participant_id:participantId}),
+      select('checkins',{participant_id:participantId}),
+      select('journal_replies',{participant_id:participantId,reply_date:todayJstDate()})
+    ]);
+    const participant=participantRows[0];
     if(!participant) return res.status(404).json({error:'participant not found'});
-    const events=(await select('model_learning_events',{participant_id:participant.id})).sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
-    const analysis=events.find(event=>event.features?.action_type==='core_analysis');
-    const decision=events.find(event=>event.features?.action_type==='core_decision');
-    const outcome=events.find(event=>event.features?.action_type==='core_outcome');
-    const checkin=(await select('checkins',{participant_id:participant.id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0] || null;
-    const today=todayJstDate();
-    const savedReply=(await select('journal_replies',{participant_id:participant.id,reply_date:today}))
-      .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0] || null;
-    res.json({participant,checkin,checkin_id:checkin?.id || null,analysis_event_id:analysis?.id || null,checkin_checked_in_at:checkin?.checked_in_at || null,journal_reply:savedReply,checkin_text:analysis?.features?.checkin_text || '',analysis:analysis ? (analysis.features?.result || {...analysis.features,label:analysis.label}) : null,decision:decision ? {...decision.features,label:decision.label} : null,outcome:outcome ? {...outcome.features,label:outcome.label} : null});
+    const sortedEvents=events.sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
+    const analysis=sortedEvents.find(event=>event.features?.action_type==='core_analysis');
+    const decision=sortedEvents.find(event=>event.features?.action_type==='core_decision');
+    const outcome=sortedEvents.find(event=>event.features?.action_type==='core_outcome');
+    const checkin=checkins.sort((a,b)=>new Date(b.checked_in_at||0)-new Date(a.checked_in_at||0))[0]||null;
+    const savedReply=replies.sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0]||null;
+    res.json({
+      participant,
+      checkin,
+      checkin_id:checkin?.id||null,
+      analysis_event_id:analysis?.id||null,
+      checkin_checked_in_at:checkin?.checked_in_at||null,
+      journal_reply:savedReply,
+      checkin_text:analysis?.features?.checkin_text||'',
+      analysis:analysis?(analysis.features?.result||{...analysis.features,label:analysis.label}):null,
+      decision:decision?{...decision.features,label:decision.label}:null,
+      outcome:outcome?{...outcome.features,label:outcome.label}:null
+    });
   }catch(e){res.status(500).json({error:e.message});}
 });
 
@@ -1629,6 +1653,87 @@ function getRecommendationTypeLabel(type){
     case 'supporter':
     default: return '支援者と一緒に進める';
   }
+}
+
+function buildActionActivityFromRows(checkins=[],actions=[]){
+  const now=Date.now();
+  const windowMs=7*24*60*60*1000;
+  const recentCheckins=(checkins||[]).filter(row=>{
+    const t=new Date(row?.checked_in_at||0).getTime();
+    return Number.isFinite(t)&&now-t<=windowMs;
+  }).sort((a,b)=>new Date(b.checked_in_at||0)-new Date(a.checked_in_at||0));
+  const recentActions=(actions||[]).filter(row=>{
+    const t=new Date(row?.created_at||row?.completed_at||0).getTime();
+    return Number.isFinite(t)&&now-t<=windowMs;
+  }).sort((a,b)=>new Date(b.created_at||b.completed_at||0)-new Date(a.created_at||a.completed_at||0));
+  const recentCompletedActionCount=recentActions.filter(row=>row?.completed===true||row?.execution_status==='completed').length;
+  const recentCheckinDays=new Set(recentCheckins.map(row=>new Date(row.checked_in_at).toISOString().slice(0,10))).size;
+  const lastActionAt=recentActions[0]?.created_at||recentActions[0]?.completed_at||null;
+  const lastCheckinAt=recentCheckins[0]?.checked_in_at||null;
+  const lastActivityAt=[lastActionAt,lastCheckinAt].map(v=>v?new Date(v).getTime():0).reduce((max,t)=>Math.max(max,t),0);
+  const ageHours=lastActivityAt?Math.max(0,(now-lastActivityAt)/(60*60*1000)):Infinity;
+  const recencyScore=ageHours<=48?20:ageHours<=96?10:ageHours<=168?5:0;
+  const actionCountScore=Math.min(recentActions.length/5,1)*25;
+  const completedScore=Math.min(recentCompletedActionCount/3,1)*30;
+  const checkinScore=Math.min(recentCheckinDays/5,1)*25;
+  const activityScore=Math.round(Math.min(100,actionCountScore+completedScore+checkinScore+recencyScore));
+  const active=recentActions.length>0||recentCompletedActionCount>0||recentCheckinDays>=3;
+  const action_activity_status=activityScore>=55&&active?'active':activityScore>=25?'moving':'paused';
+  const action_activity_label={active:'行動中',moving:'動きあり',paused:'行動が少ない'}[action_activity_status];
+  const action_priority_rank=action_activity_status==='active'?2:action_activity_status==='moving'?1:0;
+  return {
+    action_activity_score:activityScore,
+    action_activity_status,
+    action_activity_label,
+    action_priority_rank,
+    recent_action_count:recentActions.length,
+    recent_completed_action_count:recentCompletedActionCount,
+    recent_checkin_days:recentCheckinDays,
+    last_activity_at:lastActivityAt?new Date(lastActivityAt).toISOString():null
+  };
+}
+
+function buildSupporterPriorityFromRows(participant_id,participant,checkins=[],actions=[],assignments=[]){
+  const orderedCheckins=[...(checkins||[])].sort((a,b)=>new Date(b.checked_in_at||0)-new Date(a.checked_in_at||0));
+  const latest=orderedCheckins[0]||null;
+  const recentActions=[...(actions||[])].sort((a,b)=>new Date(b.created_at||b.completed_at||0)-new Date(a.created_at||a.completed_at||0)).slice(0,5);
+  const recentAssignments=[...(assignments||[])].sort((a,b)=>new Date(b.assigned_at||0)-new Date(a.assigned_at||0)).slice(0,5);
+  const riskScore=Number(latest?.risk_score??latest?.analysis?.signals?.risk??0);
+  const autonomy=Number(latest?.autonomy_total??latest?.analysis?.signals?.score??0);
+  const completed=recentActions.filter(x=>x.completed).length;
+  const actionActivity=buildActionActivityFromRows(checkins,actions);
+
+  let priority='low';
+  if(riskScore>=70||(riskScore>=45&&autonomy<=12)||completed===0) priority='high';
+  else if(riskScore>=45||autonomy<=16) priority='medium';
+
+  const status=autonomy>=18&&riskScore<=35?'安定継続':autonomy>=12?'バランス維持':'支援が必要';
+  const recommendationType=priority==='high'?'supporter':priority==='medium'?'checkin_follow_up':'self_directed_follow_up';
+  const recommendationLabel=getRecommendationTypeLabel(recommendationType);
+  const recommendationReason=riskScore>=70
+    ?'高リスクのため、支援者の視点で行動の定着を支える必要があると判断されたためです。'
+    :'直近のチェックインと行動実行の状況から、支援者が支援の入口を作ると改善しやすい可能性があります。';
+  const suggestedMessage=priority==='high'
+    ?'今日は最初の一歩を10分だけに絞って、支援者と一緒に進めることを検討してください。'
+    :'今の困りごとを一度整理し、今日の一歩を一緒に決めると続けやすくなります。';
+
+  return {
+    participant_id,priority,challenger_status:status,latest_checkin:latest,
+    risk_level:latest?.risk_level||riskLevel(riskScore),latest_risk_score:riskScore,autonomy_score:autonomy,
+    recent_action_count:recentActions.length,action_activity:actionActivity,
+    action_activity_score:actionActivity.action_activity_score,
+    action_activity_status:actionActivity.action_activity_status,
+    action_activity_label:actionActivity.action_activity_label,
+    action_priority_rank:actionActivity.action_priority_rank,
+    recent_completed_action_count:actionActivity.recent_completed_action_count,
+    recent_checkin_days:actionActivity.recent_checkin_days,
+    last_activity_at:actionActivity.last_activity_at,
+    recommendation_type_code:recommendationType,recommended_support_type:recommendationLabel,
+    recommendation_reason:recommendationReason,suggested_message:suggestedMessage,
+    supporter_can_edit:true,requires_explicit_approval:true,recommendation_label:'recommendation',
+    recent_assignments:recentAssignments,
+    action_completion_rate:recentActions.length?completed/recentActions.length:0
+  };
 }
 
 async function buildSupporterPriority(participant_id){
@@ -2105,106 +2210,130 @@ app.post('/api/supporter/execute', async (req, res) => {
   }
 });
 
-app.get('/api/supporter/dashboard', async (req, res) => {
-  try {
-    let supporter_id = String(req.query.supporter_id || '').trim();
-    const user_id = String(req.query.user_id || '').trim();
+app.get('/api/supporter/dashboard', async (req,res)=>{
+  try{
+    let supporter_id=String(req.query.supporter_id||'').trim();
+    const user_id=String(req.query.user_id||'').trim();
 
-    let supporter = supporter_id ? (await select('supporters',{id:supporter_id}))[0] : null;
-    if(!supporter && user_id){
-      const candidates = uniqueProductionContacts(await select('supporters',{user_id}));
-      supporter = candidates.slice().sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0] || null;
-      supporter_id = supporter?.id || '';
+    let supporter=null;
+    if(supporter_id){
+      supporter=(await select('supporters',{id:supporter_id}))[0]||null;
+    }else if(user_id){
+      const candidates=uniqueProductionContacts(await select('supporters',{user_id}));
+      supporter=candidates.slice().sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0]||null;
+      supporter_id=supporter?.id||'';
     }
 
-    if (!supporter_id || !supporter) return res.status(400).json({ error: 'invalid user_id or supporter_id' });
-    if (!supporter) return res.status(404).json({ error: 'supporter not found' });
+    if(!supporter_id||!supporter) return res.status(400).json({error:'invalid user_id or supporter_id'});
+    if(!supporter) return res.status(404).json({error:'supporter not found'});
 
-    const matches=(await select('supporter_matches')).filter(x=>x.supporter_id===supporter_id);
+    let matches=[];
+    if(db('supporter_matches')){
+      const result=await db('supporter_matches').select('*').eq('supporter_id',supporter_id);
+      if(result.error) throw result.error;
+      matches=result.data||[];
+    }else{
+      matches=memory.supporter_matches.filter(x=>x.supporter_id===supporter_id);
+    }
+    const hydratedMatches=matches.map(hydrateMatchApprovalState);
+    const participantIds=[...new Set(hydratedMatches.map(m=>m.participant_id).filter(Boolean))];
+
+    let participants=[],checkins=[],actions=[],assignments=[],outcomes=[],executionEvents=[];
+    if(db('participants')){
+      const queries=[
+        db('participants').select('*').in('id',participantIds),
+        participantIds.length?db('checkins').select('*').in('participant_id',participantIds):Promise.resolve({data:[],error:null}),
+        participantIds.length?db('action_results').select('*').in('participant_id',participantIds):Promise.resolve({data:[],error:null}),
+        participantIds.length?db('intervention_assignments').select('*').in('participant_id',participantIds):Promise.resolve({data:[],error:null}),
+        db('supporter_outcomes').select('*').eq('supporter_id',supporter_id),
+        db('connection_events').select('*').eq('supporter_id',supporter_id)
+      ];
+      const results=await Promise.all(queries);
+      for(const r of results) if(r.error) throw r.error;
+      participants=results[0].data||[];
+      checkins=results[1].data||[];
+      actions=results[2].data||[];
+      assignments=results[3].data||[];
+      outcomes=results[4].data||[];
+      executionEvents=(results[5].data||[]).filter(x=>x.event_type==='support_execution');
+    }else{
+      participants=memory.participants.filter(x=>participantIds.includes(x.id));
+      checkins=memory.checkins.filter(x=>participantIds.includes(x.participant_id));
+      actions=memory.action_results.filter(x=>participantIds.includes(x.participant_id));
+      assignments=memory.intervention_assignments.filter(x=>participantIds.includes(x.participant_id));
+      outcomes=memory.supporter_outcomes.filter(x=>x.supporter_id===supporter_id);
+      executionEvents=memory.connection_events.filter(x=>x.supporter_id===supporter_id&&x.event_type==='support_execution');
+    }
+
+    const participantMap=new Map(participants.map(p=>[p.id,p]));
+    const checkinsBy=new Map(),actionsBy=new Map(),assignmentsBy=new Map();
+    for(const id of participantIds){checkinsBy.set(id,[]);actionsBy.set(id,[]);assignmentsBy.set(id,[]);}
+    for(const row of checkins) checkinsBy.get(row.participant_id)?.push(row);
+    for(const row of actions) actionsBy.get(row.participant_id)?.push(row);
+    for(const row of assignments) assignmentsBy.get(row.participant_id)?.push(row);
+
+    const publicUrl=(process.env.FCL_PUBLIC_URL||'http://localhost:3000').replace(/\/$/,'');
     const targets=[];
-    for (const match of matches) {
-      const participant=(await select('participants',{id:match.participant_id}))[0];
-      if(!participant || participant.archived_at) continue;
-      const checkins=(await select('checkins',{participant_id:match.participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
-      const latest=checkins[0] || null;
-      const priority = await buildSupporterPriority(match.participant_id);
-      const token = effectiveMatchStatus(match) === 'connected'
-        ? createAccessToken(match.id, 'supporter')
-        : '';
-      const publicUrl = (process.env.FCL_PUBLIC_URL || 'http://localhost:3000').replace(/\/$/, '');
+    for(const match of hydratedMatches){
+      const participant=participantMap.get(match.participant_id);
+      if(!participant||participant.archived_at) continue;
+      const priority=buildSupporterPriorityFromRows(
+        match.participant_id,
+        participant,
+        checkinsBy.get(match.participant_id)||[],
+        actionsBy.get(match.participant_id)||[],
+        assignmentsBy.get(match.participant_id)||[]
+      );
+      const status=effectiveMatchStatus(match);
+      const token=status==='connected'?createAccessToken(match.id,'supporter'):'';
       targets.push({
-        match_id: match.id,
-        participant_id: match.participant_id,
-        participant_name: participant?.name || '挑戦者',
-        priority: priority.priority,
-        challenger_status: priority.challenger_status,
-        latest_checkin: latest,
-        risk_level: latest?.risk_level || 'unknown',
-        recommended_support_type: priority.recommended_support_type,
-        recommendation_reason: priority.recommendation_reason,
-        suggested_message: priority.suggested_message,
-        action_activity_score: priority.action_activity_score,
-        action_activity_status: priority.action_activity_status,
-        action_activity_label: priority.action_activity_label,
-        action_priority_rank: priority.action_priority_rank,
-        recent_action_count: priority.action_activity?.recent_action_count ?? priority.recent_action_count,
-        recent_completed_action_count: priority.action_activity?.recent_completed_action_count ?? priority.recent_completed_action_count,
-        recent_checkin_days: priority.action_activity?.recent_checkin_days ?? priority.recent_checkin_days,
-        last_activity_at: priority.last_activity_at,
-        match_status: effectiveMatchStatus(match),
-        recommendation_type_code: priority.recommendation_type_code,
-        access_url: token
-          ? `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(token)}`
-          : null
+        match_id:match.id,participant_id:match.participant_id,participant_name:participant.name||'挑戦者',
+        priority:priority.priority,challenger_status:priority.challenger_status,
+        latest_checkin:priority.latest_checkin,risk_level:priority.risk_level,
+        recommended_support_type:priority.recommended_support_type,recommendation_reason:priority.recommendation_reason,
+        suggested_message:priority.suggested_message,
+        action_activity_score:priority.action_activity_score,action_activity_status:priority.action_activity_status,
+        action_activity_label:priority.action_activity_label,action_priority_rank:priority.action_priority_rank,
+        recent_action_count:priority.recent_action_count,recent_completed_action_count:priority.recent_completed_action_count,
+        recent_checkin_days:priority.recent_checkin_days,last_activity_at:priority.last_activity_at,
+        match_status:status,recommendation_type_code:priority.recommendation_type_code,
+        access_url:token?`${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(token)}`:null
       });
     }
 
-    const outcomes=(await select('supporter_outcomes')).filter(x=>x.supporter_id===supporter_id);
-    const executionEvents=(await select('connection_events')).filter(x=>x.supporter_id===supporter_id && x.event_type==='support_execution');
-    const weekly_count = executionEvents.filter(x => {
-      const d = new Date(x.created_at || Date.now());
-      return d > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    }).length;
-    const connectedCount = matches.filter(x => x.status === 'connected').length;
-    const pendingCount = matches.filter(x => ['pending','challenger_approved','supporter_approved'].includes(effectiveMatchStatus(x))).length;
-    const observedExecutionRate = executionEvents.length ? ((executionEvents.length / Math.max(1, matches.length || executionEvents.length)) * 100) : 0;
+    const weekAgo=Date.now()-7*24*60*60*1000;
+    const weekly_count=executionEvents.filter(x=>new Date(x.created_at||0).getTime()>weekAgo).length;
+    const connectedCount=hydratedMatches.filter(x=>effectiveMatchStatus(x)==='connected').length;
+    const pendingCount=hydratedMatches.filter(x=>['pending','challenger_approved','supporter_approved'].includes(effectiveMatchStatus(x))).length;
+    const observedExecutionRate=executionEvents.length?((executionEvents.length/Math.max(1,hydratedMatches.length||executionEvents.length))*100):0;
 
     res.json({
-      supporter: {
-        id: supporter.id,
-        user_id: supporter.user_id,
-        supporter_name: supporter.supporter_name,
-        organization_name: supporter.organization_name,
-        active: supporter.active !== false,
-        support_category: supporter.support_category,
-        capacity: Number(supporter.capacity ?? 5),
-        accepting_new_matches: supporter.accepting_new_matches !== false,
-        active_connections: connectedCount,
-        weekly_support_count: weekly_count
+      supporter:{
+        id:supporter.id,user_id:supporter.user_id,supporter_name:supporter.supporter_name,
+        organization_name:supporter.organization_name,active:supporter.active!==false,support_category:supporter.support_category,
+        capacity:Number(supporter.capacity??5),accepting_new_matches:supporter.accepting_new_matches!==false,
+        active_connections:connectedCount,weekly_support_count:weekly_count
       },
-      summary: {
-        total_support_count: matches.length,
-        observed_execution_rate: Number(observedExecutionRate.toFixed(1)),
-        support_capacity: Number(supporter.capacity ?? 5),
-        weekly_support_count: weekly_count,
-        active_connections: connectedCount,
-        pending_matches: pendingCount,
-        high_priority_support: targets.filter(x => x.priority === 'high').length,
-        medium_priority_support: targets.filter(x => x.priority === 'medium').length,
-        low_priority_support: targets.filter(x => x.priority === 'low').length,
-        support_type_distribution: { supporter: executionEvents.length, checkin_follow_up: 0, self_directed_follow_up: 0 },
-        new_matching_enabled: supporter.accepting_new_matches !== false
+      summary:{
+        total_support_count:hydratedMatches.length,observed_execution_rate:Number(observedExecutionRate.toFixed(1)),
+        support_capacity:Number(supporter.capacity??5),weekly_support_count:weekly_count,
+        active_connections:connectedCount,pending_matches:pendingCount,
+        high_priority_support:targets.filter(x=>x.priority==='high').length,
+        medium_priority_support:targets.filter(x=>x.priority==='medium').length,
+        low_priority_support:targets.filter(x=>x.priority==='low').length,
+        support_type_distribution:{supporter:executionEvents.length,checkin_follow_up:0,self_directed_follow_up:0},
+        new_matching_enabled:supporter.accepting_new_matches!==false
       },
-      recent_outcomes: outcomes.slice(-5),
-      targets: targets.slice().sort((a,b) =>
-        (Number(b.action_priority_rank ?? 0) - Number(a.action_priority_rank ?? 0)) ||
-        (Number(b.action_activity_score ?? 0) - Number(a.action_activity_score ?? 0)) ||
-        (({ pending:0, challenger_approved:1, supporter_approved:2, connected:3, declined:4, expired:5 }[a.match_status] ?? 9) - ({ pending:0, challenger_approved:1, supporter_approved:2, connected:3, declined:4, expired:5 }[b.match_status] ?? 9)) ||
-        (({ high:0, medium:1, low:2 }[a.priority] ?? 9) - ({ high:0, medium:1, low:2 }[b.priority] ?? 9))
-      ).slice(0, 10)
+      recent_outcomes:outcomes.slice(-5),
+      targets:targets.sort((a,b)=>
+        (Number(b.action_priority_rank??0)-Number(a.action_priority_rank??0))||
+        (Number(b.action_activity_score??0)-Number(a.action_activity_score??0))||
+        (({pending:0,challenger_approved:1,supporter_approved:2,connected:3,declined:4,expired:5}[a.match_status]??9)-({pending:0,challenger_approved:1,supporter_approved:2,connected:3,declined:4,expired:5}[b.match_status]??9))||
+        (({high:0,medium:1,low:2}[a.priority]??9)-({high:0,medium:1,low:2}[b.priority]??9))
+      ).slice(0,10)
     });
-  } catch (error) {
-    res.status(500).json({ error: error.message || 'supporter dashboard failed' });
+  }catch(error){
+    res.status(500).json({error:error.message||'supporter dashboard failed'});
   }
 });
 
