@@ -113,7 +113,7 @@ function buildFallbackEmail({ recipientRole, participant, supporter, matchId }) 
         `FCLで開く：${detailUrl}`,
         '',
         'Future Challenge Lab'
-      ].join('\\n')
+      ].join('\n')
     : [
         `${recipientName}さん`,
         '',
@@ -133,7 +133,7 @@ function buildFallbackEmail({ recipientRole, participant, supporter, matchId }) 
         `FCLで開く：${detailUrl}`,
         '',
         'Future Challenge Lab'
-      ].join('\\n');
+      ].join('\n');
 
   return { subject, body, detailUrl, source: 'fallback' };
 }
