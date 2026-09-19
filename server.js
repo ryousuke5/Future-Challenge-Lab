@@ -1219,7 +1219,7 @@ app.post('/api/auth/request-code',async(req,res)=>{
     if(sentAt&&Date.now()-sentAt<60000)return res.status(429).json({error:'認証コードは1分に1回まで送信できます。'});
     const code=String(crypto.randomInt(100000,1000000));
     await update('fcl_users',user.id,{auth_code_hash:hashSha256(code),auth_code_expires_at:new Date(Date.now()+10*60*1000).toISOString(),auth_code_sent_at:new Date().toISOString(),auth_code_attempts:0,updated_at:new Date().toISOString()});
-    const testMode=isTestEmail(email)&&process.env.NODE_ENV!=='production';
+    const testMode=isTestEmail(email)&&process.env.NODE_ENV==='development';
     if(!testMode){
       if(!process.env.RESEND_API_KEY||!process.env.FCL_FROM_EMAIL)return res.status(503).json({error:'認証メールの送信設定がまだ完了していません。'});
       const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+process.env.RESEND_API_KEY},body:JSON.stringify({from:process.env.FCL_FROM_EMAIL,to:[email],subject:'FCL｜ログイン認証コード',text:'FCLのログイン認証コードは '+code+' です。\n\n10分以内にFCLの画面へ入力してください。\n\n心当たりがない場合は、このメールを無視してください。\n\nFuture Challenge Lab',html:'<p>FCLのログイン認証コードです。</p><p style="font-size:28px;font-weight:700;letter-spacing:4px">'+code+'</p><p>10分以内にFCLの画面へ入力してください。</p><p>心当たりがない場合は、このメールを無視してください。</p><p>Future Challenge Lab</p>'})});
@@ -1261,7 +1261,7 @@ app.use('/api',async(req,res,next)=>{
     if(/^\/users\/[^/]+(?:\/overview)?$/.test(path)||/^\/story-user\/[^/]+$/.test(path)){const target=String(req.params?.user_id||'').trim();if(target&&target!==user.id)return res.status(403).json({error:'このユーザー情報へアクセスする権限がありません。'});}
     if(/^\/matches\/[^/]+\/(request|challenger-approve)$/.test(path)){const match=(await select('supporter_matches',{id:req.params.id}))[0];if(!match||!(await requireParticipantOwnership(user.id,match.participant_id)))return res.status(403).json({error:'挑戦者本人のみ操作できます。'});req.fclMatch=match;}
     else if(/^\/matches\/[^/]+\/supporter-approve$/.test(path)){const match=(await select('supporter_matches',{id:req.params.id}))[0];if(!match||!(await requireSupporterOwnership(user.id,match.supporter_id)))return res.status(403).json({error:'支援者本人のみ操作できます。'});req.fclMatch=match;}
-    else if(/^\/matches\/[^/]+\/decline$/.test(path)){const match=(await select('supporter_matches',{id:req.params.id}))[0];if(!match||!(await userOwnsMatch(user.id,match)))return res.status(403).json({error:'接続当事者のみ操作できます。'});req.fclMatch=match;}
+    else if(/^\/matches\/[^/]+\/decline$/.test(path)){const match=(await select('supporter_matches',{id:req.params.id}))[0];if(!match||!(await userOwnsMatch(user.id,match)))return res.status(403).json({error:'接続当事者のみ操作できます。'});const actor=String(req.body?.actor||'challenger');if((actor==='challenger'&&!(await requireParticipantOwnership(user.id,match.participant_id)))||(actor==='supporter'&&!(await requireSupporterOwnership(user.id,match.supporter_id)))||!['challenger','supporter'].includes(actor))return res.status(403).json({error:'この接続の当事者本人のみ辞退できます。'});req.fclMatch=match;}
     else if(/^\/matches\/[^/]+$/.test(path)){const match=(await select('supporter_matches',{id:req.params.id}))[0];if(!match||!(await userOwnsMatch(user.id,match)))return res.status(403).json({error:'この接続情報へアクセスする権限がありません。'});req.fclMatch=match;}
     if(path==='/supporter/dashboard'&&req.query?.user_id&&String(req.query.user_id)!==user.id)return res.status(403).json({error:'この支援者画面へアクセスする権限がありません。'});
     if(path==='/supporters/register'){const email=normalizeContactEmail(req.body?.email);if(email!==normalizeContactEmail(user.email))return res.status(403).json({error:'登録メールアドレスを認証してください。'});}
@@ -2644,6 +2644,9 @@ app.post('/api/supporter/execute', async (req, res) => {
     const { participant_id, supporter_id, recommendation_type, recommendation_reason, suggested_message, approved, checkin_id, match_id } = req.body || {};
     if (!participant_id || !supporter_id) return res.status(400).json({ error: 'invalid participant_id or supporter_id' });
     if (!approved) return res.status(400).json({ error: 'supporter approval required' });
+    if (!match_id) return res.status(400).json({ error: 'match_id is required for support execution' });
+    const linkedMatch=(await select('supporter_matches',{id:match_id}))[0];
+    if(!linkedMatch||linkedMatch.participant_id!==participant_id||linkedMatch.supporter_id!==supporter_id||effectiveMatchStatus(linkedMatch)!=='connected')return res.status(403).json({error:'接続済みの本人同士のみ支援を実行できます。'});
 
     const checkins=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
     const latest = checkin_id ? (await select('checkins',{id:checkin_id}))[0] || checkins[0] : checkins[0];
