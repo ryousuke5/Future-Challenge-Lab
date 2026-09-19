@@ -553,6 +553,27 @@ function buildPersonalSupportPattern({ participant_id, assignments, actions, sup
   };
 }
 
+function buildContinuationProfile({ checkins = [], actions = [], journalReplies = [] } = {}){
+  const orderedCheckins=[...(checkins||[])].sort((a,b)=>new Date(a.checked_in_at||0)-new Date(b.checked_in_at||0));
+  const recentCheckins=orderedCheckins.slice(-7);
+  const recentActions=[...(actions||[])].sort((a,b)=>new Date(a.created_at||a.completed_at||0)-new Date(b.created_at||b.completed_at||0)).slice(-7);
+  const completedCount=recentActions.filter(row=>row.completed===true || row.execution_status==='completed').length;
+  const recentDays=[...new Set(recentCheckins.map(row=>{ const t=new Date(row.checked_in_at||0); return Number.isNaN(t.getTime())?'':t.toISOString().slice(0,10); }).filter(Boolean))];
+  let gapDays=0;
+  if(recentDays.length>=2) gapDays=Math.round((Date.parse(recentDays[recentDays.length-1])-Date.parse(recentDays[recentDays.length-2]))/86400000);
+  const barriers=[];
+  for(const row of recentCheckins){ const value=String(row.analysis?.barriers||row.analysis?.barrier||'').trim(); if(value) barriers.push(value); }
+  for(const row of recentActions){ const value=String(row.barrier||'').trim(); if(value) barriers.push(value); }
+  const barrierCounts=new Map();
+  for(const value of barriers){ const key=value.toLowerCase(); barrierCounts.set(key,(barrierCounts.get(key)||0)+1); }
+  const repeatedBarriers=[...barrierCounts.entries()].filter(([,count])=>count>=2).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([barrier,count])=>({barrier,count}));
+  const riskSeries=recentCheckins.map(row=>Number(row.risk_score)).filter(Number.isFinite);
+  const latestRisk=riskSeries.length?riskSeries[riskSeries.length-1]:null;
+  const previousRisk=riskSeries.length>=2?riskSeries[riskSeries.length-2]:null;
+  const riskDirection=latestRisk===null||previousRisk===null?'unknown':latestRisk<previousRisk?'down':latestRisk>previousRisk?'up':'flat';
+  const previousReplies=[...(journalReplies||[])].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).slice(0,5).map(row=>String(row.reply_text||'').trim()).filter(Boolean);
+  return { sample_days:recentDays.length, recent_checkins:recentCheckins.map(row=>({checked_in_at:row.checked_in_at||null,autonomy_total:Number(row.autonomy_total||0),risk_score:Number(row.risk_score||0),risk_level:row.risk_level||null,resumed:Boolean(row.analysis?.resumed)})), recent_actions:recentActions.map(row=>({action_text:String(row.action_text||'').slice(0,160),completed:Boolean(row.completed),barrier:String(row.barrier||'').slice(0,120)})), recent_action_completion_rate:recentActions.length?Number((completedCount/recentActions.length).toFixed(3)):null, latest_risk:latestRisk, previous_risk:previousRisk, risk_direction:riskDirection, latest_gap_days:gapDays, repeated_barriers:repeatedBarriers, previous_journal_replies:previousReplies };
+}
 async function callOpenAiFallback(prompt){
   const key = process.env.OPENAI_API_KEY;
   if(!key) return null;
@@ -566,7 +587,7 @@ async function callOpenAiFallback(prompt){
       body: JSON.stringify({
         model: 'gpt-4o-mini',
         temperature: 0.4,
-        messages: [{ role: 'system', content: 'You are a helpful assistant for challenge continuation. Return valid JSON with keys: state, state_change, risk, insight, problem, solutions, recommended_option, next_action.' }, { role: 'user', content: prompt }],
+        messages: [{ role: 'system', content: 'You are a helpful assistant for challenge continuation. Return valid JSON with keys: state, state_change, risk, continuation_risk, insight, problem, solutions, recommended_option, next_action, adaptive_questions, personal_support_pattern. continuation_risk must contain level, reasons (array), and signals (array). Use only observed facts.' }, { role: 'user', content: prompt }],
         response_format: { type: 'json_object' }
       })
     });
@@ -591,6 +612,11 @@ async function callOpenAiFallback(prompt){
   }
 }
 
+function normalizeContinuationRisk(value, baseResult){
+  const base=baseResult.continuation_risk||{};
+  if(!value||typeof value!=='object'||Array.isArray(value)) return base;
+  return { level:['low','medium','high','unknown'].includes(String(value.level||'').toLowerCase())?String(value.level).toLowerCase():base.level, score:Number.isFinite(Number(base.score))?Number(base.score):null, reasons:Array.isArray(value.reasons)?value.reasons.map(v=>String(v)).filter(Boolean).slice(0,4):base.reasons||[], signals:Array.isArray(value.signals)?value.signals.map(v=>String(v)).filter(Boolean).slice(0,4):base.signals||[], evidence:base.evidence||{} };
+}
 function normalizeAiCoreResult(llmResult, baseResult){
   if(!llmResult || typeof llmResult !== 'object') return baseResult;
 
@@ -653,6 +679,7 @@ function normalizeAiCoreResult(llmResult, baseResult){
     state: normalizeState(llmResult.state),
     state_change: normalizeStateChange(llmResult.state_change),
     risk: normalizeRisk(llmResult.risk),
+    continuation_risk: normalizeContinuationRisk(llmResult.continuation_risk, baseResult),
     insight: typeof llmResult.insight === 'string' && llmResult.insight.trim() ? llmResult.insight.trim() : baseResult.insight,
     problem: typeof llmResult.problem === 'string' && llmResult.problem.trim() ? llmResult.problem.trim() : baseResult.problem,
     hypothesis: typeof llmResult.hypothesis === 'string' && llmResult.hypothesis.trim() ? llmResult.hypothesis.trim() : baseResult.hypothesis,
@@ -676,6 +703,8 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
   const recentActions = (await select('action_results',{participant_id})).sort((a,b) => new Date(b.created_at || b.completed_at || 0) - new Date(a.created_at || a.completed_at || 0)).slice(0, 5);
   const recentAssignments = (await select('intervention_assignments',{participant_id})).sort((a,b) => new Date(b.assigned_at) - new Date(a.assigned_at)).slice(0, 5);
   const supportHistory = (await select('supporter_outcomes',{participant_id})).sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
+  const journalReplies = (await select('journal_replies',{participant_id})).sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0)).slice(0, 5);
+  const continuationProfile = buildContinuationProfile({ checkins, actions: recentActions, journalReplies });
 
   const coreContext = buildCoreSummary(participant, latestCheckin, checkins, recentActions, recentAssignments);
   coreContext.goal = current_goal || participant.goal || coreContext.goal;
@@ -716,6 +745,7 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
     state: state.currentState || 'unknown',
     state_change: stateChanges.join(' ') || '変化の有無はまだ不明ですが、継続の基準を確認する必要があります。',
     risk: normalizedRisk,
+    continuation_risk: { level: normalizedRisk.level, score: Number(latestCheckin?.risk_score ?? 0), reasons: riskSignals.slice(0,3), signals: continuationProfile.repeated_barriers.map(item=>'同じ障壁が複数回観測: '+item.barrier), evidence: { recent_action_completion_rate: continuationProfile.recent_action_completion_rate, latest_gap_days: continuationProfile.latest_gap_days, risk_direction: continuationProfile.risk_direction } },
     insight: coreInsight.insight,
     problem: coreInsight.problem,
     hypothesis: coreInsight.hypothesis,
@@ -727,7 +757,7 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
     exploration: { mode: personalSupportPattern.status==='observational' ? 'exploit_with_exploration' : 'explore', reason: personalSupportPattern.statement }
   };
 
-  const prompt = `participant_goal=${coreContext.goal}\ncheckin_text=${coreContext.checkin_text}\nstate=${JSON.stringify(state)}\nstate_changes=${JSON.stringify(stateChanges)}\nrisk_signals=${JSON.stringify(riskSignals)}\nrecent_action=${coreContext.recentAction}\nbarriers=${coreContext.barriers}\n`;
+  const prompt = 'participant_goal=' + coreContext.goal + '\ncheckin_text=' + coreContext.checkin_text + '\nstate=' + JSON.stringify(state) + '\nstate_changes=' + JSON.stringify(stateChanges) + '\nrisk_signals=' + JSON.stringify(riskSignals) + '\ncontinuation_profile=' + JSON.stringify(continuationProfile) + '\nrecent_action=' + coreContext.recentAction + '\nbarriers=' + coreContext.barriers + '\nUse continuation_profile to identify concrete continuation risks. Do not diagnose health or personality. Distinguish observed signals from hypotheses. Prefer a small actionable next step and avoid repeating previous journal wording.';
   const llmResult = await callOpenAiFallback(prompt);
   if(llmResult){
     const result = normalizeAiCoreResult(llmResult, baseResult);
@@ -2393,7 +2423,7 @@ app.get('/api/dashboard',async(req,res)=>{
 
 app.post('/api/core/analyze', async (req, res) => {
   try {
-    const { participant_id, checkin_text, participant_profile, current_goal, answers = {}, recent_context = {} } = req.body || {};
+    const { participant_id, checkin_id = null, checkin_text, participant_profile, current_goal, answers = {}, recent_context = {} } = req.body || {};
     if (!participant_id) return res.status(400).json({ error: 'invalid participant_id' });
     if (!checkin_text || !String(checkin_text).trim()) return res.status(400).json({ error: 'empty input' });
 
@@ -2425,7 +2455,8 @@ app.post('/api/core/analyze', async (req, res) => {
             checkinText:String(checkin_text || '').trim(),
             analysis:response,
             decision:null,
-            outcome:null
+            outcome:null,
+            recentReplies:await select('journal_replies',{participant_id})
           });
           const replyText=aiReply || [
             `今日の記録「${String(checkin_text || '').trim().slice(0,180)}」を読みました。`,
@@ -2434,7 +2465,7 @@ app.post('/api/core/analyze', async (req, res) => {
           ].join('\\n\\n');
           journalReply=await saveJournalReply({
             participant_id,
-            checkin_id:null,
+            checkin_id:checkin_id || null,
             source_analysis_event_id:response.analysis_event_id,
             reply_text:replyText,
             reply_version:aiReply ? 'v2-ai' : 'v2-ai-fallback',
