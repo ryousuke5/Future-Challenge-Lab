@@ -1617,7 +1617,7 @@ async function generateStoryPagesWithOpenAI({participant,sources=[]}={}){
   ].join('\n');
   try{
     const response=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+key},body:JSON.stringify({
-      model:'gpt-5.6-luna',temperature:0.9,response_format:{type:'json_object'},
+      model:'gpt-4o-mini',temperature:0.9,response_format:{type:'json_object'},
       messages:[{role:'system',content:'FCLの物語編集者です。入力された事実だけを使い、日ごとの表現を明確に変えてください。'},{role:'user',content:prompt}]
     })});
     if(!response.ok)throw new Error('OpenAI '+response.status+': '+await response.text());
@@ -1651,13 +1651,13 @@ app.post('/api/story-pages/generate',async(req,res)=>{
     ]);
     const sources=buildStorySourceDays({participant,checkins,actions,events,matches});
     const existingByDate=new Map(existingPages.map(row=>[String(row.page_date),row]));
-    const missing=sources.filter(source=>!existingByDate.has(source.page_date));
+    const missing=sources.filter(source=>{ const existing=existingByDate.get(source.page_date); return !existing || String(existing.generation_version||'').startsWith('v2-fallback'); });
     const generated=missing.length?await generateStoryPagesWithOpenAI({participant,sources:missing}):{};
     const saved=[];
     for(const source of missing){
       const latestCheckin=source.checkins[source.checkins.length-1];
       const lines=generated[source.page_date]||storyFallbackLines(source);
-      saved.push(await saveStoryPage({participant_id,page_date:source.page_date,page_no:source.page_no,lines,source_checkin_id:latestCheckin?.id||null,generation_version:generated[source.page_date]?'v2-ai':'v2-fallback'}));
+      saved.push(await saveStoryPage({participant_id,page_date:source.page_date,page_no:source.page_no,lines,source_checkin_id:latestCheckin?.id||null,generation_version:generated[source.page_date]?'v3-ai':'v2-fallback'}));
     }
     const unique=new Map(existingPages.concat(saved).map(row=>[String(row.page_date),row]));
     const story_pages=[...unique.values()].sort((a,b)=>String(a.page_date).localeCompare(String(b.page_date)));
@@ -1906,6 +1906,44 @@ app.post('/api/checkins',async(req,res)=>{
     const resumed=Boolean(previous && (Date.now()-new Date(previous.checked_in_at).getTime())>36*3600*1000);
     const analysis={summary:level==='high'?'自己決定感が低く、離脱リスクが高い状態です。':'自己決定感を保てています。',resumed,signals:{score,risk,level}};
     const checkin=await insert('checkins',{participant_id,autonomy_total:score,autonomy_answers:answers,risk_score:risk,risk_level:level,analysis,checked_in_at:new Date().toISOString()});
+    // Close the feedback loop for interventions that were observed before this check-in.
+    const openOutcomes=(await select('intervention_outcomes',{participant_id})).filter(row=>row.post_risk===null||row.post_risk===undefined);
+    for(const outcome of openOutcomes){
+      const intervention=outcome.intervention_id ? (await select('intervention_assignments',{id:outcome.intervention_id}))[0] : null;
+      if(!intervention) continue;
+      const sourceCheckin=intervention.checkin_id ? (await select('checkins',{id:intervention.checkin_id}))[0] : null;
+      if(!sourceCheckin) continue;
+      const sourceAt=new Date(sourceCheckin.checked_in_at||0).getTime();
+      const currentAt=new Date(checkin.checked_in_at||0).getTime();
+      if(!Number.isFinite(sourceAt)||!Number.isFinite(currentAt)||currentAt<=sourceAt) continue;
+      const preRisk=Number(outcome.pre_risk);
+      const postRisk=Number(risk);
+      const delta=Number.isFinite(preRisk)&&Number.isFinite(postRisk)?Number((postRisk-preRisk).toFixed(2)):null;
+      await update('intervention_outcomes',outcome.id,{
+        post_risk:Number.isFinite(postRisk)?postRisk:null,
+        resumed,
+        outcome_score:delta===null ? outcome.outcome_score : Number((-delta).toFixed(3))
+      });
+      await insert('model_learning_events',{
+        participant_id,
+        intervention_id:outcome.intervention_id,
+        features:{
+          action_type:'intervention_outcome_observed',
+          intervention_outcome_id:outcome.id,
+          pre_risk:Number.isFinite(preRisk)?preRisk:null,
+          post_risk:Number.isFinite(postRisk)?postRisk:null,
+          risk_delta:delta,
+          action_completed:outcome.action_completed,
+          resumed,
+          observed_at:new Date().toISOString()
+        },
+        label:{
+          action_completed:Boolean(outcome.action_completed),
+          resumed:Boolean(resumed),
+          risk_delta:delta
+        }
+      });
+    }
     const policy=await optimizeAction({participant_id,checkin});
     let assigned=null;
     if(['intervention','supporter','both'].includes(policy.selected.action_type)){
