@@ -193,23 +193,11 @@
       }
 
       const praise = buildPraise(history);
-      const streak = currentStreak(history.checkins || []);
-      const checkinsCount = (history.checkins || []).length;
-      const todayCount = (history.checkins || []).filter(row => dateKey(row.checked_in_at) === todayKey()).length;
       const discovery = buildDiscovery(history);
       const nextStep = buildNextStep(history);
-      const userId = history.participant.user_id || localStorage.getItem('fcl-user-id') || '';
-      const storyUrl = userId ? '/story.html?user_id=' + encodeURIComponent(userId) : '/story.html';
 
-      const streakText = streak > 0 ? `${streak}日連続` : '今日の記録待ち';
-      const countText = todayCount > 0 ? `今日の1ページ済み・通算${checkinsCount}回` : `通算${checkinsCount}回`;
 
       root.innerHTML = `
-        <div class="daily-loop-meta">
-          <span class="daily-loop-badge">${esc(streakText)}</span>
-          <span id="${LOOP_IDS.meta}" class="muted">${esc(countText)}</span>
-        </div>
-
         <div class="daily-loop-grid">
           <article class="daily-loop-card praise ${esc(praise.tone)}">
             <span class="section-tag">TODAY'S PRAISE</span>
