@@ -75,14 +75,66 @@ async function hasSent(matchId, recipientRole, recipientEmail) {
 }
 
 function buildFallbackEmail({ recipientRole, participant, supporter, matchId }) {
-  const recipientName = recipientRole === 'challenger' ? (participant?.name || '挑戦者') : (supporter?.supporter_name || '支援者');
-  const otherName = recipientRole === 'challenger' ? (supporter?.supporter_name || '支援者') : (participant?.name || '挑戦者');
+  const recipientName = recipientRole === 'challenger'
+    ? (participant?.name || '挑戦者')
+    : (supporter?.supporter_name || '支援者');
+  const otherName = recipientRole === 'challenger'
+    ? (supporter?.supporter_name || '支援者')
+    : (participant?.name || '挑戦者');
   const token = createAccessToken(matchId, recipientRole);
   const detailUrl = `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(matchId)}&token=${encodeURIComponent(token)}`;
-  const subject = 'FCL｜支援のつながりが成立しました';
+  const supportCategory = supporter?.support_category || '未登録';
+  const strengths = Array.isArray(supporter?.strengths) && supporter.strengths.length
+    ? supporter.strengths.join('、')
+    : '未登録';
+  const supportDescription = supporter?.description || '未登録';
+
+  const subject = recipientRole === 'challenger'
+    ? `FCL｜${otherName}さんと支援のつながりが成立しました`
+    : `FCL｜${otherName}さんの挑戦とつながりました`;
+
   const body = recipientRole === 'challenger'
-    ? `${recipientName}さん\n\nFCLで、支援者として${otherName}さんとの接続が成立しました。\n\n挑戦内容：${participant?.challenge || '未登録'}\n目標：${participant?.goal || '未登録'}\n\nまずはFCLの接続ページで現在の状況を共有し、次の一歩を一緒に整理してみてください。\n\nFCLで開く：${detailUrl}\n\nFuture Challenge Lab`
-    : `${recipientName}さん\n\nFCLで、挑戦者${otherName}さんとの支援接続が成立しました。\n\n挑戦内容：${participant?.challenge || '未登録'}\n目標：${participant?.goal || '未登録'}\n\nまずはFCLの接続ページで現在の状況を聞き、次の一歩を一緒に整理してください。\n\nFCLで開く：${detailUrl}\n\nFuture Challenge Lab`;
+    ? [
+        `${recipientName}さん`,
+        '',
+        `FCLで、支援者の${otherName}さんとのつながりが成立しました。`,
+        '',
+        '【あなたの挑戦】',
+        `挑戦内容：${participant?.challenge || '未登録'}`,
+        `目標：${participant?.goal || '未登録'}`,
+        '',
+        '【支援者ができること】',
+        `支援分野：${supportCategory}`,
+        `得意なこと：${strengths}`,
+        `支援内容：${supportDescription}`,
+        '',
+        'まずはFCLの接続ページで、お互いのことを知りながら最初の一歩を話してみてください。',
+        '',
+        `FCLで開く：${detailUrl}`,
+        '',
+        'Future Challenge Lab'
+      ].join('\\n')
+    : [
+        `${recipientName}さん`,
+        '',
+        `FCLで、挑戦者の${otherName}さんとの支援のつながりが成立しました。`,
+        '',
+        '【今回の挑戦者】',
+        `挑戦内容：${participant?.challenge || '未登録'}`,
+        `目標：${participant?.goal || '未登録'}`,
+        '',
+        '【あなたの支援できること】',
+        `支援分野：${supportCategory}`,
+        `得意なこと：${strengths}`,
+        `支援内容：${supportDescription}`,
+        '',
+        'まずはFCLの接続ページで、今の状況を聞きながら次の一歩を一緒に整理してみてください。',
+        '',
+        `FCLで開く：${detailUrl}`,
+        '',
+        'Future Challenge Lab'
+      ].join('\\n');
+
   return { subject, body, detailUrl, source: 'fallback' };
 }
 
@@ -95,24 +147,37 @@ async function generateEmail({ recipientRole, participant, supporter, matchId })
   const roleLabel = recipientRole === 'challenger' ? '挑戦者' : '支援者';
   const otherRoleLabel = recipientRole === 'challenger' ? '支援者' : '挑戦者';
   const detailUrl = fallback.detailUrl;
+  const supportCategory = supporter?.support_category || '未登録';
+  const strengths = Array.isArray(supporter?.strengths) ? supporter.strengths.join('、') : '';
+  const supportDescription = supporter?.description || '未登録';
 
   const prompt = `
 FCL（Future Challenge Lab）の支援接続が成立しました。
 以下の情報だけを使って、日本語の短いメールを作ってください。
-目的は「双方がつながったことを知らせ、FCLの接続ページで最初の会話につなげる」ことです。
+目的は「つながったことを知らせる」だけでなく、「相手の挑戦内容と、今回の支援でできることを理解して、最初の会話につなげる」ことです。
 押しつけず、安心感のある自然な文面にしてください。
 営業色、誇張、断定的な評価、個人情報の推測は禁止です。
-本文は400字以内を目安にしてください。
+本文は500字以内を目安にしてください。
 
 受信者の役割: ${roleLabel}
 受信者名: ${recipientName}
 相手の役割: ${otherRoleLabel}
 相手の名前: ${otherName}
-挑戦者の挑戦内容: ${participant?.challenge || '未登録'}
-挑戦者の目標: ${participant?.goal || '未登録'}
-支援者の支援分野: ${supporter?.support_category || '未登録'}
-支援者の強み: ${Array.isArray(supporter?.strengths) ? supporter.strengths.join('、') : ''}
+
+【挑戦者の情報】
+挑戦内容: ${participant?.challenge || '未登録'}
+目標: ${participant?.goal || '未登録'}
+
+【支援者の情報】
+支援分野: ${supportCategory}
+得意なこと: ${strengths || '未登録'}
+支援内容: ${supportDescription}
+
 FCL接続ページURL: ${detailUrl}
+
+メールでは、挑戦者向けなら「自分の挑戦」と「この支援者ができること」を明確にしてください。
+支援者向けなら「今回の挑戦者の挑戦内容・目標」と「自分が提供できる支援内容」を明確にしてください。
+最後は、FCLの接続ページで最初の会話につながる自然な一文にしてください。
 
 次のJSONだけを返してください。
 {"subject":"...","body":"..."}
