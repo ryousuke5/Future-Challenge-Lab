@@ -116,7 +116,7 @@ function renderJournalReply(result, decision = null, outcome = null){
   return replyText;
 }
 
-function renderJournalReplyText(replyText){
+function renderJournalReplyText(replyText, statusText = ''){
   const panel = document.getElementById('journalReply');
   if(!panel) return;
   const paragraphs = String(replyText || '')
@@ -132,6 +132,7 @@ function renderJournalReplyText(replyText){
         <span class="section-tag">FCL RESPONSE</span>
         <h3>あなたの日誌への返信</h3>
       </div>
+      ${statusText ? '<div class="journal-reply-status">' + journalReplyEscape(statusText) + '</div>' : ''}
       <div class="journal-reply-body human-journal-reply">${paragraphs}</div>
     </div>
   `;
@@ -164,7 +165,7 @@ async function loadJournalReply(){
     if(!response.ok) return;
     const history = await response.json();
     if(history.journal_reply?.reply_text){
-      renderJournalReplyText(history.journal_reply.reply_text);
+      renderJournalReplyText(history.journal_reply.reply_text, '今日はすでに「あなたの日誌への返信」は済んでいます。');
       return;
     }
 
@@ -185,7 +186,7 @@ async function loadJournalReply(){
         });
         const data=await response.json().catch(()=>({}));
         if(response.ok && data.reply?.reply_text){
-          renderJournalReplyText(data.reply.reply_text);
+          renderJournalReplyText(data.reply.reply_text, data.source === 'saved_today' ? '今日はすでに「あなたの日誌への返信」は済んでいます。' : '');
           return;
         }
       }catch(error){
