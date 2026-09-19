@@ -35,7 +35,7 @@ function showUiError(target,message='保存に失敗しました。もう一度�
 async function restoreCoreSession(){
   let participantId=localStorage.getItem('fcl-participant-id');
   const userId=localStorage.getItem('fcl-user-id');
-  if(userId){
+  if(!participantId && userId){
     const userResponse=await fetch(`/api/users/${encodeURIComponent(userId)}`);
     if(userResponse.ok){
       const user=await userResponse.json();
