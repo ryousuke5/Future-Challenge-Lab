@@ -1397,26 +1397,36 @@ app.post('/api/participants',async(req,res)=>{
     if(!email) return res.status(400).json({error:'有効なメールアドレスを入力してください'});
     const fclUser = await getOrCreateFclUser(email);
 
-    if(!isTestEmail(email)){
-      const existing=(await select('participants')).filter(x=>normalizeContactEmail(x.email)===email)
-        .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0];
-      if(existing){
-        const row=await update('participants',existing.id,{
-          user_id:fclUser.id,
-          name:req.body.name||existing.name||'',
-          email,
-          challenge:req.body.challenge||existing.challenge||'',
-          goal:req.body.goal||existing.goal||''
-        });
-        return res.json({ ...row, user_id:fclUser.id });
-      }
+    const challenge=String(req.body.challenge||'').trim();
+    const goal=String(req.body.goal||'').trim();
+    const name=String(req.body.name||'').trim();
+
+    // One FCL user can own multiple active challenges. Only an exact
+    // challenge+goal duplicate is reused; a different challenge creates
+    // another participant record under the same user_id/email.
+    const ownParticipants=(await select('participants',{user_id:fclUser.id}))
+      .filter(x=>!x.archived_at);
+    const duplicate=ownParticipants.find(x=>
+      String(x.challenge||'').trim()===challenge &&
+      String(x.goal||'').trim()===goal
+    );
+    if(duplicate){
+      const row=await update('participants',duplicate.id,{
+        user_id:fclUser.id,
+        name:name||duplicate.name||'',
+        email,
+        challenge:challenge||duplicate.challenge||'',
+        goal:goal||duplicate.goal||''
+      });
+      return res.json({ ...row, user_id:fclUser.id, reused_existing_challenge:true });
     }
+
     const row=await insert('participants',{
       user_id:fclUser.id,
       external_user_id:req.body.external_user_id||('web-'+Date.now()),
-      name:req.body.name||'',email,challenge:req.body.challenge||'',goal:req.body.goal||''
+      name,email,challenge,goal
     });
-    res.json({ ...row, user_id:fclUser.id });
+    res.json({ ...row, user_id:fclUser.id, reused_existing_challenge:false });
   }catch(e){res.status(500).json({error:e.message});}
 });
 
@@ -1452,6 +1462,33 @@ app.get('/api/users/:user_id', async (req,res)=>{
   }catch(e){res.status(500).json({error:e.message});}
 });
 
+
+app.get('/api/users/:user_id/challenges', async (req,res)=>{
+  try{
+    const userId=String(req.params.user_id||'').trim();
+    if(!userId) return res.status(400).json({error:'user_id is required'});
+    const user=(await select('fcl_users',{id:userId}))[0];
+    if(!user) return res.status(404).json({error:'user not found'});
+
+    const participants=(await select('participants',{user_id:userId}))
+      .filter(x=>!x.archived_at)
+      .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
+
+    res.json({
+      user_id:userId,
+      challenges:participants.map(row=>({
+        id:row.id,
+        name:row.name||'',
+        challenge:row.challenge||'',
+        goal:row.goal||'',
+        created_at:row.created_at||null
+      }))
+    });
+  }catch(error){
+    console.error('user challenges error',error);
+    res.status(500).json({error:error.message||'user challenges failed'});
+  }
+});
 
 app.get('/api/users/:user_id/overview', async (req,res)=>{
   try{
