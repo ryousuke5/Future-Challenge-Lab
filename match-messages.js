@@ -68,13 +68,22 @@ async function loadMatch(matchId) {
   return data;
 }
 
+function isConnectedMatch(match){
+  if(!match) return false;
+  if(String(match.status||'')==='connected') return true;
+  const approvals=match?.meta?.approvals || {};
+  const challengerApproved=Boolean(match.challenger_approved_at) || Boolean(approvals.challenger);
+  const supporterApproved=Boolean(match.supporter_approved_at) || Boolean(approvals.supporter);
+  return challengerApproved && supporterApproved;
+}
+
 async function authorize(matchId, token) {
   const auth = verifyAccessToken(token, matchId);
   if (!auth) return { error: 'invalid access token' };
 
   const match = await loadMatch(matchId);
   if (!match) return { error: 'match not found' };
-  if (String(match.status) !== 'connected') return { error: 'message thread is available only after connection is established' };
+  if (!isConnectedMatch(match)) return { error: 'message thread is available only after connection is established' };
 
   const expectedSenderId = auth.role === 'challenger' ? match.participant_id : match.supporter_id;
   if (!expectedSenderId) return { error: 'sender identity not found' };
