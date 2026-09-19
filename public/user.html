@@ -50,7 +50,7 @@
       <div>
         <div class="eyebrow">FUTURE CHALLENGE LAB</div>
         <h1>FCLマイページ</h1>
-        <p>1つのFCLユーザーIDで、自分の「挑戦」と「支援」をまとめて確認します。</p>
+        <p>1つのFCLユーザーIDで、複数の「挑戦」と「支援」をまとめて確認します。</p>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><a href="/"><button class="secondary" type="button">トップへ戻る</button></a><a id="storyLink" href="/story.html"><button type="button">あなたの挑戦の物語</button></a></div>
     </div>
@@ -66,7 +66,7 @@
       <h2>FCLユーザー</h2>
       <div id="userIdLabel" class="match-title"></div>
       <div id="roles" style="margin-top:10px"></div>
-      <p class="muted" style="margin-top:10px">同じメールアドレスから登録した挑戦者・支援者は、ここで同じユーザーIDに統合されています。</p>
+      <p class="muted" style="margin-top:10px">同じメールアドレスで登録した内容は、1つのFCLユーザーIDにまとまります。挑戦は複数登録でき、使う挑戦をここから切り替えられます。</p>
     </section>
 
     <section class="card">
@@ -149,11 +149,12 @@
       ? challenger.map(row => {
           const latest = row.latest_checkin;
           const latestState = latest?.risk_level ? '最新チェックイン：' + latest.risk_level : 'チェックイン記録なし';
+          const current=localStorage.getItem('fcl-participant-id')===row.id;
           return '<div class="record">' +
-            '<div class="match-title">' + escapeHtml(row.challenge || '挑戦テーマ未登録') + '</div>' +
+            '<div class="match-title">' + escapeHtml(row.challenge || '挑戦テーマ未登録') + (current ? ' <span class="pill">使用中</span>' : '') + '</div>' +
             '<p>目標：' + escapeHtml(row.goal || '未登録') + '</p>' +
             '<div class="match-meta">' + escapeHtml(row.name || '') + ' ・ ' + escapeHtml(latestState) + '</div>' +
-            '<div class="match-actions"><button type="button" data-use-challenge="' + escapeHtml(row.id) + '">この挑戦を使う</button></div>' +
+            '<div class="match-actions"><button type="button" ' + (current ? 'disabled' : 'data-use-challenge="' + escapeHtml(row.id) + '"') + '>' + (current ? '現在この挑戦を使用中' : 'この挑戦を使う') + '</button></div>' +
           '</div>';
         }).join('')
       : '<div class="empty">挑戦者登録はありません。</div>';
