@@ -53,41 +53,172 @@ async function ensureFclSession(emailValue){
   return {id:verifyJson.user_id,email:verifyJson.email};
 }
 function showUiError(target,message='保存に失敗しました。もう一度お試しください。'){if(target)target.textContent=` ${message}`;}
+async function fetchUserChallenges(userId){
+  const response=await fetch('/api/users/' + encodeURIComponent(userId) + '/challenges',{credentials:'same-origin'});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok) throw new Error(data.error || '挑戦一覧の取得に失敗しました。');
+  return Array.isArray(data.challenges) ? data.challenges : [];
+}
+
+function renderChallengeSelector(challenges, selectedId){
+  const bar=document.getElementById('currentChallengeBar');
+  const selector=document.getElementById('challengeSelector');
+  if(!bar || !selector) return selectedId || '';
+  if(!challenges.length){
+    bar.hidden=true;
+    selector.innerHTML='';
+    return '';
+  }
+
+  selector.innerHTML=challenges.map((row,index)=>{
+    const label=row.challenge || '挑戦テーマ未登録';
+    const goal=row.goal ? ' — ' + row.goal : '';
+    return `<option value="${row.id.replaceAll('"','&quot;')}">${index+1}. ${label}${goal}</option>`;
+  }).join('');
+
+  const valid=challenges.some(row=>row.id===selectedId);
+  const activeId=valid ? selectedId : challenges[0].id;
+  selector.value=activeId;
+  bar.hidden=false;
+  return activeId;
+}
+
+async function restoreParticipantHistory(participantId, userId){
+  if(!participantId) return false;
+  const response=await fetch('/api/core/history/'+encodeURIComponent(participantId),{credentials:'same-origin'});
+  if(!response.ok) return false;
+  const history=await response.json();
+  if(!history.participant) return false;
+
+  participant=history.participant;
+  localStorage.setItem('fcl-participant-id',participant.id);
+  if(participant?.user_id) localStorage.setItem('fcl-user-id',participant.user_id);
+
+  const status=document.getElementById('participantStatus');
+  if(status) status.textContent=` ユーザーID: ${participant.user_id || userId || '未取得'} / 現在の挑戦: ${participant.challenge || '未登録'}`;
+
+  const goalInput=document.getElementById('coreGoal');
+  if(goalInput && participant.goal) goalInput.value=participant.goal;
+
+  if(history.analysis){
+    renderCoreResult({result:history.analysis});
+    renderInsight({result:history.analysis});
+    renderSolutions({result:history.analysis});
+  }
+  const decision=history.decision?.selected_option || history.analysis?.recommended_option;
+  if(decision){
+    selectedCoreOption=decision;
+    document.getElementById('coreSelected').textContent=`選択中: ${decision}`;
+  }
+  const nextAction=history.decision?.next_action || history.analysis?.label?.next_action;
+  if(nextAction) document.getElementById('coreNextAction').value=nextAction;
+  if(history.outcome?.outcome_status) document.getElementById('coreOutcomeStatus').value=history.outcome.outcome_status;
+  window.refreshFclDailyLoop?.();
+  return true;
+}
+
+async function selectCurrentChallenge(participantId){
+  if(!participantId) return;
+  const userId=localStorage.getItem('fcl-user-id')||'';
+  localStorage.setItem('fcl-participant-id',participantId);
+
+  try{
+    await restoreParticipantHistory(participantId,userId);
+    const selector=document.getElementById('challengeSelector');
+    if(selector) selector.value=participantId;
+  }catch(error){
+    showUiError(document.getElementById('participantStatus'),error.message||'挑戦の切り替えに失敗しました。');
+  }
+}
+
+window.selectCurrentChallenge=selectCurrentChallenge;
+
+async function loadChallengeSelector(userId, preferredId=''){
+  if(!userId) return '';
+  try{
+    const challenges=await fetchUserChallenges(userId);
+    const activeId=renderChallengeSelector(challenges,preferredId||localStorage.getItem('fcl-participant-id')||'');
+    if(activeId && activeId!==localStorage.getItem('fcl-participant-id')) localStorage.setItem('fcl-participant-id',activeId);
+    return activeId;
+  }catch(error){
+    console.warn('challenge selector load failed',error);
+    return preferredId || localStorage.getItem('fcl-participant-id') || '';
+  }
+}
+
 async function restoreCoreSession(){
   const sessionResponse=await fetch('/api/auth/session',{credentials:'same-origin'}).catch(()=>null);
   if(!sessionResponse?.ok)return;
+
   const session=await sessionResponse.json();
-  const userId=session?.user?.id||localStorage.getItem('fcl-user-id');
-  localStorage.setItem('fcl-user-id',userId||'');
-  let participantId=localStorage.getItem('fcl-participant-id');
-  if(!participantId && userId){
-    const userResponse=await fetch(`/api/users/${encodeURIComponent(userId)}`);
-    if(userResponse.ok){
-      const user=await userResponse.json();
-      if(user.participant?.id) participantId=user.participant.id;
+  const userId=session?.user?.id||localStorage.getItem('fcl-user-id')||'';
+  localStorage.setItem('fcl-user-id',userId);
+
+  const queryParticipantId=new URLSearchParams(location.search).get('participant_id')||'';
+  const storedParticipantId=queryParticipantId || localStorage.getItem('fcl-participant-id') || '';
+
+  let challenges=[];
+  if(userId){
+    const challengePromise=fetchUserChallenges(userId).catch(()=>[]);
+    const historyPromise=storedParticipantId
+      ? fetch('/api/core/history/'+encodeURIComponent(storedParticipantId),{credentials:'same-origin'})
+      : Promise.resolve(null);
+    const [challengeRows,historyResponse]=await Promise.all([challengePromise,historyPromise]);
+    challenges=challengeRows;
+
+    let selectedId=storedParticipantId;
+    if(!challenges.some(row=>row.id===selectedId)) selectedId=challenges[0]?.id||'';
+    selectedId=renderChallengeSelector(challenges,selectedId);
+
+    let restored=false;
+    if(historyResponse?.ok && selectedId===storedParticipantId){
+      try{
+        const history=await historyResponse.json();
+        if(history.participant?.user_id===userId){
+          participant=history.participant;
+          localStorage.setItem('fcl-participant-id',participant.id);
+          const status=document.getElementById('participantStatus');
+          if(status) status.textContent=` ユーザーID: ${participant.user_id || userId || '未取得'} / 現在の挑戦: ${participant.challenge || '未登録'}`;
+          const goalInput=document.getElementById('coreGoal');
+          if(goalInput && participant.goal) goalInput.value=participant.goal;
+          if(history.analysis){ renderCoreResult({result:history.analysis}); renderInsight({result:history.analysis}); renderSolutions({result:history.analysis}); }
+          const decision=history.decision?.selected_option || history.analysis?.recommended_option;
+          if(decision){ selectedCoreOption=decision; document.getElementById('coreSelected').textContent=`選択中: ${decision}`; }
+          const nextAction=history.decision?.next_action || history.analysis?.label?.next_action;
+          if(nextAction)document.getElementById('coreNextAction').value=nextAction;
+          if(history.outcome?.outcome_status)document.getElementById('coreOutcomeStatus').value=history.outcome.outcome_status;
+          restored=true;
+        }
+      }catch(_error){}
     }
+    if(!restored && selectedId) await restoreParticipantHistory(selectedId,userId);
+    if(!selectedId && challenges.length===0){
+      localStorage.removeItem('fcl-participant-id');
+    }
+    window.refreshFclDailyLoop?.();
   }
-  if(!participantId)return;
-  const response=await fetch(`/api/core/history/${encodeURIComponent(participantId)}`);
-  if(!response.ok)return;
-  const history=await response.json(); participant=history.participant;
-  if(participant?.user_id) localStorage.setItem('fcl-user-id',participant.user_id);
-  document.getElementById('participantStatus').textContent=` ユーザーID: ${participant.user_id || userId || '未取得'}`;
-  if(history.analysis){ renderCoreResult({result:history.analysis}); renderInsight({result:history.analysis}); renderSolutions({result:history.analysis}); }
-  const decision=history.decision?.selected_option || history.analysis?.recommended_option;
-  if(decision){ selectedCoreOption=decision; document.getElementById('coreSelected').textContent=`選択中: ${decision}`; }
-  const nextAction=history.decision?.next_action || history.analysis?.label?.next_action;
-  if(nextAction)document.getElementById('coreNextAction').value=nextAction;
-  if(history.outcome?.outcome_status)document.getElementById('coreOutcomeStatus').value=history.outcome.outcome_status;
 }
+
 initializeCoreTargetDate();
+document.getElementById('challengeSelector')?.addEventListener('change',(event)=>{
+  selectCurrentChallenge(event.target.value);
+});
 restoreCoreSession().catch(() => {});
+
 async function register(){
   await withLoadingUI(document.getElementById('registerBtn'), '登録処理中です。しばらくお待ちください…', async () => {
     await ensureFclSession(email.value);
     participant=await api('/api/participants',{name:name.value,email:email.value,challenge:challenge.value,goal:goal.value});
-    localStorage.setItem('fcl-participant-id',participant.id); localStorage.setItem('fcl-user-id',participant.user_id || '');
-    participantStatus.textContent=` ユーザーID: ${participant.user_id || '未取得'}`; window.refreshFclDailyLoop?.(); const userPageLink=document.getElementById('participantUserPageLink'); if(userPageLink&&participant.user_id){ userPageLink.href='/user.html?user_id='+encodeURIComponent(participant.user_id); userPageLink.hidden=false; }
+    localStorage.setItem('fcl-participant-id',participant.id);
+    localStorage.setItem('fcl-user-id',participant.user_id || '');
+    participantStatus.textContent=` ユーザーID: ${participant.user_id || '未取得'} / 現在の挑戦: ${participant.challenge || '未登録'}`;
+    const userPageLink=document.getElementById('participantUserPageLink');
+    if(userPageLink&&participant.user_id){
+      userPageLink.href='/user.html?user_id='+encodeURIComponent(participant.user_id);
+      userPageLink.hidden=false;
+    }
+    await loadChallengeSelector(participant.user_id||'',participant.id);
+    window.refreshFclDailyLoop?.();
   });
 }
 function buildAnalysisCards(data){
