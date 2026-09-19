@@ -112,7 +112,14 @@ function renderJournalReply(result, decision = null, outcome = null){
   if(!panel) return;
 
   const replyText = buildHumanJournalReply(result, outcome);
-  const paragraphs = replyText
+  renderJournalReplyText(replyText);
+  return replyText;
+}
+
+function renderJournalReplyText(replyText){
+  const panel = document.getElementById('journalReply');
+  if(!panel) return;
+  const paragraphs = String(replyText || '')
     .split(/\n\s*\n/)
     .map(text => text.trim())
     .filter(Boolean)
@@ -130,6 +137,25 @@ function renderJournalReply(result, decision = null, outcome = null){
   `;
 }
 
+async function saveExactJournalReply(history, replyText){
+  if(!history?.participant?.id || !history?.analysis_event_id || !replyText) return;
+  try{
+    await fetch('/api/journal-replies',{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({
+        participant_id:history.participant.id,
+        checkin_id:history.checkin_id || null,
+        source_analysis_event_id:history.analysis_event_id,
+        reply_text:replyText,
+        reply_version:'v1'
+      })
+    });
+  }catch(error){
+    console.warn('journal reply save failed', error);
+  }
+}
+
 async function loadJournalReply(){
   const participantId = localStorage.getItem('fcl-participant-id');
   if(!participantId) return;
@@ -137,7 +163,12 @@ async function loadJournalReply(){
     const response = await fetch(`/api/core/history/${encodeURIComponent(participantId)}`);
     if(!response.ok) return;
     const history = await response.json();
-    if(history.analysis) renderJournalReply(history.analysis, history.decision, history.outcome);
+    if(history.journal_reply?.reply_text){
+      renderJournalReplyText(history.journal_reply.reply_text);
+    }else if(history.analysis){
+      const replyText=renderJournalReply(history.analysis, history.decision, history.outcome);
+      await saveExactJournalReply(history, replyText);
+    }
   } catch(error) {
     console.warn('journal reply load failed', error);
   }
