@@ -2734,7 +2734,12 @@ app.get('/api/matches/:id/detail', async (req, res) => {
     const participant = (await select('participants',{id:match.participant_id}))[0];
     const supporter = (await select('supporters',{id:match.supporter_id}))[0];
     const recentCheckin = (await select('checkins',{participant_id:match.participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0];
-    const priority = await buildSupporterPriority(match.participant_id);
+    const viewerRole = sessionUser
+      ? (participant?.user_id === sessionUser.id ? 'challenger' : supporter?.user_id === sessionUser.id ? 'supporter' : null)
+      : tokenAuth?.role || null;
+    const sessionAccessToken = viewerRole && sessionUser
+      ? createAccessToken(match.id,viewerRole)
+      : null;
     const detail = {
       match: {
         ...match,
