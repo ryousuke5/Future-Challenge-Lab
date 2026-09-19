@@ -2130,7 +2130,7 @@ app.post('/api/journal-replies/generate', async (req, res) => {
 
     const replyText=aiReply || [
       '日誌を読みました。',
-      checkin_text ? `「${String(checkin_text).trim().slice(0,120)}」という今日の記録から、今の状況が伝わってきました。` : '今日の記録から、今の状態を少しずつ整理できています。',
+      checkinText ? `「${String(checkinText).trim().slice(0,120)}」という今日の記録から、今の状況が伝わってきました。` : '今日の記録から、今の状態を少しずつ整理できています。',
       analysis?.next_action ? `次の一歩は「${analysis.next_action}」とあります。まずは自分に合う形で進めてみてください。` : '次に何をするかは、その日の自分に合う小さな一歩で大丈夫です。'
     ].join('\\n\\n');
 
