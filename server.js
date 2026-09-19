@@ -1346,7 +1346,8 @@ app.get('/api/users/:user_id/overview', async (req,res)=>{
           challenge:participant?.challenge||'未登録',goal:participant?.goal||'未登録',
           counterpart_name:supporter?.supporter_name||'支援者',counterpart_organization:supporter?.organization_name||'',
           updated_at:match.updated_at||match.created_at||null,latest_checkin:latestCheckinMap.get(match.participant_id)||null,
-          access_url:token?`${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(token)}`:null
+          support_method_learning:priority.support_method_learning,
+        access_url:token?`${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(token)}`:null
         });
       }
       if(supporterIds.includes(match.supporter_id)){
@@ -2193,7 +2194,7 @@ function buildActionActivityFromRows(checkins=[],actions=[]){
   };
 }
 
-function buildSupporterPriorityFromRows(participant_id,participant,checkins=[],actions=[],assignments=[]){
+function buildSupporterPriorityFromRows(participant_id,participant,checkins=[],actions=[],assignments=[],events=[]){
   const orderedCheckins=[...(checkins||[])].sort((a,b)=>new Date(b.checked_in_at||0)-new Date(a.checked_in_at||0));
   const latest=orderedCheckins[0]||null;
   const recentActions=[...(actions||[])].sort((a,b)=>new Date(b.created_at||b.completed_at||0)-new Date(a.created_at||a.completed_at||0)).slice(0,5);
@@ -2232,7 +2233,8 @@ function buildSupporterPriorityFromRows(participant_id,participant,checkins=[],a
     recommendation_reason:recommendationReason,suggested_message:suggestedMessage,
     supporter_can_edit:true,requires_explicit_approval:true,recommendation_label:'recommendation',
     recent_assignments:recentAssignments,
-    action_completion_rate:recentActions.length?completed/recentActions.length:0
+    action_completion_rate:recentActions.length?completed/recentActions.length:0,
+    support_method_learning:buildSupportMethodLearning({events,participant_id})
   };
 }
 
@@ -2758,13 +2760,14 @@ app.get('/api/supporter/dashboard', async (req,res)=>{
     const hydratedMatches=matches.map(hydrateMatchApprovalState);
     const participantIds=[...new Set(hydratedMatches.map(m=>m.participant_id).filter(Boolean))];
 
-    let participants=[],checkins=[],actions=[],assignments=[],outcomes=[],executionEvents=[];
+    let participants=[],checkins=[],actions=[],assignments=[],modelEvents=[],outcomes=[],executionEvents=[];
     if(db('participants')){
       const queries=[
         db('participants').select('*').in('id',participantIds),
         participantIds.length?db('checkins').select('*').in('participant_id',participantIds):Promise.resolve({data:[],error:null}),
         participantIds.length?db('action_results').select('*').in('participant_id',participantIds):Promise.resolve({data:[],error:null}),
         participantIds.length?db('intervention_assignments').select('*').in('participant_id',participantIds):Promise.resolve({data:[],error:null}),
+        participantIds.length?db('model_learning_events').select('*').in('participant_id',participantIds):Promise.resolve({data:[],error:null}),
         db('supporter_outcomes').select('*').eq('supporter_id',supporter_id),
         db('connection_events').select('*').eq('supporter_id',supporter_id)
       ];
@@ -2774,23 +2777,26 @@ app.get('/api/supporter/dashboard', async (req,res)=>{
       checkins=results[1].data||[];
       actions=results[2].data||[];
       assignments=results[3].data||[];
-      outcomes=results[4].data||[];
-      executionEvents=(results[5].data||[]).filter(x=>x.event_type==='support_execution');
+      modelEvents=results[4].data||[];
+      outcomes=results[5].data||[];
+      executionEvents=(results[6].data||[]).filter(x=>x.event_type==='support_execution');
     }else{
       participants=memory.participants.filter(x=>participantIds.includes(x.id));
       checkins=memory.checkins.filter(x=>participantIds.includes(x.participant_id));
       actions=memory.action_results.filter(x=>participantIds.includes(x.participant_id));
       assignments=memory.intervention_assignments.filter(x=>participantIds.includes(x.participant_id));
+      modelEvents=memory.model_learning_events.filter(x=>participantIds.includes(x.participant_id));
       outcomes=memory.supporter_outcomes.filter(x=>x.supporter_id===supporter_id);
       executionEvents=memory.connection_events.filter(x=>x.supporter_id===supporter_id&&x.event_type==='support_execution');
     }
 
     const participantMap=new Map(participants.map(p=>[p.id,p]));
-    const checkinsBy=new Map(),actionsBy=new Map(),assignmentsBy=new Map();
-    for(const id of participantIds){checkinsBy.set(id,[]);actionsBy.set(id,[]);assignmentsBy.set(id,[]);}
+    const checkinsBy=new Map(),actionsBy=new Map(),assignmentsBy=new Map(),eventsBy=new Map();
+    for(const id of participantIds){checkinsBy.set(id,[]);actionsBy.set(id,[]);assignmentsBy.set(id,[]);eventsBy.set(id,[]);}
     for(const row of checkins) checkinsBy.get(row.participant_id)?.push(row);
     for(const row of actions) actionsBy.get(row.participant_id)?.push(row);
     for(const row of assignments) assignmentsBy.get(row.participant_id)?.push(row);
+    for(const row of modelEvents) eventsBy.get(row.participant_id)?.push(row);
 
     const publicUrl=(process.env.FCL_PUBLIC_URL||'http://localhost:3000').replace(/\/$/,'');
     const targets=[];
@@ -2802,7 +2808,8 @@ app.get('/api/supporter/dashboard', async (req,res)=>{
         participant,
         checkinsBy.get(match.participant_id)||[],
         actionsBy.get(match.participant_id)||[],
-        assignmentsBy.get(match.participant_id)||[]
+        assignmentsBy.get(match.participant_id)||[],
+        eventsBy.get(match.participant_id)||[]
       );
       const status=effectiveMatchStatus(match);
       const token=status==='connected'?createAccessToken(match.id,'supporter'):'';
