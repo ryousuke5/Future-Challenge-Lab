@@ -366,6 +366,10 @@ function coerceNumber(value, fallback=0){
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function todayJstDate(){
+  return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo'}).format(new Date());
+}
+
 function safeDate(value){
   const date=new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
@@ -761,7 +765,7 @@ async function saveFclCoreDecision({ participant_id, selected_option, reason, ne
 }
 
 
-async function saveJournalReply({ participant_id, checkin_id = null, source_analysis_event_id, reply_text, reply_version = 'v1' }){
+async function saveJournalReply({ participant_id, checkin_id = null, source_analysis_event_id, reply_text, reply_version = 'v1', reply_date = todayJstDate() }){
   if(!participant_id) throw new Error('invalid participant_id');
   if(!source_analysis_event_id) throw new Error('invalid source_analysis_event_id');
   const text = String(reply_text || '').trim();
@@ -781,6 +785,7 @@ async function saveJournalReply({ participant_id, checkin_id = null, source_anal
     source_analysis_event_id,
     reply_text: text,
     reply_version: sanitizeText(reply_version, 'v1'),
+    reply_date: reply_date || todayJstDate(),
     displayed_at: new Date().toISOString()
   };
 
@@ -1067,7 +1072,9 @@ app.get('/api/core/history/:participant_id',async(req,res)=>{
     const decision=events.find(event=>event.features?.action_type==='core_decision');
     const outcome=events.find(event=>event.features?.action_type==='core_outcome');
     const checkin=(await select('checkins',{participant_id:participant.id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0] || null;
-    const savedReply=analysis ? (await select('journal_replies',{participant_id:participant.id,source_analysis_event_id:analysis.id}))[0] || null : null;
+    const today=todayJstDate();
+    const savedReply=(await select('journal_replies',{participant_id:participant.id,reply_date:today}))
+      .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0] || null;
     res.json({participant,checkin,checkin_id:checkin?.id || null,analysis_event_id:analysis?.id || null,checkin_checked_in_at:checkin?.checked_in_at || null,journal_reply:savedReply,checkin_text:analysis?.features?.checkin_text || '',analysis:analysis ? (analysis.features?.result || {...analysis.features,label:analysis.label}) : null,decision:decision ? {...decision.features,label:decision.label} : null,outcome:outcome ? {...outcome.features,label:outcome.label} : null});
   }catch(e){res.status(500).json({error:e.message});}
 });
@@ -2101,10 +2108,11 @@ app.post('/api/journal-replies/generate', async (req, res) => {
     const participant=(await select('participants',{id:participant_id}))[0];
     if(!participant) return res.status(404).json({error:'participant not found'});
 
-    const existing=(await select('journal_replies',{participant_id,source_analysis_event_id}))[0] || null;
-    if(existing && existing.reply_version === 'v2-ai') return res.json({ok:true,reply:existing,source:'saved'});
-    // Upgrade older deterministic replies to the AI-generated version while keeping
-    // the same analysis event as the immutable anchor for this day's reply.
+    const today=todayJstDate();
+    const todaysReplies=(await select('journal_replies',{participant_id,reply_date:today}))
+      .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
+    const existing=todaysReplies[0] || null;
+    if(existing) return res.json({ok:true,reply:existing,source:'saved_today'});
 
 
     const aiReply=await generateJournalReplyWithOpenAI({
@@ -2143,7 +2151,8 @@ app.post('/api/journal-replies/generate', async (req, res) => {
           checkin_id:checkin_id || null,
           source_analysis_event_id,
           reply_text:replyText,
-          reply_version:'v2-ai'
+          reply_version:'v2-ai',
+          reply_date:today
         });
       }
     }else{
