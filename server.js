@@ -18,7 +18,7 @@ app.use(express.static('public'));
 const port = process.env.PORT || 3000;
 const hasSupabase = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 const supabase = hasSupabase ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY) : null;
-const memory = { fcl_users: [], participants: [], checkins: [], interventions: [], intervention_assignments: [], action_results: [], supporters: [], supporter_matches: [], connection_events: [], intervention_outcomes: [], model_learning_events: [], intervention_policy_decisions: [], supporter_outcomes: [] };
+const memory = { fcl_users: [], participants: [], checkins: [], interventions: [], intervention_assignments: [], action_results: [], supporters: [], supporter_matches: [], connection_events: [], intervention_outcomes: [], model_learning_events: [], intervention_policy_decisions: [], supporter_outcomes: [], journal_replies: [] };
 const supporterApprovalState = new Map();
 
 function readSupporterApprovalState(matchId){
@@ -691,6 +691,57 @@ async function saveFclCoreDecision({ participant_id, selected_option, reason, ne
   return row;
 }
 
+
+async function saveJournalReply({ participant_id, checkin_id = null, source_analysis_event_id, reply_text, reply_version = 'v1' }){
+  if(!participant_id) throw new Error('invalid participant_id');
+  if(!source_analysis_event_id) throw new Error('invalid source_analysis_event_id');
+  const text = String(reply_text || '').trim();
+  if(!text) throw new Error('empty reply_text');
+
+  const participant = (await select('participants',{id:participant_id}))[0];
+  if(!participant) throw new Error('participant not found');
+
+  if(checkin_id){
+    const checkin = (await select('checkins',{id:checkin_id,participant_id}))[0];
+    if(!checkin) throw new Error('checkin not found');
+  }
+
+  const row = {
+    participant_id,
+    checkin_id: checkin_id || null,
+    source_analysis_event_id,
+    reply_text: text,
+    reply_version: sanitizeText(reply_version, 'v1'),
+    displayed_at: new Date().toISOString()
+  };
+
+  const q = db('journal_replies');
+  if(q){
+    const { data, error } = await q
+      .upsert(row, { onConflict: 'participant_id,source_analysis_event_id', ignoreDuplicates: true })
+      .select()
+      .maybeSingle();
+    if(error) throw error;
+    if(data) return data;
+    const { data: existing, error: existingError } = await q
+      .select('*')
+      .eq('participant_id', participant_id)
+      .eq('source_analysis_event_id', source_analysis_event_id)
+      .maybeSingle();
+    if(existingError) throw existingError;
+    return existing;
+  }
+
+  const existing = memory.journal_replies.find(
+    item => item.participant_id === participant_id && item.source_analysis_event_id === source_analysis_event_id
+  );
+  if(existing) return existing;
+
+  const stored = { id: uuid(), created_at: new Date().toISOString(), ...row };
+  memory.journal_replies.push(stored);
+  return stored;
+}
+
 async function saveFclCoreOutcome({ participant_id, selected_option, next_action, outcome_status, result_note, target_date }){
   if(!participant_id) throw new Error('invalid participant_id');
   const participant = (await select('participants',{id:participant_id}))[0];
@@ -933,7 +984,8 @@ app.get('/api/story/:participant_id',async(req,res)=>{
     const actions=(await select('action_results',{participant_id:participant.id})).sort((a,b)=>new Date(a.completed_at||a.created_at||0)-new Date(b.completed_at||b.created_at||0));
     const events=(await select('model_learning_events',{participant_id:participant.id})).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0));
     const matches=(await select('supporter_matches',{participant_id:participant.id})).map(hydrateMatchApprovalState).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0));
-    res.json({participant,checkins,actions,events,matches});
+    const journal_replies=(await select('journal_replies',{participant_id:participant.id})).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0));
+    res.json({participant,checkins,actions,events,matches,journal_replies});
   }catch(e){res.status(500).json({error:e.message});}
 });
 
@@ -946,7 +998,8 @@ app.get('/api/core/history/:participant_id',async(req,res)=>{
     const decision=events.find(event=>event.features?.action_type==='core_decision');
     const outcome=events.find(event=>event.features?.action_type==='core_outcome');
     const checkin=(await select('checkins',{participant_id:participant.id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0] || null;
-    res.json({participant,checkin,analysis:analysis ? (analysis.features?.result || {...analysis.features,label:analysis.label}) : null,decision:decision ? {...decision.features,label:decision.label} : null,outcome:outcome ? {...outcome.features,label:outcome.label} : null});
+    const savedReply=analysis ? (await select('journal_replies',{participant_id:participant.id,source_analysis_event_id:analysis.id}))[0] || null : null;
+    res.json({participant,checkin,checkin_id:checkin?.id || null,analysis_event_id:analysis?.id || null,checkin_checked_in_at:checkin?.checked_in_at || null,journal_reply:savedReply,analysis:analysis ? (analysis.features?.result || {...analysis.features,label:analysis.label}) : null,decision:decision ? {...decision.features,label:decision.label} : null,outcome:outcome ? {...outcome.features,label:outcome.label} : null});
   }catch(e){res.status(500).json({error:e.message});}
 });
 
@@ -1866,6 +1919,23 @@ app.post('/api/core/analyze', async (req, res) => {
       recommended_option: 'A',
       next_action: '問題を3つまでに整理する'
     }});
+  }
+});
+
+app.post('/api/journal-replies', async (req, res) => {
+  try {
+    const { participant_id, checkin_id, source_analysis_event_id, reply_text, reply_version } = req.body || {};
+    const row = await saveJournalReply({
+      participant_id,
+      checkin_id,
+      source_analysis_event_id,
+      reply_text,
+      reply_version
+    });
+    res.json({ ok: true, reply: row });
+  } catch (error) {
+    console.error('journal reply save error', error);
+    res.status(400).json({ error: error.message || 'journal reply save failed' });
   }
 });
 
