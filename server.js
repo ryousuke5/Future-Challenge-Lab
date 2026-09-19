@@ -3130,10 +3130,14 @@ app.get('/api/supporter/dashboard', async (req,res)=>{
         supportHistory:outcomes.filter(o=>o.participant_id===match.participant_id)
       });
     }
-    const supporterAiSummaries=await buildSupporterAiSummaries({supporter,targets:targetContexts});
+    const connectedTargetContexts=targetContexts.filter(target=>target.match_status==='connected');
+    const supporterAiSummaries=await buildSupporterAiSummaries({supporter,targets:connectedTargetContexts});
     const targets=targetContexts.map(target=>{
+      const {participant,match,checkins,actions,assignments,modelEvents,supportHistory,priority,...publicTarget}=target;
       const summary=supporterAiSummaries.get(target.match_id);
-      return summary ? {...target,ai_summary:{summary:summary.summary,current_state:summary.current_state,continuation_risk:summary.continuation_risk,risk_reasons:summary.risk_reasons||[],support_points:summary.support_points||[],recommended_first_move:summary.recommended_first_move||'',caution:summary.caution||'',model_version:summary.model_version||''}} : target;
+      return summary
+        ? {...publicTarget,ai_summary:{summary:summary.summary,current_state:summary.current_state,continuation_risk:summary.continuation_risk,risk_reasons:summary.risk_reasons||[],support_points:summary.support_points||[],recommended_first_move:summary.recommended_first_move||'',caution:summary.caution||'',model_version:summary.model_version||''}}
+        : publicTarget;
     });
 
     const weekAgo=Date.now()-7*24*60*60*1000;
