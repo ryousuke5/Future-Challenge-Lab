@@ -119,21 +119,28 @@ async function checkin(){
 if(!participant)return alert('先に挑戦者登録をしてください');
 try { await withLoadingUI(document.getElementById('checkinBtn'), 'AI分析中です。しばらくお待ちください…', async () => {
   const answers={};for(let i=0;i<5;i++)answers[`q${i+1}`]=Number(document.getElementById(`q${i}`).value);
-  const x=await api('/api/checkins',{participant_id:participant.id,answers});
+  const dailyNote=document.getElementById('dailyNote')?.value.trim() || '';
+  const x=await api('/api/checkins',{participant_id:participant.id,answers,checkin_text:dailyNote});
   const checkinCount=Number(x.checkin_count||0);
   if(checkinCount>0){const userId=participant.user_id||localStorage.getItem('fcl-user-id')||'';const storyLink=userId?`<a href="/story.html?user_id=${encodeURIComponent(userId)}" class="secondary-btn" style="display:inline-block;margin-top:12px;padding:12px 18px;border-radius:12px;background:#111827;color:#ffffff!important;text-decoration:none;font-weight:700;border:1px solid #111827;box-shadow:0 4px 12px rgba(15,23,42,.12);">あなたの挑戦の物語を見る</a>`:'';document.getElementById('checkinCelebration').innerHTML=`<strong>今日も挑戦を記録しました。</strong><span>FCLチェックイン ${checkinCount}回目</span><small>あなたの物語に、今日の1ページが加わりました。</small>${storyLink}`; window.refreshFclDailyLoop?.();}
-  if(x.intervention_record_status === 'failed' || x.intervention_record_error){
-    alert('AI分析は完了したが介入記録の保存に失敗しました');
-  }
+  if(x.intervention_record_status === 'failed' || x.intervention_record_error){ alert('AI分析は完了したが介入記録の保存に失敗しました'); }
   intervention=x.intervention;
   const sel=x.optimization?.selected||{};
   const modeLabel={intervention:'AI介入',supporter:'支援者接続',both:'AI介入＋支援者接続'}[sel.action_type]||'最適化候補';
   decisionBanner.innerHTML=`<strong>今回の推奨：${modeLabel}</strong><span>スコア ${(Number(sel.score||0)*100).toFixed(1)}%</span>${sel.organization_name?`<div>候補支援先：${sel.organization_name} / ${sel.supporter_name||''}</div>`:''}<small>${x.optimization?.decision?.exploration?'探索モード：まだデータが少ないため他の選択肢も試します。':'過去データから最も期待値の高い選択肢を提示しています。'}</small>`;
   buildAnalysisCards(x);
   if(intervention){document.getElementById('intervention').innerHTML=`<strong>${intervention.variant}：${intervention.intervention_type}</strong><p>${intervention.intervention_text}</p>`;} else {document.getElementById('intervention').innerHTML='<p>今回は支援者接続を優先。次の「支援者マッチング」で候補を確認してください。</p>';}
+  if(dailyNote && x.checkin?.id){
+    try{
+      const coreData=await fetch('/api/core/analyze',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({participant_id:participant.id,checkin_id:x.checkin.id,checkin_text:dailyNote,current_goal:participant.goal||'',participant_profile:{goal:participant.goal||'',barrier:document.getElementById('barrier')?.value||''},answers})}).then(async r=>{const json=await r.json();if(!r.ok)throw new Error(json?.error||'AI analysis failed');return json;});
+      document.getElementById('coreCheckinText').value=dailyNote;
+      renderCoreResult(coreData);renderInsight(coreData);renderSolutions(coreData);
+      document.getElementById('coreNextAction').value=coreData?.result?.next_action||'';
+      if(coreData?.journal_reply?.reply_text && typeof window.renderJournalReplyText==='function'){window.renderJournalReplyText(coreData.journal_reply.reply_text);window.markJournalReplySeen?.(participant.id);}
+    }catch(coreError){console.warn('unified daily AI analysis failed',coreError);showUiError(document.getElementById('coreInsight'),'今日のAI深掘り分析は後から「AIで今日の状態を分析する」で再実行できます。');}
+  }
 }); } catch(error) { showUiError(document.getElementById('decisionBanner'),'分析に失敗しました。もう一度お試しください。'); }
-}
-async function saveAction(){
+}async function saveAction(){
   if(!participant||!intervention)return alert('先にチェックインしてください');
   try { await withLoadingUI(document.getElementById('saveActionBtn'), '保存処理中です。しばらくお待ちください…', async () => {
     const x=await api('/api/actions',{participant_id:participant.id,intervention_id:intervention.id,action_text:action.value,completed:completed.checked,barrier:barrier.value,result_note:resultNote.value});
@@ -295,10 +302,13 @@ let selectedCoreOption = null;
 
 function renderCoreResult(data){
   const result = data?.result || {};
+  const continuation = result.continuation_risk || {};
+  const continuationReasons = Array.isArray(continuation.reasons) ? continuation.reasons : [];
   const summary = [
     { title: '現在の状態', value: typeof result.state === 'object' ? (result.state.currentState || result.state.current_state || 'unknown') : (result.state || 'unknown') },
     { title: '変化', value: Array.isArray(result.state_change) ? result.state_change.join(' ') : (result.state_change || '変化の有無はまだ不明です。') },
     { title: 'リスク', value: `${result.risk?.level || 'unknown'} / ${result.risk?.reason || 'reason unknown'}` },
+    { title: '継続リスクの理由', value: continuationReasons.length ? continuationReasons.slice(0,2).join(' / ') : '具体的な繰り返し兆候はまだ十分にありません。' },
     { title: '推奨次の一歩', value: result.next_action || '次の一歩を整理してください。' }
   ];
 
