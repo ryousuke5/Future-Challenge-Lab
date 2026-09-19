@@ -7,7 +7,7 @@
   <div id="currentChallengeBar" hidden style="margin-top:14px;padding:12px 14px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
     <label for="challengeSelector" style="font-weight:700;">今使う挑戦</label>
     <select id="challengeSelector" style="flex:1 1 320px;min-width:240px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;font:inherit;background:#fff;"></select>
-    <a href="/user.html" class="secondary-btn" style="display:inline-block;text-decoration:none;">挑戦を管理</a>
+    <a href="/user.html" class="challenge-manage-btn">挑戦を管理</a>
   </div>
 </section>
 <section class="card" id="challenger-registration"><h2>1. 挑戦を登録する</h2><p>取り組んでいる挑戦を1つずつ登録できます。同じFCLユーザーID・メールアドレスの中に、複数の挑戦を持てます。</p><div class="grid"><input id="name" placeholder="名前"><input id="email" placeholder="メール"><input id="challenge" placeholder="挑戦テーマ"><input id="goal" placeholder="目標"></div><button id="registerBtn" onclick="register()">登録する</button><span id="participantStatus"></span><a id="participantUserPageLink" class="user-page-link" href="/user.html" hidden>マイページを開く</a><div class="muted" style="margin-top:8px;">FCLでは、挑戦者・支援者のどちらで参加しても同じユーザーIDを使います。</div></section>
