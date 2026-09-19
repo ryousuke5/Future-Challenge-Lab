@@ -18,7 +18,7 @@ button:disabled{opacity:.6}.error{padding:12px;border-radius:12px;background:#fe
 .event:before{content:"";position:absolute;left:-32px;top:4px;width:12px;height:12px;border-radius:50%;background:#64748b;border:3px solid #fff;box-shadow:0 0 0 2px #e2e8f0}
 .date{font-size:12px;color:#64748b;margin-bottom:3px}.tag{font-size:12px;font-weight:700;color:#475569}.empty{padding:14px;background:#f8fafc;border-radius:12px;color:#64748b}.comment{margin-top:10px;padding:12px 14px;border-radius:12px;background:#f8fafc;color:#334155;font-size:14px;line-height:1.7}.growth{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin:12px 0}.growth-item{padding:14px;border:1px solid #e5e7eb;border-radius:14px;background:#fff}.growth-item strong{display:block;margin-bottom:5px}.story-ending{margin-top:18px;padding:18px;border-radius:16px;background:#f8fafc}.next-step{margin-top:14px;padding:14px;border-radius:14px;background:#fff}
 @media(max-width:650px){.user-bar{flex-direction:column;align-items:stretch}.story-head>div[style*="grid-template-columns"]{grid-template-columns:1fr!important}}
-</style>
+.daily-card{padding:18px;border:1px solid #e5e7eb;border-radius:16px;background:#fff;margin-bottom:12px}.daily-meta{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.page-no{font-size:12px;color:#64748b;font-weight:700}.daily-date{font-size:13px;color:#64748b}.daily-lines{margin:0;padding-left:20px}.daily-lines li{margin:7px 0;line-height:1.7}.daily-card details{margin-top:12px}.daily-card summary{cursor:pointer;color:#334155;font-weight:700}.detail-body{margin-top:10px;padding:12px 14px;border-radius:12px;background:#f8fafc}.detail-row{padding:8px 0;border-bottom:1px solid #e5e7eb;line-height:1.6}.detail-row:last-child{border-bottom:0}.milestone-comment{margin:12px 0;padding:14px 16px;border-left:4px solid #94a3b8;background:#f8fafc;border-radius:10px;line-height:1.7}.story-end{margin-top:18px;padding:20px;border-radius:16px;background:#f8fafc}@media(max-width:650px){.daily-meta{align-items:flex-start;flex-direction:column}}</style>
 </head>
 <body><main>
 <section class="hero">
@@ -34,31 +34,178 @@ button:disabled{opacity:.6}.error{padding:12px;border-radius:12px;background:#fe
 (() => {
 const $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;");
-const date=v=>v?new Date(v).toLocaleString('ja-JP',{year:'numeric',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'日付不明';
+const dateOnly=v=>v?new Date(v).toLocaleDateString('ja-JP',{year:'numeric',month:'numeric',day:'numeric'}):'日付不明';
+const dateTime=v=>v?new Date(v).toLocaleString('ja-JP',{year:'numeric',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'日付不明';
 function showError(m){$('error').textContent=m;$('error').hidden=false}
+
+function dayKey(v){
+  const d=new Date(v||0);
+  if(Number.isNaN(d.getTime())) return 'unknown';
+  const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');
+  return y+'-'+m+'-'+day;
+}
+function addItem(map,key,item){
+  if(!map.has(key)) map.set(key,[]);
+  map.get(key).push(item);
+}
+function meaningfulComment(day, checkins, actions, events, matches, allCheckins){
+  const ownChecks=checkins||[];
+  const ownActions=actions||[];
+  const connected=(matches||[]).filter(m=>m.status==='connected');
+  if(day.isStart) return '最初の一歩です。挑戦を言葉にできたことが、この物語の出発点です。';
+  if(day.restarted) return '少し間が空いたあと、もう一度ここに戻ってきました。再開したこと自体が、この挑戦の一歩です。';
+  if(day.newConnection) return '一人で進むだけでなく、誰かと一緒に進むページが加わりました。';
+  if(day.firstCompletedAction) return '考えていたことを、実際の行動に移しました。今日の記録が現実の一歩になっています。';
+  if(day.autonomyRise) return '前回より自己決定度が上がりました。少しずつ自分で選べる感覚の変化が記録されています。';
+  if(day.autonomyDrop) return '今日は前回より自己決定度が下がっています。迷った日も止まった日も、挑戦の大切な一ページです。';
+  if(day.steady) return '大きな変化がない日も、記録を続けています。その積み重ねが次の一歩をつくります。';
+  return '';
+}
+
+function buildDailySummary(day, index, startAt, totalCheckins){
+  const lines=[];
+  const checks=day.checkins, acts=day.actions, evs=day.events, con=day.connections;
+  const latestCheck=checks[checks.length-1];
+  if(latestCheck){
+    const status=latestCheck.risk_level?'現在の状態は「'+latestCheck.risk_level+'」でした。':'今日の状態を記録しました。';
+    lines.push('今日の状態を記録した。'+status);
+  } else if(day.isStart){
+    lines.push('「'+(day.challenge||'挑戦')+'」への挑戦を始めた。');
+  } else {
+    lines.push('挑戦に関する記録を残した。');
+  }
+
+  const completed=acts.filter(a=>a.completed);
+  const unfinished=acts.filter(a=>!a.completed);
+  if(completed.length){
+    lines.push(completed.length+'件の次の一歩を実行した。');
+  } else if(acts.length){
+    lines.push('次の一歩を記録した。まだ実行していないものも残っている。');
+  } else if(con.length){
+    lines.push('支援者とのつながりが加わった。');
+  } else if(evs.some(e=>(e.features?.action_type||e.label)==='core_decision')){
+    lines.push('自分で次の選択を決めた。');
+  } else if(day.isStart){
+    lines.push('ここから、日々の挑戦が積み重なっていく。');
+  } else {
+    lines.push('その日の現在地を一度立ち止まって振り返った。');
+  }
+
+  if(con.length){
+    lines.push('支援とのつながりを、この物語に加えた。');
+  } else if(day.autonomyRise){
+    lines.push('前回より「自分で選べている」感覚が上がった。');
+  } else if(completed.length){
+    lines.push('考えたことを行動に移し、次のページへ進んだ。');
+  } else if(day.restarted){
+    lines.push('間が空いても、もう一度この挑戦に戻ってきた。');
+  } else if(unfinished.length){
+    lines.push('まだ途中の一歩も含めて、今日の記録として残した。');
+  } else {
+    lines.push('今日の記録が、次の一ページにつながっていく。');
+  }
+  return lines.slice(0,3);
+}
+
+function renderDetails(day){
+  const rows=[];
+  day.checkins.forEach((c,i)=>rows.push('<div class="detail-row"><strong>チェックイン '+(i+1)+'回目</strong><br>自己決定度：'+esc(c.autonomy_total||0)+' / 25　現在の状態：'+esc(c.risk_level||'確認中')+'<br><span class="muted">'+dateTime(c.checked_in_at)+'</span></div>'));
+  day.actions.forEach(a=>rows.push('<div class="detail-row"><strong>'+(a.completed?'実行した一歩':'記録した一歩')+'</strong><br>'+esc(a.action_text||'行動記録')+(a.result_note?'<br>結果：'+esc(a.result_note):'')+'<br><span class="muted">'+dateTime(a.completed_at||a.created_at)+'</span></div>'));
+  day.events.forEach(e=>{
+    const type=e.features?.action_type||e.label;
+    if(type==='core_analysis') rows.push('<div class="detail-row"><strong>現在地を分析</strong><br>'+esc(e.features?.result?.summary||e.features?.result?.insight||'現在の状態を分析しました。')+'</div>');
+    if(type==='core_decision') rows.push('<div class="detail-row"><strong>自分で選ぶ</strong><br>選択：'+esc(e.features?.selected_option||'未選択')+'</div>');
+    if(type==='core_outcome') rows.push('<div class="detail-row"><strong>行動の結果</strong><br>'+esc(e.features?.result_note||e.features?.outcome_status||'行動結果を記録しました。')+'</div>');
+  });
+  day.connections.forEach(()=>rows.push('<div class="detail-row"><strong>支援者とつながる</strong><br>支援者との接続が成立しました。</div>'));
+  if(!rows.length) rows.push('<div class="detail-row">この日の詳しい記録はありません。</div>');
+  return '<div class="detail-body">'+rows.join('')+'</div>';
+}
+
 async function load(){
- const id=$('userId').value.trim(); if(!id)return showError('FCLユーザーIDを入力してください。');
+ const id=$('userId').value.trim();
+ if(!id)return showError('FCLユーザーIDを入力してください。');
  $('load').disabled=true;$('load').textContent='取得中…';$('error').hidden=true;
  try{
   const ov=await fetch('/api/users/'+encodeURIComponent(id)+'/overview').then(async r=>{const d=await r.json();if(!r.ok)throw Error(d.error||'取得失敗');return d});
   const participants=ov.challenger?.records||[];
-  if(!participants.length){$('story').innerHTML='<div class="card empty">まだ挑戦者登録がありません。まずFCLで挑戦を登録すると、ここに物語が始まります。</div>';$('story').hidden=false;return;}
+  if(!participants.length){
+    $('story').innerHTML='<div class="card empty">まだ挑戦者登録がありません。まずFCLで挑戦を登録すると、ここに物語が始まります。</div>';
+    $('story').hidden=false;return;
+  }
+
   const histories=await Promise.all(participants.map(p=>fetch('/api/story/'+encodeURIComponent(p.id)).then(async r=>r.ok?r.json():null)));
   $('story').innerHTML=participants.map((p,i)=>{
-   const h=histories[i]||{}; const checkins=h.checkins||[]; const actions=h.actions||[]; const events=h.events||[]; const matches=h.matches||[];
-   const timeline=[];
-   const startAt=p.created_at?new Date(p.created_at):null;
-   const days=startAt?Math.max(1,Math.floor((Date.now()-startAt.getTime())/86400000)+1):null;
-   const actionDays=new Set(actions.map(a=>new Date(a.completed_at||a.created_at).toISOString().slice(0,10))).size;
-   const connectedMatches=matches.filter(m=>m.status==='connected');
-   const completedActions=actions.filter(a=>a.completed); const growth=[]; if(checkins.length) growth.push({title:'記録を続けた',text:checkins.length+'回、自分の現在地を記録しました。'}); if(completedActions.length) growth.push({title:'行動に移した',text:completedActions.length+'件の「次の一歩」を実行しました。'}); if(events.some(e=>(e.features?.action_type||e.label)==='core_decision')) growth.push({title:'自分で選んだ',text:'FCL上で自分の選択を記録しました。'}); if(connectedMatches.length) growth.push({title:'支援につながった',text:connectedMatches.length+'件の支援接続が成立しています。'}); let restarted=false; for(let j=1;j<checkins.length;j++){if((new Date(checkins[j].checked_in_at)-new Date(checkins[j-1].checked_in_at))/86400000>1){restarted=true;break;}} if(restarted) growth.push({title:'もう一度動き出した',text:'間が空いたあと、再び記録を再開しました。'});
-   timeline.push({at:p.created_at,label:'物語のはじまり',text:'「'+esc(p.challenge||'挑戦')+'」への挑戦を登録しました。目標：'+esc(p.goal||'未登録'),comment:'最初の一歩です。まず「何に挑戦するか」を言葉にできたことが、この物語の出発点です。'});
-   checkins.forEach((c,n)=>{const prev=checkins[n-1];const diff=prev?Number(c.autonomy_total||0)-Number(prev.autonomy_total||0):0;let comment=n===0?'最初の現在地を記録できました。ここから変化を比べられるようになります。':diff>0?'前回より自己決定度が上がっています。少しずつ自分で選べる感覚が戻っている記録です。':diff<0?'今日は前回より自己決定度が下がっています。下がった日も迷った日も、物語の大切な一ページです。':'前回と近い状態を保っています。大きな変化がなくても、記録を続けていること自体が物語になっています。';timeline.push({at:c.checked_in_at,label:'今日の1ページ',text:'FCLチェックイン '+(n+1)+'回目。自己決定度 '+esc(c.autonomy_total||0)+' / 25、現在の状態：'+esc(c.risk_level||'確認中')+'。',comment});});
-   actions.forEach(a=>timeline.push({at:a.completed_at||a.created_at,label:a.completed?'次の一歩を実行':'次の一歩を記録',text:esc(a.action_text||'行動を記録しました。')+(a.completed?' → 実行できました。':' → まだ実行できていません。')+(a.result_note?' 結果：'+esc(a.result_note):''),comment:a.completed?'選んだ一歩を実行しました。結果がどうであっても、考えたことを行動に移した記録が残っています。':'まだ実行できていません。止まったことも物語の一部。次に何を変えるかを考える材料になっています。'}));
-   events.forEach(e=>{const type=e.features?.action_type||e.label; if(type==='core_analysis')timeline.push({at:e.created_at,label:'現在地を知る',text:esc(e.features?.result?.summary||e.features?.result?.insight||'現在の状態を分析しました。')}); else if(type==='core_decision')timeline.push({at:e.created_at,label:'自分で選ぶ',text:'解決策「'+esc(e.features?.selected_option||'未選択')+'」を選びました。'}); else if(type==='core_outcome')timeline.push({at:e.created_at,label:'行動の結果',text:esc(e.features?.result_note||e.features?.outcome_status||'行動結果を記録しました。')});});
-   matches.filter(m=>m.status==='connected').forEach(m=>timeline.push({at:m.updated_at||m.created_at,label:'支援者とつながる',text:'支援者との接続が成立しました。'}));
-   timeline.sort((x,y)=>new Date(x.at||0)-new Date(y.at||0));
-   return '<section class="card"><div class="story-head"><span class="pill">挑戦者</span><h2>'+esc(p.challenge||'挑戦')+'</h2><p>目標：'+esc(p.goal||'未登録')+'</p><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px"><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">挑戦の日数</div><strong style="font-size:22px">'+(days??'-')+'日</strong></div><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">チェックイン</div><strong style="font-size:22px">'+checkins.length+'回</strong></div><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">行動した日</div><strong style="font-size:22px">'+actionDays+'日</strong></div></div><p class="muted" style="margin-top:14px">'+checkins.length+'回のチェックイン・'+actions.length+'件の行動記録が、この物語に積み重なっています。'+(connectedMatches.length?' 支援者との接続も'+connectedMatches.length+'件あります。':'')+'</p></div><div class="timeline">'+(timeline.length?timeline.map(e=>'<div class="event"><div class="date">'+date(e.at)+'</div><div class="tag">'+esc(e.label)+'</div><p>'+e.text+'</p>'+(e.comment?'<div class="comment"><strong>FCLからのコメント</strong><br>'+esc(e.comment)+'</div>':'')+'</div>').join(''):'<div class="empty">まだ物語の記録はありません。</div>')+'</div><div class="growth">'+(growth.length?growth.map(g=>'<div class="growth-item"><strong>'+esc(g.title)+'</strong><span>'+esc(g.text)+'</span></div>').join(''):'<div class="growth-item"><strong>ここから</strong><span>まずは今日の1ページを記録してみましょう。</span></div>')+'</div><div class="story-ending"><strong>ここまでの物語</strong><p>あなたはこの挑戦を始めてから、'+(days??'-')+'日。'+checkins.length+'回、自分の現在地を記録しました。'+(completedActions.length?' '+completedActions.length+'回、次の一歩を行動に移しました。':'')+'まだ途中です。でも、最初の日から今日までの記録そのものが、あなたの物語です。</p><div class="next-step"><strong>次の1ページ</strong><p>今日の状態を記録し、今の自分に合った小さな一歩を選んでいきましょう。</p></div></div><p class="muted" style="margin-top:20px">あなたの物語は、まだ途中です。次の1ページを記録していきましょう。</p></section>';
+    const h=histories[i]||{};
+    const checkins=h.checkins||[], actions=h.actions||[], events=h.events||[], matches=h.matches||[];
+    const connectedMatches=matches.filter(m=>m.status==='connected');
+    const allItems=[];
+    addItem(new Map(),'x',{}); // keep helper warm for older browsers
+    const map=new Map();
+
+    if(p.created_at) addItem(map,dayKey(p.created_at),{kind:'start',at:p.created_at});
+    checkins.forEach(c=>addItem(map,dayKey(c.checked_in_at),{kind:'checkin',data:c,at:c.checked_in_at}));
+    actions.forEach(a=>addItem(map,dayKey(a.completed_at||a.created_at),{kind:'action',data:a,at:a.completed_at||a.created_at}));
+    events.forEach(e=>{
+      const type=e.features?.action_type||e.label;
+      if(['core_analysis','core_decision','core_outcome'].includes(type)) addItem(map,dayKey(e.created_at),{kind:type,data:e,at:e.created_at});
+    });
+    connectedMatches.forEach(m=>addItem(map,dayKey(m.updated_at||m.created_at),{kind:'connection',data:m,at:m.updated_at||m.created_at}));
+
+    const ordered=Array.from(map.entries()).sort((a,b)=>a[0]<b[0]?1:-1);
+    const totalDays=ordered.length;
+    const allCheckinsAsc=[...checkins].sort((a,b)=>new Date(a.checked_in_at)-new Date(b.checked_in_at));
+    let completedSeen=false, previousCheck=null;
+    const daily=ordered.map(([key,items],idx)=>{
+      const d={
+        key,items,checkins:items.filter(x=>x.kind==='checkin').map(x=>x.data).sort((a,b)=>new Date(a.checked_in_at)-new Date(b.checked_in_at)),
+        actions:items.filter(x=>x.kind==='action').map(x=>x.data),
+        events:items.filter(x=>['core_analysis','core_decision','core_outcome'].includes(x.kind)).map(x=>x.data),
+        connections:items.filter(x=>x.kind==='connection').map(x=>x.data),
+        isStart:items.some(x=>x.kind==='start'),restarted:false,newConnection:false,firstCompletedAction:false,autonomyRise:false,autonomyDrop:false,steady:false,
+        challenge:p.challenge||'挑戦'
+      };
+      if(d.checkins.length){
+        const current=d.checkins[d.checkins.length-1], prev=previousCheck;
+        if(prev){
+          const gap=(new Date(current.checked_in_at)-new Date(prev.checked_in_at))/86400000;
+          d.restarted=gap>1;
+          const diff=Number(current.autonomy_total||0)-Number(prev.autonomy_total||0);
+          d.autonomyRise=diff>=2; d.autonomyDrop=diff<=-2; d.steady=Math.abs(diff)<2;
+        }
+        previousCheck=current;
+      }
+      if(d.connections.length && connectedMatches.find(m=>dayKey(m.updated_at||m.created_at)===key)) d.newConnection=true;
+      const doneToday=d.actions.some(a=>a.completed);
+      if(doneToday && !completedSeen) d.firstCompletedAction=true;
+      if(doneToday) completedSeen=true;
+      return d;
+    });
+
+    // Page numbers follow check-in history when available; activity-only days receive the nearest page marker.
+    let pageNo=totalDays;
+    const cards=daily.map((d,idx)=>{
+      const lines=buildDailySummary(d,idx,p.created_at,checkins.length);
+      const comment=meaningfulComment(d,d.checkins,d.actions,d.events,d.connections,allCheckinsAsc);
+      const pageLabel='第'+pageNo+'ページ';
+      pageNo--;
+      const details=renderDetails(d);
+      return '<article class="daily-card"><div class="daily-meta"><span class="page-no">'+pageLabel+'</span><span class="daily-date">'+dateOnly(d.key)+'</span></div><h3 style="margin:0 0 8px;">'+(idx===0?'今日のページ':d.isStart?'物語のはじまり':'この日のページ')+'</h3><ol class="daily-lines">'+lines.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ol>'+
+        (comment?'<div class="milestone-comment"><strong>FCLからのコメント</strong><br>'+esc(comment)+'</div>':'')+
+        '<details><summary>この日の詳細を見る</summary>'+details+'</details></article>';
+    }).join('');
+
+    const startAt=p.created_at?new Date(p.created_at):null;
+    const days=startAt?Math.max(1,Math.floor((Date.now()-startAt.getTime())/86400000)+1):null;
+    const completedActions=actions.filter(a=>a.completed).length;
+    const actionDays=new Set(actions.map(a=>dayKey(a.completed_at||a.created_at))).size;
+    const growth=[];
+    if(checkins.length) growth.push('チェックイン '+checkins.length+'回');
+    if(completedActions) growth.push('次の一歩を '+completedActions+'件実行');
+    if(connectedMatches.length) growth.push('支援接続 '+connectedMatches.length+'件');
+    const storyText='あなたはこの挑戦を始めてから'+(days??'-')+'日。'+checkins.length+'回、自分の現在地を記録し、'+completedActions+'件の行動を残しました。'+(growth.length?' '+growth.join('・')+'。':'')+'まだ途中です。でも、最初の日から今日までの記録そのものが、あなたの物語です。';
+
+    return '<section class="card"><div class="story-head"><span class="pill">挑戦者</span><h2>'+esc(p.challenge||'挑戦')+'</h2><p>目標：'+esc(p.goal||'未登録')+'</p><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px"><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">挑戦の日数</div><strong style="font-size:22px">'+(days??'-')+'日</strong></div><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">チェックイン</div><strong style="font-size:22px">'+checkins.length+'回</strong></div><div style="padding:12px;background:#fff;border-radius:12px"><div class="muted">行動した日</div><strong style="font-size:22px">'+actionDays+'日</strong></div></div><p class="muted" style="margin-top:14px">新しいページから始まり、下へスクロールするほど過去のページへ戻ります。</p></div><div>'+cards+'</div><div class="story-end"><strong>ここまでの物語</strong><p>'+storyText+'</p><div class="next-step"><strong>次の1ページ</strong><p>今日の状態を記録し、今の自分に合った小さな一歩を選んでいきましょう。</p></div></div><p class="muted" style="margin-top:20px">あなたの物語は、まだ途中です。次の1ページを記録していきましょう。</p></section>';
   }).join('');
   $('story').hidden=false;
  }catch(e){$('story').hidden=true;showError(e.message||'物語の取得に失敗しました。')}
