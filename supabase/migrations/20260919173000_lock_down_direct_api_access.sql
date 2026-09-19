@@ -26,6 +26,7 @@ declare
     'intervention_policy_decisions',
     'intervention_results',
     'interventions',
+    'journal_entries',
     'journal_replies',
     'match_messages',
     'model_learning_events',
