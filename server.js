@@ -1256,8 +1256,9 @@ app.use('/api',async(req,res,next)=>{
     const user=await getAuthenticatedFclUser(req); if(!user)return res.status(401).json({error:'FCLログインが必要です。メール認証コードでログインしてください。'}); req.fclUser=user;
     const participantId=String(req.body?.participant_id||req.query?.participant_id||req.params?.participant_id||(/^\/participants\/[^/]+$/.test(path)?req.params.id:'')).trim();
     if(participantId&&!(await requireParticipantOwnership(user.id,participantId)))return res.status(403).json({error:'この挑戦者データへアクセスする権限がありません。'});
-    const supporterId=String(req.body?.supporter_id||req.query?.supporter_id||(/^\/supporter\/dashboard$/.test(path)?'':'')).trim();
-    if(supporterId&&!(await requireSupporterOwnership(user.id,supporterId)))return res.status(403).json({error:'この支援者データへアクセスする権限がありません。'});
+    const supporterId=String(req.body?.supporter_id||req.query?.supporter_id||'').trim();
+    const supporterOwnershipExempt=path==='/supporter-outcomes';
+    if(supporterId&&!supporterOwnershipExempt&&!(await requireSupporterOwnership(user.id,supporterId)))return res.status(403).json({error:'この支援者データへアクセスする権限がありません。'});
     if(/^\/users\/[^/]+(?:\/overview)?$/.test(path)||/^\/story-user\/[^/]+$/.test(path)){const target=String(req.params?.user_id||'').trim();if(target&&target!==user.id)return res.status(403).json({error:'このユーザー情報へアクセスする権限がありません。'});}
     if(/^\/matches\/[^/]+\/(request|challenger-approve)$/.test(path)){const match=(await select('supporter_matches',{id:req.params.id}))[0];if(!match||!(await requireParticipantOwnership(user.id,match.participant_id)))return res.status(403).json({error:'挑戦者本人のみ操作できます。'});req.fclMatch=match;}
     else if(/^\/matches\/[^/]+\/supporter-approve$/.test(path)){const match=(await select('supporter_matches',{id:req.params.id}))[0];if(!match||!(await requireSupporterOwnership(user.id,match.supporter_id)))return res.status(403).json({error:'支援者本人のみ操作できます。'});req.fclMatch=match;}
@@ -1789,6 +1790,9 @@ app.post('/api/supporter-outcomes',async(req,res)=>{
         : 0;
     const note=String(req.body.note||'').trim();
     const executionEventId=req.body.support_execution_event_id||null;
+    if(!match_id)return res.status(400).json({error:'match_id is required for support outcome'});
+    const linkedMatch=(await select('supporter_matches',{id:match_id}))[0];
+    if(!linkedMatch||linkedMatch.participant_id!==participant_id||linkedMatch.supporter_id!==supporter_id||effectiveMatchStatus(linkedMatch)!=='connected')return res.status(403).json({error:'接続済みの支援結果のみ記録できます。'});
 
     const allSupportEvents=await select('connection_events');
     const learningEvents=await select('model_learning_events',{participant_id});
