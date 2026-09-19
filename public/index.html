@@ -4,6 +4,11 @@
 <section class="card daily-loop-shell" id="daily-loop">
   <div class="daily-loop-heading"><div><span class="eyebrow">FCL DAY LOOP</span><h2>今日を、次の一歩へ</h2><p>記録したあとに、「ほめる・発見する・次へ進む」をひとつの流れで返します。</p></div></div>
   <div id="fclDailyLoopContent"></div>
+  <div id="currentChallengeBar" hidden style="margin-top:14px;padding:12px 14px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <label for="challengeSelector" style="font-weight:700;">今使う挑戦</label>
+    <select id="challengeSelector" style="flex:1 1 320px;min-width:240px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;font:inherit;background:#fff;"></select>
+    <a href="/user.html" class="secondary-btn" style="display:inline-block;text-decoration:none;">挑戦を管理</a>
+  </div>
 </section>
 <section class="card" id="challenger-registration"><h2>1. 挑戦者登録</h2><p>まず「何に挑戦しているのか」を記録します。ここがあなたの物語の出発点です。</p><div class="grid"><input id="name" placeholder="名前"><input id="email" placeholder="メール"><input id="challenge" placeholder="挑戦テーマ"><input id="goal" placeholder="目標"></div><button id="registerBtn" onclick="register()">登録する</button><span id="participantStatus"></span><a id="participantUserPageLink" class="user-page-link" href="/user.html" hidden>マイページを開く</a><div class="muted" style="margin-top:8px;">FCLでは、挑戦者・支援者のどちらで参加しても同じユーザーIDを使います。</div></section>
 <section class="card"><h2>2. 今日の1ページ</h2><p>今日の状態を記録すると、あなたの挑戦の物語に1ページが加わります。各問 1〜5点。高いほど「自分で選べている」状態。</p><div id="questions"></div><div class="daily-note-field" style="margin-top:14px;"><label for="dailyNote"><strong>今日ひとこと</strong> <span class="muted">（任意）</span></label><textarea id="dailyNote" rows="3" placeholder="今日、何があった？ できたこと・迷ったこと・止まったことなど自由に書いてください"></textarea><small class="muted">ここに書いた内容をAIが今日の分析と「あなたの日誌への返信」に使います。</small></div><button id="checkinBtn" onclick="checkin()">今日の1ページを記録する</button><div id="checkinCelebration" class="result-panel"></div><div id="analysis" class="result-panel"></div></section>
