@@ -1050,6 +1050,67 @@ app.get('/api/users/:user_id/overview', async (req, res) => {
   }
 });
 
+app.get('/api/story-index', async (req,res)=>{
+  try{
+    const [storyRows, participantRows] = await Promise.all([
+      select('challenge_stories',{approved_by_participant:true,share_scope:'story'}),
+      select('participants')
+    ]);
+
+    const participantsById = new Map(participantRows.map(row => [row.id,row]));
+    const latestByParticipant = new Map();
+
+    for(const row of storyRows){
+      const participant = participantsById.get(row.participant_id);
+      if(!participant || participant.archived_at) continue;
+
+      const existing = latestByParticipant.get(row.participant_id);
+      const rowTime = new Date(row.generated_at || row.created_at || 0).getTime();
+      const existingTime = new Date(existing?.generated_at || existing?.created_at || 0).getTime();
+      if(!existing || rowTime > existingTime) latestByParticipant.set(row.participant_id,row);
+    }
+
+    const stories=[...latestByParticipant.values()].map(row=>{
+      const participant=participantsById.get(row.participant_id) || {};
+      let parsed={};
+      try{
+        parsed = row.story_json && typeof row.story_json === 'object' && Object.keys(row.story_json).length
+          ? row.story_json
+          : JSON.parse(row.story_text || '{}');
+      }catch(error){
+        parsed = {};
+      }
+
+      return {
+        id:row.id,
+        participant_id:row.participant_id,
+        name:participant.name || '匿名の挑戦者',
+        challenge:participant.challenge || parsed.challenge || '挑戦テーマ未登録',
+        goal:participant.goal || parsed.goal || '',
+        story:{
+          title:parsed.title || '挑戦の物語',
+          past:parsed.past || '',
+          current_state_public:parsed.current_state_public || '',
+          hope:parsed.hope || '',
+          support_need:parsed.support_need || '',
+          story_text:row.story_text || ''
+        },
+        generated_at:row.generated_at || row.created_at || null
+      };
+    }).sort((a,b)=>{
+      const ac=String(a.challenge||'');
+      const bc=String(b.challenge||'');
+      if(ac!==bc) return ac.localeCompare(bc,'ja');
+      return String(a.name||'').localeCompare(String(b.name||''),'ja');
+    });
+
+    res.json({stories});
+  }catch(e){
+    console.error('story index error',e);
+    res.status(500).json({error:e.message || 'story index failed'});
+  }
+});
+
 app.get('/api/story/:participant_id',async(req,res)=>{
   try{
     const participant=(await select('participants',{id:req.params.participant_id}))[0];
