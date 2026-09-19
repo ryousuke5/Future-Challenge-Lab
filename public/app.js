@@ -23,6 +23,11 @@ async function withLoadingUI(btn, message, task){
   }
 }
 const qs=['自分の意思でこの挑戦を続けている','今日やることを自分で選べている','周囲の期待より自分の納得を優先できている','失敗しても次の行動を自分で決められる','この挑戦は自分にとって意味がある'];
+function todayJstDateForInput(){ return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo'}).format(new Date()); }
+function initializeCoreTargetDate(){
+  const input=document.getElementById('coreTargetDate');
+  if(input && !input.value) input.value=todayJstDateForInput();
+}
 document.getElementById('questions').innerHTML=qs.map((q,i)=>`<div class="q"><strong>Q${i+1}.</strong> ${q}<select id="q${i}">${[1,2,3,4,5].map(x=>`<option value="${x}">${x}</option>`).join('')}</select></div>`).join('');
 fetch('/api/health').then(r=>r.json()).then(x=>document.getElementById('mode').textContent=x.supabase?'Supabase接続中':'ローカル開発モード');
 async function api(url,body){const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const x=await r.json();if(!r.ok)throw Error(x.error||'error');return x;}
@@ -50,6 +55,7 @@ async function restoreCoreSession(){
   if(nextAction)document.getElementById('coreNextAction').value=nextAction;
   if(history.outcome?.outcome_status)document.getElementById('coreOutcomeStatus').value=history.outcome.outcome_status;
 }
+initializeCoreTargetDate();
 restoreCoreSession().catch(() => {});
 async function register(){
   await withLoadingUI(document.getElementById('registerBtn'), '登録処理中です。しばらくお待ちください…', async () => {
@@ -410,7 +416,7 @@ async function submitCoreDecision(){
       selected_option: selectedCoreOption,
       reason: '本人が選択した解決策',
       next_action: document.getElementById('coreNextAction').value || '今できる一歩を始める',
-      target_date: document.getElementById('coreTargetDate').value || new Date().toISOString().slice(0,10)
+      target_date: document.getElementById('coreTargetDate').value || todayJstDateForInput()
     };
 
     const data = await fetch('/api/core/decision', {
