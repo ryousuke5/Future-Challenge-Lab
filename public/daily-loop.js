@@ -110,11 +110,14 @@
     };
   }
 
-  function buildDiscovery(history){
+  function buildDiscovery(history, coreHistory=null){
     const checkins = [...(history.checkins || [])]
       .sort((a,b) => new Date(a.checked_in_at||0) - new Date(b.checked_in_at||0));
     const latest = checkins[checkins.length-1];
     const previous = checkins[checkins.length-2];
+    const continuation=coreHistory?.analysis?.continuation_risk||null;
+
+    if(continuation?.reasons?.length) return 'AIが今日見つけた「続けにくさ」の手がかり：' + continuation.reasons.slice(0,2).join(' / ');
 
     if(!latest){
       return '今日の記録を1ページ残すと、これからの自分の変化をFCLで見つけられるようになります。';
@@ -138,7 +141,10 @@
     return '今回が最初の記録です。ここから積み重ねることで、あなた自身の変化が見えてきます。';
   }
 
-  function buildNextStep(history){
+  function buildNextStep(history, coreHistory=null){
+    const coreNextAction=coreHistory?.analysis?.next_action;
+    if(coreNextAction) return coreNextAction;
+
     const outcome = latestCoreEvent(history.events, 'core_outcome');
     const decision = latestCoreEvent(history.events, 'core_decision');
     const nextAction = outcome?.features?.next_action || decision?.features?.next_action || '';
@@ -186,14 +192,15 @@
     try{
       const response = await fetch('/api/story/' + encodeURIComponent(participantId));
       const history = await response.json().catch(() => ({}));
+      let coreHistory={}; try{ const coreResponse=await fetch('/api/core/history/' + encodeURIComponent(participantId)); coreHistory=await coreResponse.json().catch(()=>({})); }catch(error){ console.warn('FCL core history load failed',error); }
       if(!response.ok || !history.participant){
         renderEmpty();
         return;
       }
 
       const praise = buildPraise(history);
-      const discovery = buildDiscovery(history);
-      const nextStep = buildNextStep(history);
+      const discovery = buildDiscovery(history, coreHistory);
+      const nextStep = buildNextStep(history, coreHistory);
 
 
       root.innerHTML = `
