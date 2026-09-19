@@ -19,7 +19,7 @@ app.use(express.static('public'));
 const port = process.env.PORT || 3000;
 const hasSupabase = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 const supabase = hasSupabase ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY) : null;
-const memory = { fcl_users: [], participants: [], checkins: [], interventions: [], intervention_assignments: [], action_results: [], supporters: [], supporter_matches: [], connection_events: [], intervention_outcomes: [], model_learning_events: [], intervention_policy_decisions: [], supporter_outcomes: [], journal_replies: [], challenge_story_pages: [], supporter_ai_summaries: [], personal_ai_profiles: [] };
+const memory = { fcl_users: [], participants: [], checkins: [], journal_entries: [], interventions: [], intervention_assignments: [], action_results: [], supporters: [], supporter_matches: [], connection_events: [], intervention_outcomes: [], model_learning_events: [], intervention_policy_decisions: [], supporter_outcomes: [], journal_replies: [], challenge_story_pages: [], supporter_ai_summaries: [], personal_ai_profiles: [] };
 const supporterApprovalState = new Map();
 
 function readSupporterApprovalState(matchId){
@@ -1032,6 +1032,7 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
   const recentAssignments = (await select('intervention_assignments',{participant_id})).sort((a,b) => new Date(b.assigned_at) - new Date(a.assigned_at)).slice(0, 20);
   const supportHistory = (await select('supporter_outcomes',{participant_id})).sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 10);
   const journalReplies = (await select('journal_replies',{participant_id})).sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0)).slice(0, 5);
+  const journalEntries = (await select('journal_entries',{participant_id})).sort((a,b) => new Date(b.entry_date||b.created_at||0) - new Date(a.entry_date||a.created_at||0)).slice(0, 5);
   const continuationProfile = buildContinuationProfile({ checkins, actions: recentActions, journalReplies });
   const modelLearningEvents = await select('model_learning_events',{participant_id});
   const personalLearning = buildPersonalLearningProfile({ assignments: recentAssignments, actions: recentActions, supportHistory, events: modelLearningEvents });
@@ -1097,7 +1098,7 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
     exploration: { mode: personalSupportPattern.status==='observational' ? 'exploit_with_exploration' : 'explore', reason: personalSupportPattern.statement }
   };
 
-  const prompt = 'participant_goal=' + coreContext.goal + '\ncheckin_text=' + coreContext.checkin_text + '\nstate=' + JSON.stringify(state) + '\nstate_changes=' + JSON.stringify(stateChanges) + '\nrisk_signals=' + JSON.stringify(riskSignals) + '\ncontinuation_profile=' + JSON.stringify(continuationProfile) + '\npersonal_learning=' + JSON.stringify(personalLearning) + '\npersonal_ai_profile=' + JSON.stringify(personalAiProfile||{}) + '\nrecommendation_learning=' + JSON.stringify(personalLearning.recommendation_learning||{}) + '\nindividual_continuation_pattern=' + JSON.stringify(personalLearning.individual_continuation_pattern||{}) + '\nrecent_action=' + coreContext.recentAction + '\nbarriers=' + coreContext.barriers + '\nUse continuation_profile to identify concrete continuation risks. Use recommendation_learning to adapt the next action from prior outcomes. When adjustment.mode is shrink_and_adjust or smaller_step, do not recommend repeating the same-sized action; use the provided next_action_hint. When adjustment.mode is reuse_observed, you may reuse the observed option but still keep the step small. Do not diagnose health or personality. Distinguish observed signals from hypotheses. Prefer a small actionable next step and avoid repeating previous journal wording.';
+  const prompt = 'recent_journal_entries=' + JSON.stringify(journalEntries.map(x=>({entry_date:x.entry_date,source:x.source,raw_text:String(x.raw_text||'').slice(0,1800)}))) + '\nparticipant_goal=' + coreContext.goal + '\ncheckin_text=' + coreContext.checkin_text + '\nstate=' + JSON.stringify(state) + '\nstate_changes=' + JSON.stringify(stateChanges) + '\nrisk_signals=' + JSON.stringify(riskSignals) + '\ncontinuation_profile=' + JSON.stringify(continuationProfile) + '\npersonal_learning=' + JSON.stringify(personalLearning) + '\npersonal_ai_profile=' + JSON.stringify(personalAiProfile||{}) + '\nrecommendation_learning=' + JSON.stringify(personalLearning.recommendation_learning||{}) + '\nindividual_continuation_pattern=' + JSON.stringify(personalLearning.individual_continuation_pattern||{}) + '\nrecent_action=' + coreContext.recentAction + '\nbarriers=' + coreContext.barriers + '\nUse continuation_profile to identify concrete continuation risks. Use recommendation_learning to adapt the next action from prior outcomes. When adjustment.mode is shrink_and_adjust or smaller_step, do not recommend repeating the same-sized action; use the provided next_action_hint. When adjustment.mode is reuse_observed, you may reuse the observed option but still keep the step small. Do not diagnose health or personality. Distinguish observed signals from hypotheses. Prefer a small actionable next step and avoid repeating previous journal wording.';
   const llmResult = await callOpenAiFallback(prompt);
   if(llmResult){
     const result = normalizeAiCoreResult(llmResult, baseResult);
@@ -1134,6 +1135,30 @@ async function saveFclCoreDecision({ participant_id, selected_option, reason, ne
 }
 
 
+async function saveJournalEntry({ participant_id, entry_date = todayJstDate(), source = 'chatgpt', raw_text, metadata = {} }){
+  if(!participant_id) throw new Error('invalid participant_id');
+  const participant = (await select('participants',{id:participant_id}))[0];
+  if(!participant) throw new Error('participant not found');
+  const date = String(entry_date || todayJstDate()).slice(0,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('invalid entry_date');
+  const allowedSources = ['chatgpt','fcl','manual'];
+  const normalizedSource = allowedSources.includes(String(source||'').toLowerCase()) ? String(source).toLowerCase() : 'chatgpt';
+  const text = String(raw_text || '').trim();
+  if(!text) throw new Error('empty raw_text');
+  if(text.length > 20000) throw new Error('journal is too long (max 20000 characters)');
+  const payload = { participant_id, entry_date:date, source:normalizedSource, raw_text:text, metadata:(metadata && typeof metadata==='object') ? metadata : {}, imported_at:new Date().toISOString(), updated_at:new Date().toISOString() };
+  const q = db('journal_entries');
+  if(q){
+    const {data,error}=await q.upsert(payload,{onConflict:'participant_id,entry_date,source'}).select().single();
+    if(error) throw error;
+    return data;
+  }
+  const existing = memory.journal_entries.find(row => row.participant_id===participant_id && row.entry_date===date && row.source===normalizedSource);
+  if(existing){ Object.assign(existing,payload); return existing; }
+  const stored={id:uuid(),created_at:new Date().toISOString(),...payload};
+  memory.journal_entries.push(stored);
+  return stored;
+}
 async function saveJournalReply({ participant_id, checkin_id = null, source_analysis_event_id, reply_text, reply_version = 'v1', reply_date = todayJstDate() }){
   if(!participant_id) throw new Error('invalid participant_id');
   if(!source_analysis_event_id) throw new Error('invalid source_analysis_event_id');
@@ -1664,15 +1689,23 @@ function storyDateKey(value){
   return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo'}).format(d);
 }
 
-function buildStorySourceDays({participant,checkins=[],actions=[],events=[],matches=[]}){
+function buildStorySourceDays({participant,checkins=[],actions=[],events=[],matches=[],journalEntries=[]}){
   const map=new Map();
   const add=(date,patch={})=>{
     if(!date)return;
-    if(!map.has(date))map.set(date,{page_date:date,is_start:false,checkins:[],actions:[],events:[],connected:false,checkin_text:'',analysis_summary:'',insight:'',decision:'',outcome_status:'',result_note:'',autonomy_total:null,risk_level:'',score_change:null,restarted:false});
+    if(!map.has(date))map.set(date,{page_date:date,is_start:false,checkins:[],actions:[],events:[],connected:false,journal_text:'',checkin_text:'',analysis_summary:'',insight:'',decision:'',outcome_status:'',result_note:'',autonomy_total:null,risk_level:'',score_change:null,restarted:false});
     Object.assign(map.get(date),patch);
   };
   const start=storyDateKey(participant?.created_at);
   if(start)add(start,{is_start:true});
+  for(const j of journalEntries||[]){
+    const date=storyDateKey(j.entry_date||j.created_at);
+    if(!date)continue;
+    add(date);
+    const d=map.get(date);
+    const text=String(j.raw_text||'').trim();
+    if(text && (!d.journal_text || j.source==='chatgpt')) d.journal_text=text.slice(0,12000);
+  }
   for(const c of checkins){
     const date=storyDateKey(c.checked_in_at);
     add(date);
@@ -1706,7 +1739,7 @@ function buildStorySourceDays({participant,checkins=[],actions=[],events=[],matc
 function storyFallbackLines(source={}){
   const seed=Array.from(String(source.page_date||'')).reduce((sum,ch)=>sum+ch.charCodeAt(0),0)+Number(source.page_no||0)*11+Number(source.autonomy_total||0)*3;
   const pick=(a,n=0)=>a[Math.abs(seed+n)%a.length];
-  const note=String(source.checkin_text||'').trim();
+  const note=String(source.journal_text||source.checkin_text||'').trim();
   const action=(source.actions||[]).find(x=>x.completed&&x.action_text)?.action_text||'';
   const anyAction=(source.actions||[]).find(x=>x.action_text)?.action_text||'';
   let first,second;
@@ -1742,7 +1775,7 @@ async function generateStoryPagesWithOpenAI({participant,sources=[]}={}){
     '目標：'+String(participant?.goal||''),
     '',
     '日ごとの素材：',
-    JSON.stringify(sources.map(s=>({page_date:s.page_date,page_no:s.page_no,is_start:Boolean(s.is_start),checkin_text:s.checkin_text,autonomy_total:s.autonomy_total,risk_level:s.risk_level,score_change:s.score_change,actions:s.actions,connected:Boolean(s.connected),restarted:Boolean(s.restarted),decision:s.decision,outcome_status:s.outcome_status,result_note:s.result_note})),null,2),
+    JSON.stringify(sources.map(s=>({page_date:s.page_date,page_no:s.page_no,is_start:Boolean(s.is_start),journal_text:s.journal_text,checkin_text:s.checkin_text,autonomy_total:s.autonomy_total,risk_level:s.risk_level,score_change:s.score_change,actions:s.actions,connected:Boolean(s.connected),restarted:Boolean(s.restarted),decision:s.decision,outcome_status:s.outcome_status,result_note:s.result_note})),null,2),
     '',
     '出力形式：{"pages":[{"page_date":"YYYY-MM-DD","lines":["1行目","2行目","3行目"]}]}'
   ].join('\n');
@@ -1777,10 +1810,10 @@ app.post('/api/story-pages/generate',async(req,res)=>{
     if(!participant_id)return res.status(400).json({error:'participant_id is required'});
     const participant=(await select('participants',{id:participant_id}))[0];
     if(!participant||participant.archived_at)return res.status(404).json({error:'participant not found'});
-    const [checkins,actions,events,matches,existingPages]=await Promise.all([
+    const [checkins,actions,events,matches,existingPages,journalEntries]=await Promise.all([
       select('checkins',{participant_id}),select('action_results',{participant_id}),select('model_learning_events',{participant_id}),select('supporter_matches',{participant_id}),select('challenge_story_pages',{participant_id})
     ]);
-    const sources=buildStorySourceDays({participant,checkins,actions,events,matches});
+    const sources=buildStorySourceDays({participant,checkins,actions,events,matches,journalEntries});
     const existingByDate=new Map(existingPages.map(row=>[String(row.page_date),row]));
     const missing=sources.filter(source=>{ const existing=existingByDate.get(source.page_date); return !existing || String(existing.generation_version||'').startsWith('v2-fallback'); });
     const generated=missing.length?await generateStoryPagesWithOpenAI({participant,sources:missing}):{};
@@ -1982,12 +2015,14 @@ app.get('/api/story/:participant_id',async(req,res)=>{
   try{
     const participant=(await select('participants',{id:req.params.participant_id}))[0];
     if(!participant) return res.status(404).json({error:'participant not found'});
-    const checkins=(await select('checkins',{participant_id:participant.id})).sort((a,b)=>new Date(a.checked_in_at||0)-new Date(b.checked_in_at||0));
+    const [checkinsRaw,journalEntriesRaw]=await Promise.all([select('checkins',{participant_id:participant.id}),select('journal_entries',{participant_id:participant.id})]);
+    const checkins=checkinsRaw.sort((a,b)=>new Date(a.checked_in_at||0)-new Date(b.checked_in_at||0));
     const actions=(await select('action_results',{participant_id:participant.id})).sort((a,b)=>new Date(a.completed_at||a.created_at||0)-new Date(b.completed_at||b.created_at||0));
     const events=(await select('model_learning_events',{participant_id:participant.id})).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0));
     const matches=(await select('supporter_matches',{participant_id:participant.id})).map(hydrateMatchApprovalState).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0));
     const journal_replies=(await select('journal_replies',{participant_id:participant.id})).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0));
-    res.json({participant,checkins,actions,events,matches,journal_replies});
+    const journal_entries=journalEntriesRaw.sort((a,b)=>new Date(a.entry_date||a.created_at||0)-new Date(b.entry_date||b.created_at||0));
+    res.json({participant,checkins,actions,events,matches,journal_replies,journal_entries});
   }catch(e){res.status(500).json({error:e.message});}
 });
 
@@ -2023,6 +2058,22 @@ app.get('/api/core/history/:participant_id',async(req,res)=>{
   }catch(e){res.status(500).json({error:e.message});}
 });
 
+app.post('/api/journal-entries',async(req,res)=>{
+  try{
+    const participant_id=String(req.body?.participant_id||'').trim();
+    const raw_text=String(req.body?.raw_text||'').trim();
+    const entry_date=String(req.body?.entry_date||todayJstDate()).slice(0,10);
+    const source=String(req.body?.source||'chatgpt').toLowerCase();
+    if(!participant_id)return res.status(400).json({error:'participant_id is required'});
+    if(!raw_text)return res.status(400).json({error:'日誌本文を入力してください。'});
+    if(raw_text.length>20000)return res.status(400).json({error:'日誌は20000文字以内で保存してください。'});
+    const entry=await saveJournalEntry({participant_id,entry_date,source,raw_text,metadata:{imported_via:'fcl-journal-import'}});
+    res.json({ok:true,entry,updated:true});
+  }catch(e){
+    console.error('journal entry save error',e);
+    res.status(500).json({error:e.message||'journal entry save failed'});
+  }
+});
 app.post('/api/checkins',async(req,res)=>{
   try{
     const {participant_id, answers={}}=req.body;
@@ -2037,6 +2088,14 @@ app.post('/api/checkins',async(req,res)=>{
     const resumed=Boolean(previous && (Date.now()-new Date(previous.checked_in_at).getTime())>36*3600*1000);
     const analysis={summary:level==='high'?'自己決定感が低く、離脱リスクが高い状態です。':'自己決定感を保てています。',resumed,signals:{score,risk,level}};
     const checkin=await insert('checkins',{participant_id,autonomy_total:score,autonomy_answers:answers,risk_score:risk,risk_level:level,analysis,checked_in_at:new Date().toISOString()});
+    const checkinJournalText=String(req.body?.checkin_text||'').trim();
+    if(checkinJournalText){
+      try{
+        await saveJournalEntry({participant_id,entry_date:todayJstDate(),source:'fcl',raw_text:checkinJournalText,metadata:{imported_via:'checkin',checkin_id:checkin.id}});
+      }catch(journalError){
+        console.warn('[journal-entries] FCL note save failed',journalError?.message||journalError);
+      }
+    }
     // Close the feedback loop for interventions that were observed before this check-in.
     const openOutcomes=(await select('intervention_outcomes',{participant_id})).filter(row=>row.post_risk===null||row.post_risk===undefined);
     for(const outcome of openOutcomes){
