@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import crypto from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
@@ -51,6 +52,30 @@ function db(table) { if (!supabase) return null; return supabase.from(table); }
 function normalizeContactEmail(value){
   return String(value || '').trim().toLowerCase();
 }
+function hashSha256(value){ return crypto.createHash('sha256').update(String(value || '')).digest('hex'); }
+function fclSessionSecret(){ return process.env.FCL_SESSION_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || ''; }
+function createFclSessionToken(userId){
+  const secret=fclSessionSecret(); if(!secret||!userId)return '';
+  const payload=Buffer.from(JSON.stringify({purpose:'fcl-session',user_id:userId,exp:Math.floor((Date.now()+30*24*60*60*1000)/1000)})).toString('base64url');
+  const signature=crypto.createHmac('sha256',secret).update(payload).digest('base64url');
+  return payload+'.'+signature;
+}
+function verifyFclSessionToken(token){
+  const secret=fclSessionSecret(); if(!secret||!token)return null;
+  const parts=String(token).split('.'); const payload=parts[0],signature=parts[1]; if(!payload||!signature)return null;
+  const expected=crypto.createHmac('sha256',secret).update(payload).digest('base64url');
+  const a=Buffer.from(signature),b=Buffer.from(expected); if(a.length!==b.length||!crypto.timingSafeEqual(a,b))return null;
+  try{ const parsed=JSON.parse(Buffer.from(payload,'base64url').toString('utf8')); if(parsed?.purpose!=='fcl-session'||!parsed?.user_id||Number(parsed.exp||0)<Math.floor(Date.now()/1000))return null; return parsed; }catch{return null;}
+}
+function parseCookieHeader(header=''){ return String(header||'').split(';').reduce((out,pair)=>{const i=pair.indexOf('=');if(i<0)return out;const k=pair.slice(0,i).trim();const v=pair.slice(i+1).trim();if(k)out[k]=decodeURIComponent(v);return out;},{}); }
+function getRequestSessionToken(req){ const cookies=parseCookieHeader(req.headers.cookie||''); return cookies.fcl_session || String(req.headers.authorization||'').replace(/^Bearer\s+/i,'').trim() || ''; }
+function setFclSessionCookie(res,token){ const secure=process.env.NODE_ENV==='production'?'; Secure':''; res.setHeader('Set-Cookie','fcl_session='+encodeURIComponent(token)+'; Max-Age='+String(30*24*60*60)+'; Path=/; HttpOnly; SameSite=Lax'+secure); }
+function clearFclSessionCookie(res){ const secure=process.env.NODE_ENV==='production'?'; Secure':''; res.setHeader('Set-Cookie','fcl_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax'+secure); }
+async function getAuthenticatedFclUser(req){ const session=verifyFclSessionToken(getRequestSessionToken(req)); if(!session?.user_id)return null; const user=(await select('fcl_users',{id:session.user_id}))[0]||null; return user?{...user,session}:null; }
+async function requireParticipantOwnership(userId,participantId){ if(!userId||!participantId)return false; const participant=(await select('participants',{id:participantId}))[0]; return Boolean(participant&&participant.user_id===userId&&!participant.archived_at); }
+async function requireSupporterOwnership(userId,supporterId){ if(!userId||!supporterId)return false; const supporter=(await select('supporters',{id:supporterId}))[0]; return Boolean(supporter&&supporter.user_id===userId&&!supporter.archived_at); }
+async function userOwnsMatch(userId,match){ if(!userId||!match)return false; const p=(await select('participants',{id:match.participant_id}))[0]; const s=(await select('supporters',{id:match.supporter_id}))[0]; return Boolean((p&&p.user_id===userId)||(s&&s.user_id===userId)); }
+function verifyMatchAccessToken(token,matchId){ if(!token||!process.env.SUPABASE_SERVICE_ROLE_KEY)return null; const parts=String(token).split('.'); const payload=parts[0],signature=parts[1]; if(!payload||!signature)return null; const expected=crypto.createHmac('sha256',process.env.SUPABASE_SERVICE_ROLE_KEY).update(payload).digest('base64url'); const a=Buffer.from(signature),b=Buffer.from(expected); if(a.length!==b.length||!crypto.timingSafeEqual(a,b))return null; try{const parsed=JSON.parse(Buffer.from(payload,'base64url').toString('utf8'));if(parsed?.match_id!==matchId||!['challenger','supporter'].includes(parsed?.role))return null;return parsed;}catch{return null;} }
 function isTestEmail(value){
   const email=normalizeContactEmail(value);
   const domain=email.split('@').pop() || '';
@@ -497,8 +522,7 @@ function generateCoreSolutions(state, insight, problem){
     },
     {
       id: 'B',
-      title: '問題を整理する',
-      description: '今の困りごととその原因を3つ以内に整理し、どこで止まっているかを明確にします。',
+      title: '問題を整理する',      description: '今の困りごととその原因を3つ以内に整理し、どこで止まっているかを明確にします。',
       reason: '次に何をすればよいかの不明確さを減らすためです。'
     },
     {
@@ -997,8 +1021,7 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
     return { ...result, analysis_event_id: analysisEvent?.id || null, analysis_checkin_text: coreContext.checkin_text };
   }
 
-  const analysisEvent=await insert('model_learning_events',{participant_id,features:{action_type:'core_analysis',checkin_text:coreContext.checkin_text,result:baseResult,state:baseResult.state,state_change:baseResult.state_change,insight:baseResult.insight,problem:baseResult.problem,hypothesis:baseResult.hypothesis,adaptive_questions:baseResult.adaptive_questions,personal_support_pattern:baseResult.personal_support_pattern},label:{recommended_option:baseResult.recommended_option,next_action:baseResult.next_action}});
-  return { ...baseResult, analysis_event_id: analysisEvent?.id || null, analysis_checkin_text: coreContext.checkin_text };
+  const analysisEvent=await insert('model_learning_events',{participant_id,features:{action_type:'core_analysis',checkin_text:coreContext.checkin_text,result:baseResult,state:baseResult.state,state_change:baseResult.state_change,insight:baseResult.insight,problem:baseResult.problem,hypothesis:baseResult.hypothesis,adaptive_questions:baseResult.adaptive_questions,personal_support_pattern:baseResult.personal_support_pattern},label:{recommended_option:baseResult.recommended_option,next_action:baseResult.next_action}});  return { ...baseResult, analysis_event_id: analysisEvent?.id || null, analysis_checkin_text: coreContext.checkin_text };
 }
 
 async function saveFclCoreDecision({ participant_id, selected_option, reason, next_action, target_date }){
@@ -1187,6 +1210,70 @@ async function saveFclCoreOutcome({ participant_id, selected_option, next_action
   }};
 }
 
+app.post('/api/auth/request-code',async(req,res)=>{
+  try{
+    const email=normalizeContactEmail(req.body?.email);
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return res.status(400).json({error:'有効なメールアドレスを入力してください'});
+    const user=await getOrCreateFclUser(email);
+    const sentAt=user.auth_code_sent_at?new Date(user.auth_code_sent_at).getTime():0;
+    if(sentAt&&Date.now()-sentAt<60000)return res.status(429).json({error:'認証コードは1分に1回まで送信できます。'});
+    const code=String(crypto.randomInt(100000,1000000));
+    await update('fcl_users',user.id,{auth_code_hash:hashSha256(code),auth_code_expires_at:new Date(Date.now()+10*60*1000).toISOString(),auth_code_sent_at:new Date().toISOString(),auth_code_attempts:0,updated_at:new Date().toISOString()});
+    const testMode=isTestEmail(email)&&process.env.NODE_ENV==='development';
+    if(!testMode){
+      if(!process.env.RESEND_API_KEY||!process.env.FCL_FROM_EMAIL)return res.status(503).json({error:'認証メールの送信設定がまだ完了していません。'});
+      const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+process.env.RESEND_API_KEY},body:JSON.stringify({from:process.env.FCL_FROM_EMAIL,to:[email],subject:'FCL｜ログイン認証コード',text:'FCLのログイン認証コードは '+code+' です。\n\n10分以内にFCLの画面へ入力してください。\n\n心当たりがない場合は、このメールを無視してください。\n\nFuture Challenge Lab',html:'<p>FCLのログイン認証コードです。</p><p style="font-size:28px;font-weight:700;letter-spacing:4px">'+code+'</p><p>10分以内にFCLの画面へ入力してください。</p><p>心当たりがない場合は、このメールを無視してください。</p><p>Future Challenge Lab</p>'})});
+      const responseText=await response.text(); if(!response.ok)throw new Error('Resend '+response.status+': '+responseText);
+    }
+    res.json({ok:true,message:'認証コードをメールで送信しました。',development_code:testMode?code:undefined});
+  }catch(error){console.error('[fcl-auth] request-code',error);res.status(500).json({error:error.message||'認証コードの送信に失敗しました。'});}
+});
+
+app.post('/api/auth/verify-code',async(req,res)=>{
+  try{
+    const email=normalizeContactEmail(req.body?.email); const code=String(req.body?.code||'').replace(/\D/g,'');
+    if(!email||code.length!==6)return res.status(400).json({error:'メールアドレスと6桁の認証コードを入力してください'});
+    const user=(await select('fcl_users',{email_normalized:email}))[0]||null;
+    if(!user||!user.auth_code_hash||!user.auth_code_expires_at)return res.status(401).json({error:'認証コードが無効です。もう一度送信してください。'});
+    const attempts=Number(user.auth_code_attempts||0); const exp=new Date(user.auth_code_expires_at).getTime();
+    if(attempts>=5)return res.status(429).json({error:'認証コードの入力回数が上限に達しました。新しいコードを送信してください。'});
+    if(!Number.isFinite(exp)||exp<Date.now())return res.status(401).json({error:'認証コードの有効期限が切れています。'});
+    if(hashSha256(code)!==user.auth_code_hash){await update('fcl_users',user.id,{auth_code_attempts:attempts+1,updated_at:new Date().toISOString()});return res.status(401).json({error:'認証コードが正しくありません。'});}
+    await update('fcl_users',user.id,{auth_code_hash:null,auth_code_expires_at:null,auth_code_sent_at:null,auth_code_attempts:0,updated_at:new Date().toISOString()});
+    const token=createFclSessionToken(user.id); if(!token)return res.status(500).json({error:'セッション設定がありません。'});
+    setFclSessionCookie(res,token); res.json({ok:true,user_id:user.id,email:user.email});
+  }catch(error){console.error('[fcl-auth] verify-code',error);res.status(500).json({error:error.message||'認証に失敗しました。'});}
+});
+
+app.get('/api/auth/session',async(req,res)=>{try{const user=await getAuthenticatedFclUser(req);if(!user)return res.status(401).json({authenticated:false});res.json({authenticated:true,user:{id:user.id,email:user.email}});}catch(error){res.status(500).json({error:error.message||'session lookup failed'});}});
+app.post('/api/auth/logout',(req,res)=>{clearFclSessionCookie(res);res.json({ok:true});});
+
+app.use('/api',async(req,res,next)=>{
+  const path=req.path||'';
+  const publicRoute=path==='/health'||path.startsWith('/auth/')||path==='/story-index'||path.startsWith('/story-person/')||(req.method==='GET'&&(path.match(/^\/matches\/[^/]+\/detail$/)||path.match(/^\/matches\/[^/]+\/messages$/)));
+  if(publicRoute)return next();
+  try{
+    const user=await getAuthenticatedFclUser(req); if(!user)return res.status(401).json({error:'FCLログインが必要です。メール認証コードでログインしてください。'}); req.fclUser=user;
+    const participantId=String(req.body?.participant_id||req.query?.participant_id||req.params?.participant_id||(/^\/participants\/[^/]+$/.test(path)?req.params.id:'')).trim();
+    if(participantId&&!(await requireParticipantOwnership(user.id,participantId)))return res.status(403).json({error:'この挑戦者データへアクセスする権限がありません。'});
+    const supporterId=String(req.body?.supporter_id||req.query?.supporter_id||'').trim();
+    const supporterOwnershipExempt=path==='/supporter-outcomes';
+    if(supporterId&&!supporterOwnershipExempt&&!(await requireSupporterOwnership(user.id,supporterId)))return res.status(403).json({error:'この支援者データへアクセスする権限がありません。'});
+    if(/^\/users\/[^/]+(?:\/overview)?$/.test(path)||/^\/story-user\/[^/]+$/.test(path)){const target=String(req.params?.user_id||'').trim();if(target&&target!==user.id)return res.status(403).json({error:'このユーザー情報へアクセスする権限がありません。'});}
+    if(/^\/matches\/[^/]+\/(request|challenger-approve)$/.test(path)){const match=(await select('supporter_matches',{id:req.params.id}))[0];if(!match||!(await requireParticipantOwnership(user.id,match.participant_id)))return res.status(403).json({error:'挑戦者本人のみ操作できます。'});req.fclMatch=match;}
+    else if(/^\/matches\/[^/]+\/supporter-approve$/.test(path)){const match=(await select('supporter_matches',{id:req.params.id}))[0];if(!match||!(await requireSupporterOwnership(user.id,match.supporter_id)))return res.status(403).json({error:'支援者本人のみ操作できます。'});req.fclMatch=match;}
+    else if(/^\/matches\/[^/]+\/decline$/.test(path)){const match=(await select('supporter_matches',{id:req.params.id}))[0];if(!match||!(await userOwnsMatch(user.id,match)))return res.status(403).json({error:'接続当事者のみ操作できます。'});const actor=String(req.body?.actor||'challenger');if((actor==='challenger'&&!(await requireParticipantOwnership(user.id,match.participant_id)))||(actor==='supporter'&&!(await requireSupporterOwnership(user.id,match.supporter_id)))||!['challenger','supporter'].includes(actor))return res.status(403).json({error:'この接続の当事者本人のみ辞退できます。'});req.fclMatch=match;}
+    else if(/^\/matches\/[^/]+$/.test(path)){const match=(await select('supporter_matches',{id:req.params.id}))[0];if(!match||!(await userOwnsMatch(user.id,match)))return res.status(403).json({error:'この接続情報へアクセスする権限がありません。'});req.fclMatch=match;}
+    if(path==='/supporter/dashboard'&&req.query?.user_id&&String(req.query.user_id)!==user.id)return res.status(403).json({error:'この支援者画面へアクセスする権限がありません。'});
+    if(path==='/supporters/register'){const email=normalizeContactEmail(req.body?.email);if(email!==normalizeContactEmail(user.email))return res.status(403).json({error:'登録メールアドレスを認証してください。'});}
+    if(path==='/participants'){const email=normalizeContactEmail(req.body?.email);if(email!==normalizeContactEmail(user.email))return res.status(403).json({error:'登録メールアドレスを認証してください。'});}
+    if(path==='/supporter/execute'&&!await requireSupporterOwnership(user.id,req.body?.supporter_id))return res.status(403).json({error:'支援者本人のみ支援を実行できます。'});
+    if(path==='/supporter-match'&&!await requireSupporterOwnership(user.id,req.body?.supporter_id))return res.status(403).json({error:'支援者本人のみ支援先を選択できます。'});
+    if(path==='/supporter-outcomes'&&!await requireParticipantOwnership(user.id,req.body?.participant_id))return res.status(403).json({error:'挑戦者本人のみ支援結果を記録できます。'});
+    if(/^\/supporters\/[^/]+\/status$/.test(path)&&!await requireSupporterOwnership(user.id,req.params.id))return res.status(403).json({error:'支援者本人のみ状態を変更できます。'});
+    next();
+  }catch(error){console.error('[fcl-auth] guard',error);res.status(500).json({error:'認可確認に失敗しました。'});}
+});
 app.get('/api/health',(req,res)=>res.json({ok:true,supabase:hasSupabase,mode:hasSupabase?'supabase':'memory'}));
 
 app.post('/api/participants',async(req,res)=>{
@@ -1497,8 +1584,7 @@ app.get('/api/story-user/:user_id', async (req,res)=>{
   }catch(e){
     console.error('story user error',e);
     res.status(500).json({error:e.message||'story user failed'});
-  }
-});
+  }});
 
 app.get('/api/story-index', async (req,res)=>{
   try{
@@ -1563,128 +1649,13 @@ app.get('/api/story-index', async (req,res)=>{
 app.get('/api/story-person/:participant_id', async (req,res)=>{
   try{
     const participant=(await select('participants',{id:req.params.participant_id}))[0];
-    if(!participant || participant.archived_at) return res.status(404).json({error:'story not found'});
-
+    if(!participant||participant.archived_at)return res.status(404).json({error:'story not found'});
     const approvedStories=await select('challenge_stories',{participant_id:participant.id,approved_by_participant:true,share_scope:'story'});
-    if(!approvedStories.length) return res.status(403).json({error:'この物語は現在公開されていません。'});
-
-    const [checkins,actions]=await Promise.all([
-      select('checkins',{participant_id:participant.id}),
-      select('action_results',{participant_id:participant.id})
-    ]);
-
-    const checks=[...checkins].sort((a,b)=>new Date(a.checked_in_at||0)-new Date(b.checked_in_at||0));
-    const acts=[...actions].sort((a,b)=>new Date(a.created_at||a.completed_at||0)-new Date(b.created_at||b.completed_at||0));
-
-    const days=new Map();
-    function addDay(date){
-      if(!date) return;
-      if(!days.has(date)) days.set(date,{date,checkins:[],actions:[]});
-      return days.get(date);
-    }
-
-    checks.forEach(c=>{
-      const at=new Date(c.checked_in_at||0);
-      if(Number.isNaN(at.getTime())) return;
-      addDay(at.toISOString().slice(0,10)).checkins.push(c);
-    });
-    acts.forEach(a=>{
-      const at=new Date(a.completed_at||a.created_at||0);
-      if(Number.isNaN(at.getTime())) return;
-      addDay(at.toISOString().slice(0,10)).actions.push(a);
-    });
-
-    const ordered=[...days.values()].sort((a,b)=>a.date.localeCompare(b.date));
-    let previousCheck=null;
-
-    const timeline=ordered.map(day=>{
-      const currentCheck=day.checkins[day.checkins.length-1] || null;
-      const completed=day.actions.filter(a=>a.completed).length;
-      const notCompleted=day.actions.filter(a=>!a.completed).length;
-
-      let growth='今日の記録が、次のページにつながっています。';
-      if(day===ordered[0]){
-        growth='この挑戦を始めて、最初の一歩を記録した。';
-      }else if(currentCheck && previousCheck){
-        const gap=(new Date(currentCheck.checked_in_at)-new Date(previousCheck.checked_in_at))/86400000;
-        if(gap>1){
-          growth='少し間が空いても、もう一度戻って記録した。再開することも、この挑戦の成長の一つ。';
-        }else if(completed>0){
-          const delta=Number(currentCheck.autonomy_total??previousCheck.autonomy_total??0)-Number(previousCheck.autonomy_total??0);
-          growth=delta>=2
-            ? '自分で選んだ行動を実行しながら、「自分で決めて進む」感覚にも変化が見えた。'
-            : '決めたことを実際の行動に移し、挑戦を一つ前へ進めた。';
-        }else{
-          growth='今日も現在地を確認し、続けるための材料を一つ積み重ねた。';
-        }
-      }else if(completed>0){
-        growth='考えていたことを行動に変え、実際に一歩進めた。';
-      }else if(notCompleted>0){
-        growth='思うように進まない日も、そのまま記録して次につなげた。';
-      }
-
-      const actionItems=day.actions.map(a=>({
-        text:String(a.action_text||'').trim(),
-        completed:Boolean(a.completed),
-        result:String(a.result_note||'').trim()
-      })).filter(a=>a.text || a.result);
-
-      const summary=[];
-      if(day.checkins.length) summary.push('現在地を確認した');
-      actionItems.filter(a=>a.text).forEach(a=>summary.push((a.completed?'実行した：':'取り組もうとした：')+a.text));
-
-      previousCheck=currentCheck || previousCheck;
-
-      return {
-        date:day.date,
-        headline:completed>0 ? '行動した日' : day.checkins.length ? '現在地を記録した日' : '挑戦を記録した日',
-        summary:summary.slice(0,4),
-        actions:actionItems,
-        growth
-      };
-    });
-
-    const completedActions=acts.filter(a=>a.completed);
-    const actionDays=new Set(acts.map(a=>{
-      const at=new Date(a.completed_at||a.created_at||0);
-      return Number.isNaN(at.getTime()) ? '' : at.toISOString().slice(0,10);
-    }).filter(Boolean));
-
-    const firstCheck=checks[0] || null;
-    const lastCheck=checks[checks.length-1] || null;
-    let overallGrowth='まだ物語の途中です。';
-    if(completedActions.length && checks.length>=2){
-      const delta=Number(lastCheck?.autonomy_total??0)-Number(firstCheck?.autonomy_total??0);
-      overallGrowth=delta>=2
-        ? '記録を重ねる中で、自分で選んで行動する感覚に変化が見えています。'
-        : '記録と行動を重ねながら、自分なりの進み方が少しずつ形になっています。';
-    }else if(completedActions.length){
-      overallGrowth='考えているだけで終わらせず、実際の行動を積み重ねています。';
-    }else if(checks.length>=2){
-      overallGrowth='自分の状態を何度も記録し、挑戦を見つめ続けています。';
-    }
-
-    res.json({
-      participant:{
-        id:participant.id,
-        name:participant.name || '匿名の挑戦者',
-        challenge:participant.challenge || '挑戦',
-        goal:participant.goal || ''
-      },
-      overview:{
-        recorded_days:ordered.length,
-        checkins:checks.length,
-        completed_actions:completedActions.length,
-        action_days:actionDays.size,
-        growth:overallGrowth
-      },
-      timeline,
-      story_title:'自分の行動と成長の物語'
-    });
-  }catch(e){
-    console.error('story person error',e);
-    res.status(500).json({error:e.message || 'story detail failed'});
-  }
+    if(!approvedStories.length)return res.status(403).json({error:'この物語は現在公開されていません。'});
+    const latestStory=[...approvedStories].sort((a,b)=>new Date(b.generated_at||b.created_at||0)-new Date(a.generated_at||a.created_at||0))[0];
+    let parsed={};try{parsed=latestStory.story_json&&typeof latestStory.story_json==='object'?latestStory.story_json:JSON.parse(latestStory.story_text||'{}');}catch{}
+    res.json({participant:{id:participant.id,name:participant.name||'匿名の挑戦者',challenge:participant.challenge||parsed.challenge||'挑戦',goal:participant.goal||parsed.goal||''},story:{title:parsed.title||'挑戦の物語',past:parsed.past||'',current_state_public:parsed.current_state_public||'',hope:parsed.hope||'',support_need:parsed.support_need||''},generated_at:latestStory.generated_at||latestStory.created_at||null});
+  }catch(e){console.error('story person error',e);res.status(500).json({error:e.message||'story detail failed'});}
 });
 
 app.get('/api/story/:participant_id',async(req,res)=>{
@@ -1819,6 +1790,9 @@ app.post('/api/supporter-outcomes',async(req,res)=>{
         : 0;
     const note=String(req.body.note||'').trim();
     const executionEventId=req.body.support_execution_event_id||null;
+    if(!match_id)return res.status(400).json({error:'match_id is required for support outcome'});
+    const linkedMatch=(await select('supporter_matches',{id:match_id}))[0];
+    if(!linkedMatch||linkedMatch.participant_id!==participant_id||linkedMatch.supporter_id!==supporter_id||effectiveMatchStatus(linkedMatch)!=='connected')return res.status(403).json({error:'接続済みの支援結果のみ記録できます。'});
 
     const allSupportEvents=await select('connection_events');
     const learningEvents=await select('model_learning_events',{participant_id});
@@ -1997,8 +1971,7 @@ function buildAdaptiveSupportFit({participant,supporter,last,pattern={},supporte
   const supporterAllSuccess=supporterAll.filter(row=>['restarted','action_completed','connected_and_progressed','positive'].includes(row.outcome)).length;
   if(supporterAll.length>=3 && supporterAllSuccess/supporterAll.length>=0.67){ extra+=6; reasons.push('支援成果の観測実績あり'); }
 
-  if(recentBarriers.length && timingTags.includes('伴走')){ extra+=4; reasons.push('繰り返し観測された障壁への伴走支援と適合'); }
-  return {
+  if(recentBarriers.length && timingTags.includes('伴走')){ extra+=4; reasons.push('繰り返し観測された障壁への伴走支援と適合'); }  return {
     extra_score:extra, strongest_mode:strongestMode, reasons,
     evidence:{ personal_pattern_observed:Boolean(strongestMode), same_participant_support_trials:sameSupporter.length, same_participant_support_successes:sameSuccess, supporter_outcome_trials:supporterAll.length, supporter_outcome_successes:supporterAllSuccess }
   };
@@ -2425,6 +2398,11 @@ app.get('/api/matches/:id/detail', async (req, res) => {
   try {
     const match = (await select('supporter_matches',{id:req.params.id}))[0];
     if (!match) return res.status(404).json({ error: 'match not found' });
+    const sessionUser=await getAuthenticatedFclUser(req);
+    const tokenAuth=verifyMatchAccessToken(req.query?.token,match.id);
+    if(!sessionUser&&!tokenAuth)return res.status(401).json({error:'FCLログインまたは接続ページ用トークンが必要です。'});
+    if(sessionUser&&!(await userOwnsMatch(sessionUser.id,match)))return res.status(403).json({error:'この接続情報へアクセスする権限がありません。'});
+    if(!sessionUser&&String(match.status)!=='connected')return res.status(403).json({error:'接続成立後のみ閲覧できます。'});
     const participant = (await select('participants',{id:match.participant_id}))[0];
     const supporter = (await select('supporters',{id:match.supporter_id}))[0];
     const recentCheckin = (await select('checkins',{participant_id:match.participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0];
@@ -2497,8 +2475,7 @@ app.post('/api/matches/:id/send-email', async (req, res) => {
   }
 });
 
-async function updateMatchApprovalStatus(matchId, actor, action, note=''){
-  const match = (await select('supporter_matches',{id:matchId}))[0];
+async function updateMatchApprovalStatus(matchId, actor, action, note=''){  const match = (await select('supporter_matches',{id:matchId}))[0];
   if (!match) throw new Error('match not found');
   const currentStatus = effectiveMatchStatus(match);
   if (['declined','expired'].includes(currentStatus)) throw new Error('match is no longer active');
@@ -2671,6 +2648,9 @@ app.post('/api/supporter/execute', async (req, res) => {
     const { participant_id, supporter_id, recommendation_type, recommendation_reason, suggested_message, approved, checkin_id, match_id } = req.body || {};
     if (!participant_id || !supporter_id) return res.status(400).json({ error: 'invalid participant_id or supporter_id' });
     if (!approved) return res.status(400).json({ error: 'supporter approval required' });
+    if (!match_id) return res.status(400).json({ error: 'match_id is required for support execution' });
+    const linkedMatch=(await select('supporter_matches',{id:match_id}))[0];
+    if(!linkedMatch||linkedMatch.participant_id!==participant_id||linkedMatch.supporter_id!==supporter_id||effectiveMatchStatus(linkedMatch)!=='connected')return res.status(403).json({error:'接続済みの本人同士のみ支援を実行できます。'});
 
     const checkins=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
     const latest = checkin_id ? (await select('checkins',{id:checkin_id}))[0] || checkins[0] : checkins[0];
@@ -2997,8 +2977,7 @@ app.post('/api/core/analyze', async (req, res) => {
 });
 
 async function generateJournalReplyWithOpenAI({ participant, checkinText, analysis, decision, outcome } = {}){
-  const key = process.env.OPENAI_API_KEY;
-  if(!key) return null;
+  const key = process.env.OPENAI_API_KEY;  if(!key) return null;
 
   const prompt = `
 あなたはFuture Challenge Lab（FCL）の「あなたの日誌への返信」を書く担当です。

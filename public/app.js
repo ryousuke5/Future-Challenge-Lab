@@ -30,11 +30,36 @@ function initializeCoreTargetDate(){
 }
 document.getElementById('questions').innerHTML=qs.map((q,i)=>`<div class="q"><strong>Q${i+1}.</strong> ${q}<select id="q${i}">${[1,2,3,4,5].map(x=>`<option value="${x}">${x}</option>`).join('')}</select></div>`).join('');
 fetch('/api/health').then(r=>r.json()).then(x=>document.getElementById('mode').textContent=x.supabase?'Supabase接続中':'ローカル開発モード');
-async function api(url,body){const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const x=await r.json();if(!r.ok)throw Error(x.error||'error');return x;}
+async function api(url,body){const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',body:JSON.stringify(body)});const x=await r.json().catch(()=>({}));if(!r.ok)throw Error(x.error||'error');return x;}
+async function ensureFclSession(emailValue){
+  const emailAddress=String(emailValue||'').trim().toLowerCase();
+  if(!emailAddress)throw new Error('メールアドレスを入力してください');
+  let sessionResponse=await fetch('/api/auth/session',{credentials:'same-origin'}).catch(()=>null);
+  if(sessionResponse?.ok){
+    const session=await sessionResponse.json();
+    if(String(session?.user?.email||'').trim().toLowerCase()===emailAddress)return session.user;
+    await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'});
+  }
+  const send=await fetch('/api/auth/request-code',{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',body:JSON.stringify({email:emailAddress})});
+  const sendJson=await send.json().catch(()=>({}));
+  if(!send.ok)throw new Error(sendJson.error||'認証コードの送信に失敗しました');
+  let code=sendJson.development_code||'';
+  if(!code)code=window.prompt('登録・ログインに使う6桁の認証コードをメールから入力してください');
+  if(!code)throw new Error('認証コードが入力されませんでした');
+  const verify=await fetch('/api/auth/verify-code',{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',body:JSON.stringify({email:emailAddress,code})});
+  const verifyJson=await verify.json().catch(()=>({}));
+  if(!verify.ok)throw new Error(verifyJson.error||'認証に失敗しました');
+  localStorage.setItem('fcl-user-id',verifyJson.user_id||'');
+  return {id:verifyJson.user_id,email:verifyJson.email};
+}
 function showUiError(target,message='保存に失敗しました。もう一度お試しください。'){if(target)target.textContent=` ${message}`;}
 async function restoreCoreSession(){
+  const sessionResponse=await fetch('/api/auth/session',{credentials:'same-origin'}).catch(()=>null);
+  if(!sessionResponse?.ok)return;
+  const session=await sessionResponse.json();
+  const userId=session?.user?.id||localStorage.getItem('fcl-user-id');
+  localStorage.setItem('fcl-user-id',userId||'');
   let participantId=localStorage.getItem('fcl-participant-id');
-  const userId=localStorage.getItem('fcl-user-id');
   if(!participantId && userId){
     const userResponse=await fetch(`/api/users/${encodeURIComponent(userId)}`);
     if(userResponse.ok){
@@ -59,6 +84,7 @@ initializeCoreTargetDate();
 restoreCoreSession().catch(() => {});
 async function register(){
   await withLoadingUI(document.getElementById('registerBtn'), '登録処理中です。しばらくお待ちください…', async () => {
+    await ensureFclSession(email.value);
     participant=await api('/api/participants',{name:name.value,email:email.value,challenge:challenge.value,goal:goal.value});
     localStorage.setItem('fcl-participant-id',participant.id); localStorage.setItem('fcl-user-id',participant.user_id || '');
     participantStatus.textContent=` ユーザーID: ${participant.user_id || '未取得'}`; window.refreshFclDailyLoop?.(); const userPageLink=document.getElementById('participantUserPageLink'); if(userPageLink&&participant.user_id){ userPageLink.href='/user.html?user_id='+encodeURIComponent(participant.user_id); userPageLink.hidden=false; }
@@ -149,6 +175,7 @@ try { await withLoadingUI(document.getElementById('checkinBtn'), 'AI分析中で
 }
 async function registerSupporter(){
   try { await withLoadingUI(document.getElementById('registerSupporterBtn'), '登録処理中です。しばらくお待ちください…', async () => {
+    await ensureFclSession(supportEmail.value);
     const x=await api('/api/supporters/register',{organization_name:org.value,supporter_name:supporter.value,email:supportEmail.value,support_category:category.value,strengths:strengths.value.split(',').map(x=>x.trim()).filter(Boolean),timing_tags:timing.value.split(',').map(x=>x.trim()).filter(Boolean),description:desc.value});
     supportStatus.textContent=` 登録しました: ${x.supporter_name}`;
   }); } catch(error) { showUiError(document.getElementById('supportStatus')); }
@@ -497,8 +524,7 @@ async function submitCoreOutcome(){
   }); } catch(error) { showUiError(document.getElementById('coreOutcomeStatusText')); }
 }
 
-async function saveSupportOutcome(matchId,supporterId,btn){
-  if(!participant||!supporterId)return;
+async function saveSupportOutcome(matchId,supporterId,btn){  if(!participant||!supporterId)return;
   const statusEl=btn.closest('.support-outcome-box')?.querySelector(`[data-support-outcome-status-text="${matchId}"]`);
   const outcome=document.querySelector(`[data-support-outcome-status="${matchId}"]`)?.value||'positive';
   const note=document.querySelector(`[data-support-outcome-note="${matchId}"]`)?.value||'';
