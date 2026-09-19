@@ -490,6 +490,17 @@ function renderCoreResult(data){
     </div>
   `;
 }
+function renderAdaptiveQuestions(value){
+  const questions=(value||[])
+    .map(item=>typeof item==='string' ? item : (item?.question || item?.text || item?.prompt || ''))
+    .map(item=>String(item).trim())
+    .filter(Boolean)
+    .slice(0,2);
+  return questions.length
+    ? '<div><strong>追加で確認したいこと</strong><ul class="bullet-list">'+questions.map(item=>'<li>'+esc(item)+'</li>').join('')+'</ul></div>'
+    : '';
+}
+
 function renderInsight(data){
   const result = data?.result || {};
   const esc = (value) => String(value ?? '')
@@ -506,7 +517,7 @@ function renderInsight(data){
       <p>${esc(result.insight || '気づきを確認できませんでした。')}</p>
       <p><strong>今の問題:</strong> ${esc(result.problem || '問題を整理してください。')}</p>
       <p><strong>仮説:</strong> ${esc(result.hypothesis || result.hypotheses?.[0] || '次の一歩を小さくすると実行しやすくなる可能性があります。')}</p>
-      ${(result.adaptive_questions || []).length ? `<div><strong>追加で確認したいこと</strong><ul class="bullet-list">${result.adaptive_questions.map(question => `<li>${esc(question.question)}</li>`).join('')}</ul></div>` : ''}
+      ${renderAdaptiveQuestions(result.adaptive_questions)}
       ${result.personal_support_pattern?.statement ? `<p><strong>個人別の観測:</strong> ${esc(result.personal_support_pattern.statement)}</p>` : ''}
       ${personalHint ? `<div class="personal-learning-hint"><strong>あなたの過去の記録からのヒント</strong><p>${esc(personalHint)}</p><small>観測の確かさ：${esc(evidenceQuality)}</small></div>` : ''}
       ${result.personal_learning?.recommendation_learning?.total_trials ? `<div class="personal-learning-hint"><strong>AIの自己改善状況</strong><p>これまでの次の一歩を ${esc(result.personal_learning.recommendation_learning.total_trials)}回観測。今回の結果を次の提案に反映します。</p></div>` : ''}
