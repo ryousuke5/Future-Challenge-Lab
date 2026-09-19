@@ -727,7 +727,7 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
   const llmResult = await callOpenAiFallback(prompt);
   if(llmResult){
     const result = normalizeAiCoreResult(llmResult, baseResult);
-    await insert('model_learning_events',{participant_id,features:{action_type:'core_analysis',result,state:result.state,state_change:result.state_change,insight:result.insight,problem:result.problem,hypothesis:result.hypothesis,adaptive_questions:result.adaptive_questions,personal_support_pattern:result.personal_support_pattern},label:{recommended_option:result.recommended_option,next_action:result.next_action}});
+    await insert('model_learning_events',{participant_id,features:{action_type:'core_analysis',checkin_text:coreContext.checkin_text,result,state:result.state,state_change:result.state_change,insight:result.insight,problem:result.problem,hypothesis:result.hypothesis,adaptive_questions:result.adaptive_questions,personal_support_pattern:result.personal_support_pattern},label:{recommended_option:result.recommended_option,next_action:result.next_action}});
     return result;
   }
 
@@ -1068,7 +1068,7 @@ app.get('/api/core/history/:participant_id',async(req,res)=>{
     const outcome=events.find(event=>event.features?.action_type==='core_outcome');
     const checkin=(await select('checkins',{participant_id:participant.id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0] || null;
     const savedReply=analysis ? (await select('journal_replies',{participant_id:participant.id,source_analysis_event_id:analysis.id}))[0] || null : null;
-    res.json({participant,checkin,checkin_id:checkin?.id || null,analysis_event_id:analysis?.id || null,checkin_checked_in_at:checkin?.checked_in_at || null,journal_reply:savedReply,analysis:analysis ? (analysis.features?.result || {...analysis.features,label:analysis.label}) : null,decision:decision ? {...decision.features,label:decision.label} : null,outcome:outcome ? {...outcome.features,label:outcome.label} : null});
+    res.json({participant,checkin,checkin_id:checkin?.id || null,analysis_event_id:analysis?.id || null,checkin_checked_in_at:checkin?.checked_in_at || null,journal_reply:savedReply,checkin_text:analysis?.features?.checkin_text || '',analysis:analysis ? (analysis.features?.result || {...analysis.features,label:analysis.label}) : null,decision:decision ? {...decision.features,label:decision.label} : null,outcome:outcome ? {...outcome.features,label:outcome.label} : null});
   }catch(e){res.status(500).json({error:e.message});}
 });
 
@@ -1988,6 +1988,109 @@ app.post('/api/core/analyze', async (req, res) => {
       recommended_option: 'A',
       next_action: '問題を3つまでに整理する'
     }});
+  }
+});
+
+async function generateJournalReplyWithOpenAI({ participant, checkinText, analysis, decision, outcome } = {}){
+  const key = process.env.OPENAI_API_KEY;
+  if(!key) return null;
+
+  const prompt = `
+あなたはFuture Challenge Lab（FCL）の「あなたの日誌への返信」を書く担当です。
+目的は、今日の挑戦の記録をきちんと読んだ人間から、本人に向けて自然に返事をすることです。
+
+重要なルール：
+- 日誌の具体的な内容を1つ以上取り上げる。
+- 前回までの一般的な励まし文を繰り返さない。
+- 「今日もお疲れさまでした」「無理せず頑張りましょう」だけで終わらせない。
+- 分析結果をそのまま説明するのではなく、人間の返信として自然に書く。
+- 評価・説教・過度なポジティブ表現は避ける。
+- できたこと、迷い、止まったこと、気になっていることのどれかを具体的に受け止める。
+- 次の一歩を押しつけず、本人が選べる余白を残す。
+- 3〜5段落、250〜450字程度。
+- 日本語。
+- 相手の名前は必要な場合だけ使う。
+- JSONだけを返す。
+
+挑戦テーマ：${participant?.challenge || ''}
+目標：${participant?.goal || ''}
+今日の日誌・自由記述：${checkinText || ''}
+現在の状態：${JSON.stringify(analysis?.state || '')}
+変化：${JSON.stringify(analysis?.state_change || '')}
+気づき：${analysis?.insight || ''}
+問題：${analysis?.problem || ''}
+仮説：${analysis?.hypothesis || ''}
+次の一歩：${analysis?.next_action || ''}
+本人の選択：${decision?.selected_option || ''}
+行動結果：${outcome?.outcome_status || ''}
+結果メモ：${outcome?.result_note || ''}
+
+{"reply_text":"日誌を読んだ人からの自然な返信"}
+`.trim();
+
+  try{
+    const response=await fetch('https://api.openai.com/v1/chat/completions',{
+      method:'POST',
+      headers:{'Content-Type':'application/json',Authorization:`Bearer ${key}`},
+      body:JSON.stringify({
+        model:'gpt-4o-mini',
+        temperature:0.8,
+        response_format:{type:'json_object'},
+        messages:[
+          {role:'system',content:'あなたはFCLの人間らしい日誌返信アシスタントです。与えられた事実だけを使ってください。'},
+          {role:'user',content:prompt}
+        ]
+      })
+    });
+    if(!response.ok) throw new Error(`OpenAI ${response.status}: ${await response.text()}`);
+    const json=await response.json();
+    const raw=json?.choices?.[0]?.message?.content;
+    if(!raw) throw new Error('AI response missing content');
+    const parsed=JSON.parse(raw);
+    const reply=String(parsed?.reply_text||'').trim();
+    return reply ? reply : null;
+  }catch(error){
+    console.error('[journal-reply] OpenAI generation failed',error?.message||error);
+    return null;
+  }
+}
+
+app.post('/api/journal-replies/generate', async (req, res) => {
+  try {
+    const { participant_id, checkin_id, source_analysis_event_id, checkin_text = '', analysis, decision, outcome } = req.body || {};
+    if(!participant_id || !source_analysis_event_id) return res.status(400).json({error:'participant_id and source_analysis_event_id are required'});
+
+    const participant=(await select('participants',{id:participant_id}))[0];
+    if(!participant) return res.status(404).json({error:'participant not found'});
+
+    const existing=(await select('journal_replies',{participant_id,source_analysis_event_id}))[0] || null;
+    if(existing) return res.json({ok:true,reply:existing,source:'saved'});
+
+    const aiReply=await generateJournalReplyWithOpenAI({
+      participant,
+      checkinText,
+      analysis: analysis || {},
+      decision: decision || null,
+      outcome: outcome || null
+    });
+
+    const replyText=aiReply || [
+      '日誌を読みました。',
+      checkin_text ? `「${String(checkin_text).trim().slice(0,120)}」という今日の記録から、今の状況が伝わってきました。` : '今日の記録から、今の状態を少しずつ整理できています。',
+      analysis?.next_action ? `次の一歩は「${analysis.next_action}」とあります。まずは自分に合う形で進めてみてください。` : '次に何をするかは、その日の自分に合う小さな一歩で大丈夫です。'
+    ].join('\\n\\n');
+
+    const saved=await saveJournalReply({
+      participant_id,
+      checkin_id:checkin_id || null,
+      source_analysis_event_id,
+      reply_text:replyText,
+      reply_version:'v2-ai'
+    });
+    return res.json({ok:true,reply:saved,source:aiReply?'openai':'fallback'});
+  } catch(error){
+    console.error('journal reply generation error',error);
+    res.status(500).json({error:error.message || 'journal reply generation failed'});
   }
 });
 
