@@ -727,12 +727,12 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
   const llmResult = await callOpenAiFallback(prompt);
   if(llmResult){
     const result = normalizeAiCoreResult(llmResult, baseResult);
-    await insert('model_learning_events',{participant_id,features:{action_type:'core_analysis',checkin_text:coreContext.checkin_text,result,state:result.state,state_change:result.state_change,insight:result.insight,problem:result.problem,hypothesis:result.hypothesis,adaptive_questions:result.adaptive_questions,personal_support_pattern:result.personal_support_pattern},label:{recommended_option:result.recommended_option,next_action:result.next_action}});
-    return result;
+    const analysisEvent=await insert('model_learning_events',{participant_id,features:{action_type:'core_analysis',checkin_text:coreContext.checkin_text,result,state:result.state,state_change:result.state_change,insight:result.insight,problem:result.problem,hypothesis:result.hypothesis,adaptive_questions:result.adaptive_questions,personal_support_pattern:result.personal_support_pattern},label:{recommended_option:result.recommended_option,next_action:result.next_action}});
+    return { ...result, analysis_event_id: analysisEvent?.id || null, analysis_checkin_text: coreContext.checkin_text };
   }
 
-  await insert('model_learning_events',{participant_id,features:{action_type:'core_analysis',result:baseResult,state:baseResult.state,state_change:baseResult.state_change,insight:baseResult.insight,problem:baseResult.problem,hypothesis:baseResult.hypothesis,adaptive_questions:baseResult.adaptive_questions,personal_support_pattern:baseResult.personal_support_pattern},label:{recommended_option:baseResult.recommended_option,next_action:baseResult.next_action}});
-  return baseResult;
+  const analysisEvent=await insert('model_learning_events',{participant_id,features:{action_type:'core_analysis',checkin_text:coreContext.checkin_text,result:baseResult,state:baseResult.state,state_change:baseResult.state_change,insight:baseResult.insight,problem:baseResult.problem,hypothesis:baseResult.hypothesis,adaptive_questions:baseResult.adaptive_questions,personal_support_pattern:baseResult.personal_support_pattern},label:{recommended_option:baseResult.recommended_option,next_action:baseResult.next_action}});
+  return { ...baseResult, analysis_event_id: analysisEvent?.id || null, analysis_checkin_text: coreContext.checkin_text };
 }
 
 async function saveFclCoreDecision({ participant_id, selected_option, reason, next_action, target_date }){
@@ -1971,7 +1971,43 @@ app.post('/api/core/analyze', async (req, res) => {
       recent_context
     });
 
-    res.json({ ok: true, result: response });
+    let journalReply=null;
+    let journalReplySource='none';
+    if(response?.analysis_event_id){
+      try{
+        const participant=(await select('participants',{id:participant_id}))[0];
+        const existing=(await select('journal_replies',{participant_id,source_analysis_event_id:response.analysis_event_id}))[0] || null;
+        if(existing){
+          journalReply=existing;
+          journalReplySource=existing.reply_version === 'v2-ai' ? 'saved_ai' : 'saved_legacy';
+        }else{
+          const aiReply=await generateJournalReplyWithOpenAI({
+            participant,
+            checkinText:String(checkin_text || '').trim(),
+            analysis:response,
+            decision:null,
+            outcome:null
+          });
+          const replyText=aiReply || [
+            `今日の記録「${String(checkin_text || '').trim().slice(0,180)}」を読みました。`,
+            response.insight || '今の状態を一つずつ整理できています。',
+            response.next_action ? `次の一歩は「${response.next_action}」です。自分に合う形で進めていきましょう。` : '次に何をするかは、今日の自分に合う一歩からで大丈夫です。'
+          ].join('\\n\\n');
+          journalReply=await saveJournalReply({
+            participant_id,
+            checkin_id:null,
+            source_analysis_event_id:response.analysis_event_id,
+            reply_text:replyText,
+            reply_version:aiReply ? 'v2-ai' : 'v2-ai-fallback'
+          });
+          journalReplySource=aiReply ? 'openai' : 'fallback';
+        }
+      }catch(journalError){
+        console.error('[journal-reply] inline generation failed',journalError?.message||journalError);
+      }
+    }
+
+    res.json({ ok: true, result: response, journal_reply: journalReply, journal_reply_source: journalReplySource });
   } catch (error) {
     console.error('core analyze error', error);
     res.status(500).json({ error: error.message || 'analysis failed', fallback: {
