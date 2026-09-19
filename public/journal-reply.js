@@ -148,7 +148,7 @@ async function saveExactJournalReply(history, replyText){
         checkin_id:history.checkin_id || null,
         source_analysis_event_id:history.analysis_event_id,
         reply_text:replyText,
-        reply_version:'v1'
+        reply_version:'v2-ai-fallback'
       })
     });
   }catch(error){
@@ -163,6 +163,36 @@ async function loadJournalReply(){
     const response = await fetch(`/api/core/history/${encodeURIComponent(participantId)}`);
     if(!response.ok) return;
     const history = await response.json();
+    if(history.journal_reply?.reply_text && history.journal_reply.reply_version === 'v2-ai'){
+      renderJournalReplyText(history.journal_reply.reply_text);
+      return;
+    }
+
+    if(history.analysis && history.analysis_event_id){
+      try{
+        const response=await fetch('/api/journal-replies/generate',{
+          method:'POST',
+          headers:{'content-type':'application/json'},
+          body:JSON.stringify({
+            participant_id:history.participant.id,
+            checkin_id:history.checkin_id || null,
+            source_analysis_event_id:history.analysis_event_id,
+            checkin_text:history.checkin_text || '',
+            analysis:history.analysis || {},
+            decision:history.decision || null,
+            outcome:history.outcome || null
+          })
+        });
+        const data=await response.json().catch(()=>({}));
+        if(response.ok && data.reply?.reply_text){
+          renderJournalReplyText(data.reply.reply_text);
+          return;
+        }
+      }catch(error){
+        console.warn('AI journal reply generation failed',error);
+      }
+    }
+
     if(history.journal_reply?.reply_text){
       renderJournalReplyText(history.journal_reply.reply_text);
     }else if(history.analysis){
