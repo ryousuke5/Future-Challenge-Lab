@@ -857,6 +857,25 @@ function normalizeContinuationRisk(value, baseResult){
   if(!value||typeof value!=='object'||Array.isArray(value)) return base;
   return { level:['low','medium','high','unknown'].includes(String(value.level||'').toLowerCase())?String(value.level).toLowerCase():base.level, score:Number.isFinite(Number(base.score))?Number(base.score):null, reasons:Array.isArray(value.reasons)?value.reasons.map(v=>String(v)).filter(Boolean).slice(0,4):base.reasons||[], signals:Array.isArray(value.signals)?value.signals.map(v=>String(v)).filter(Boolean).slice(0,4):base.signals||[], evidence:base.evidence||{} };
 }
+function normalizeAdaptiveQuestions(value, baseQuestions=[]){
+  if(!Array.isArray(value) || !value.length) return Array.isArray(baseQuestions) ? baseQuestions : [];
+  const normalized=value.map((item,index)=>{
+    if(item && typeof item==='object' && !Array.isArray(item)){
+      const question=String(item.question || item.text || item.title || item.prompt || '').trim();
+      if(!question) return null;
+      return {
+        id:String(item.id || ('adaptive_'+(index+1))),
+        question,
+        reason:String(item.reason || '').trim()
+      };
+    }
+    const question=String(item || '').trim();
+    if(!question) return null;
+    return { id:'adaptive_'+(index+1), question, reason:'' };
+  }).filter(Boolean).slice(0,2);
+  return normalized.length ? normalized : (Array.isArray(baseQuestions) ? baseQuestions : []);
+}
+
 function normalizeAiCoreResult(llmResult, baseResult){
   if(!llmResult || typeof llmResult !== 'object') return baseResult;
 
@@ -935,7 +954,7 @@ function normalizeAiCoreResult(llmResult, baseResult){
     recommended_option: recommended,
     next_action: nextAction,
     adaptive_next_step_reason: baseResult.adaptive_next_step_reason,
-    adaptive_questions: Array.isArray(llmResult.adaptive_questions) ? llmResult.adaptive_questions : baseResult.adaptive_questions,
+     adaptive_questions: normalizeAdaptiveQuestions(llmResult.adaptive_questions, baseResult.adaptive_questions),
     personal_support_pattern: llmResult.personal_support_pattern && typeof llmResult.personal_support_pattern === 'object'
       ? llmResult.personal_support_pattern
       : baseResult.personal_support_pattern
