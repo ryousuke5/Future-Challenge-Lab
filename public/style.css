@@ -16,3 +16,35 @@ button:disabled{opacity:.6;cursor:not-allowed}
 .journal-reply-panel{margin-top:20px}.journal-reply-box{border:1px solid #cbd5e1;background:#f8fafc;border-radius:18px;padding:20px}.journal-reply-heading h3{margin:10px 0 16px;font-size:1.35rem}.journal-reply-body{white-space:normal;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:18px;line-height:1.9;margin-bottom:14px}.journal-reply-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.journal-reply-solution{margin-top:14px}.journal-reply-list{margin:12px 0 0;padding-left:20px;line-height:1.8}.journal-reply-next{margin-top:14px;background:#f0fdf4;border-color:#bbf7d0}.journal-reply-next h3{line-height:1.6}.journal-reply-note{font-size:.86rem;color:#64748b;margin-bottom:0}@media(max-width:700px){.journal-reply-grid{grid-template-columns:1fr}}
 
 .journal-reply-status{margin:0 16px 12px;padding:9px 12px;border-radius:10px;background:#f8fafc;color:#64748b;font-size:12px;line-height:1.6;text-align:center}
+
+/* --- FCL DAY LOOP --- */
+.daily-loop-shell{background:linear-gradient(135deg,#ffffff,#f8fbff)}
+.daily-loop-heading{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
+.daily-loop-heading h2{margin:6px 0 8px}
+.daily-loop-heading p{margin:0;color:#475569}
+.daily-loop-meta{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:16px 0 12px}
+.daily-loop-badge{display:inline-flex;align-items:center;padding:7px 11px;border-radius:999px;background:#111827;color:#fff;font-size:12px;font-weight:800}
+.daily-loop-loading,.daily-loop-welcome{padding:16px;border:1px dashed #cbd5e1;border-radius:16px;background:#f8fafc;color:#475569}
+.daily-loop-welcome{display:flex;justify-content:space-between;gap:16px;align-items:center}
+.daily-loop-welcome h3{margin:10px 0 6px}
+.daily-loop-welcome p{margin:0}
+.daily-loop-cta,.daily-loop-record,.daily-loop-story{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+.daily-loop-cta{padding:10px 14px;border-radius:10px;background:#111827;color:#fff;font-weight:700;white-space:nowrap}
+.daily-loop-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.daily-loop-card{border:1px solid #e2e8f0;border-radius:16px;padding:18px;background:#fff}
+.daily-loop-card h3{margin:12px 0 8px}
+.daily-loop-card p{margin:0;color:#334155;line-height:1.8}
+.daily-loop-card.praise{background:linear-gradient(135deg,#fffaf0,#fff)}
+.daily-loop-card.praise.done,.daily-loop-card.praise.progress{background:linear-gradient(135deg,#f0fdf4,#fff)}
+.daily-loop-card.praise.return{background:linear-gradient(135deg,#eff6ff,#fff)}
+.daily-loop-card.praise.start{background:linear-gradient(135deg,#f8fafc,#fff)}
+.daily-loop-card.discovery{background:linear-gradient(135deg,#f5f3ff,#fff)}
+.daily-loop-card.next{background:linear-gradient(135deg,#eff6ff,#fff)}
+.daily-loop-footer{margin-top:14px;padding:16px;border-top:1px solid #e2e8f0}
+.daily-loop-footer p{margin:0 0 12px;color:#475569}
+.daily-loop-actions{display:flex;gap:8px;flex-wrap:wrap}
+.daily-loop-record,.daily-loop-story{padding:9px 13px;border-radius:10px;border:1px solid #cbd5e1;background:#fff;color:#111827;font-weight:700}
+@media(max-width:800px){
+  .daily-loop-grid{grid-template-columns:1fr}
+  .daily-loop-welcome{align-items:flex-start;flex-direction:column}
+}
