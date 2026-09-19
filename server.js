@@ -925,6 +925,18 @@ app.get('/api/users/:user_id/overview', async (req, res) => {
   }
 });
 
+app.get('/api/story/:participant_id',async(req,res)=>{
+  try{
+    const participant=(await select('participants',{id:req.params.participant_id}))[0];
+    if(!participant) return res.status(404).json({error:'participant not found'});
+    const checkins=(await select('checkins',{participant_id:participant.id})).sort((a,b)=>new Date(a.checked_in_at||0)-new Date(b.checked_in_at||0));
+    const actions=(await select('action_results',{participant_id:participant.id})).sort((a,b)=>new Date(a.completed_at||a.created_at||0)-new Date(b.completed_at||b.created_at||0));
+    const events=(await select('model_learning_events',{participant_id:participant.id})).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0));
+    const matches=(await select('supporter_matches',{participant_id:participant.id})).map(hydrateMatchApprovalState).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0));
+    res.json({participant,checkins,actions,events,matches});
+  }catch(e){res.status(500).json({error:e.message});}
+});
+
 app.get('/api/core/history/:participant_id',async(req,res)=>{
   try{
     const participant=(await select('participants',{id:req.params.participant_id}))[0];
