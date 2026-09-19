@@ -1608,7 +1608,7 @@ app.get('/api/users/:user_id/overview', async (req,res)=>{
       if(participantIds.includes(match.participant_id)){
         const participant=participantMap.get(match.participant_id);
         const supporter=supporterMap.get(match.supporter_id)||{};
-        if(supporter.archived_at) continue;
+        if(supporter.archived_at || supporter.user_id===user.id) continue;
         const token=status==='connected'?createAccessToken(match.id,'challenger'):'';
         visibleMatches.push({
           match_id:match.id,role:'challenger',role_label:'挑戦者',status,
@@ -1620,7 +1620,7 @@ app.get('/api/users/:user_id/overview', async (req,res)=>{
       }
       if(supporterIds.includes(match.supporter_id)){
         const participant=participantMap.get(match.participant_id)||{};
-        if(participant.archived_at) continue;
+        if(participant.archived_at || participant.user_id===user.id) continue;
         const supporter=supporterMap.get(match.supporter_id)||{};
         const token=status==='connected'?createAccessToken(match.id,'supporter'):'';
         visibleMatches.push({
@@ -3234,7 +3234,7 @@ app.get('/api/supporter/dashboard', async (req,res)=>{
     const targetContexts=[];
     for(const match of hydratedMatches){
       const participant=participantMap.get(match.participant_id);
-      if(!participant||participant.archived_at) continue;
+      if(!participant||participant.archived_at||participant.user_id===user_id||supporter?.user_id===participant.user_id) continue;
       const priority=buildSupporterPriorityFromRows(
         match.participant_id,
         participant,
