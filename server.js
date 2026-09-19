@@ -1135,6 +1135,7 @@ async function saveFclCoreOutcome({ participant_id, selected_option, next_action
       result_note: resultNote,
       barrier,
       target_date: sanitizeText(target_date, null),
+      action_mode: classifyActionMode(actualNextAction),
       analysis_event_id: latestAnalysis?.id || null,
       decision_event_id: latestDecision?.id || null,
       action_result_id: row?.id || null
