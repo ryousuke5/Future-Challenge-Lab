@@ -945,7 +945,7 @@ app.post('/api/checkins',async(req,res)=>{
     const duplicateCheckin=recentCheckins.find(row => sameValue(row.autonomy_answers || {}, answers) && safeDate(row.checked_in_at) && Date.now()-safeDate(row.checked_in_at).getTime() < 24*3600*1000);
     if(duplicateCheckin){
       const assignment=(await select('intervention_assignments',{participant_id,checkin_id:duplicateCheckin.id}))[0] || null;
-      return res.json({duplicate:true,checkin:duplicateCheckin,intervention:assignment,resumed:Boolean(duplicateCheckin.analysis?.resumed),intervention_record_status:'duplicate'});
+      return res.json({duplicate:true,checkin:duplicateCheckin,checkin_count:recentCheckins.length,intervention:assignment,resumed:Boolean(duplicateCheckin.analysis?.resumed),intervention_record_status:'duplicate'});
     }
     const score=scoreAnswers(answers), risk=riskFromScore(score), level=riskLevel(risk);
     const previous=recentCheckins[0];
@@ -974,6 +974,7 @@ app.post('/api/checkins',async(req,res)=>{
 
     res.json({
       checkin,
+      checkin_count: recentCheckins.length + 1,
       intervention:assigned,
       suggestedSupporterMatch,
       resumed,
