@@ -477,7 +477,7 @@ async function poll() {
         detailUrl: resumeUrl
       };
       const resend = await sendEmail({
-        to: emailAddressFor(participant.email),
+        to: normalizeEmail(participant.email),
         email,
         idempotencyKey: `fcl/reengagement/${dedupeKey}`
       });
