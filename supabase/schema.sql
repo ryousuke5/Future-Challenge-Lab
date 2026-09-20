@@ -55,6 +55,8 @@ create unique index if not exists uq_journal_entries_user_date_source
   where participant_id is null;
 
 alter table journal_entries enable row level security;
+revoke all on table journal_entries from anon, authenticated, public;
+grant select, insert, update, delete on table journal_entries to service_role;
 
 create table if not exists life_story_pages (
   id uuid primary key default gen_random_uuid(),
@@ -72,6 +74,8 @@ create table if not exists life_story_pages (
 
 create index if not exists idx_life_story_pages_user_date on life_story_pages(user_id, page_date);
 alter table life_story_pages enable row level security;
+revoke all on table life_story_pages from anon, authenticated, public;
+grant select, insert, update, delete on table life_story_pages to service_role;
 create table if not exists interventions (
   id uuid primary key default gen_random_uuid(),
   participant_id uuid not null references participants(id) on delete cascade,
