@@ -276,17 +276,20 @@ function renderDetails(day){
 }
 
 async function load(providedId=''){
- let id=String(providedId||'').trim()||String(localStorage.getItem('fcl-user-id')||'').trim();
+ let id=String(providedId||'').trim();
  $('load').disabled=true;$('load').textContent='取得中…';$('error').hidden=true;
  try{
+  // 本人確認は常に現在のログインセッションを優先し、古いlocalStorageのIDを使わない。
   if(!id){
     const sessionResponse=await fetch('/api/auth/session',{credentials:'same-origin'});
     const session=sessionResponse.ok?await sessionResponse.json().catch(()=>({})):({});
     id=String(session?.user?.id||'').trim();
     if(id) localStorage.setItem('fcl-user-id',id);
   }
-  if(!id) throw new Error('FCLログインが確認できません。まずFCLトップページでログインしてください。');
-  const status=$('sessionStatus'); if(status) status.textContent='ログイン中のFCLユーザーの物語を取得しています。';
+  if(!id){
+    throw new Error('FCLログインが確認できません。FCLトップページでメール認証コードを使ってログインしてください。');
+  }
+  const status=$('sessionStatus'); if(status) status.textContent='あなたの物語を取得しています。';
 
   const response=await fetch('/api/story-user/'+encodeURIComponent(id),{credentials:'same-origin'});
   const data=await response.json().catch(()=>({}));
