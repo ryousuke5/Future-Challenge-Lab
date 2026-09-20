@@ -396,7 +396,6 @@ async function load(){
       '<p class="muted" style="margin-top:20px">あなたの物語は、まだ途中です。次の1ページを残していきましょう。</p>'+
     '</section>';
   }).join('');
-  if(lifeHtml) $('story').innerHTML=lifeHtml+$('story').innerHTML;
   $('story').hidden=false;
  }catch(e){$('story').hidden=true;showError(e.message||'物語の取得に失敗しました。')}
  finally{$('load').disabled=false;$('load').textContent='物語を開く'}
