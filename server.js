@@ -67,6 +67,25 @@ function verifyFclSessionToken(token){
   const a=Buffer.from(signature),b=Buffer.from(expected); if(a.length!==b.length||!crypto.timingSafeEqual(a,b))return null;
   try{ const parsed=JSON.parse(Buffer.from(payload,'base64url').toString('utf8')); if(parsed?.purpose!=='fcl-session'||!parsed?.user_id||Number(parsed.exp||0)<Math.floor(Date.now()/1000))return null; return parsed; }catch{return null;}
 }
+function createReengagementToken(participantId){
+  const secret=fclSessionSecret(); if(!secret||!participantId)return '';
+  const payload=Buffer.from(JSON.stringify({purpose:'fcl-reengagement',participant_id:participantId,exp:Math.floor((Date.now()+7*24*60*60*1000)/1000)})).toString('base64url');
+  const signature=crypto.createHmac('sha256',secret).update(payload).digest('base64url');
+  return payload+'.'+signature;
+}
+function verifyReengagementToken(token,participantId){
+  const secret=fclSessionSecret(); if(!secret||!token)return null;
+  const [payload,signature]=String(token).split('.');
+  if(!payload||!signature)return null;
+  const expected=crypto.createHmac('sha256',secret).update(payload).digest('base64url');
+  const a=Buffer.from(signature),b=Buffer.from(expected);
+  if(a.length!==b.length||!crypto.timingSafeEqual(a,b))return null;
+  try{
+    const parsed=JSON.parse(Buffer.from(payload,'base64url').toString('utf8'));
+    if(parsed?.purpose!=='fcl-reengagement'||parsed?.participant_id!==participantId||Number(parsed.exp||0)<Math.floor(Date.now()/1000))return null;
+    return parsed;
+  }catch{return null;}
+}
 function parseCookieHeader(header=''){ return String(header||'').split(';').reduce((out,pair)=>{const i=pair.indexOf('=');if(i<0)return out;const k=pair.slice(0,i).trim();const v=pair.slice(i+1).trim();if(k)out[k]=decodeURIComponent(v);return out;},{}); }
 function getRequestSessionToken(req){ const cookies=parseCookieHeader(req.headers.cookie||''); return cookies.fcl_session || String(req.headers.authorization||'').replace(/^Bearer\s+/i,'').trim() || ''; }
 function setFclSessionCookie(res,token){ const secure=process.env.NODE_ENV!=='development'?'; Secure':''; res.setHeader('Set-Cookie','fcl_session='+encodeURIComponent(token)+'; Max-Age='+String(30*24*60*60)+'; Path=/; HttpOnly; SameSite=Lax'+secure); }
@@ -1496,11 +1515,27 @@ app.post('/api/auth/verify-code',async(req,res)=>{
 });
 
 app.get('/api/auth/session',async(req,res)=>{try{const user=await getAuthenticatedFclUser(req);if(!user)return res.status(401).json({authenticated:false});res.json({authenticated:true,user:{id:user.id,email:user.email}});}catch(error){res.status(500).json({error:error.message||'session lookup failed'});}});
+app.get('/api/reengagement/:participant_id/continue',async(req,res)=>{
+  try{
+    const participantId=String(req.params.participant_id||'').trim();
+    const token=String(req.query?.token||'');
+    if(!verifyReengagementToken(token,participantId)) return res.status(401).send('FCL再開リンクの有効期限が切れているか、無効です。');
+    const participant=(await select('participants',{id:participantId}))[0]||null;
+    if(!participant||participant.archived_at||!participant.user_id) return res.status(404).send('この挑戦は現在利用できません。');
+    const sessionToken=createFclSessionToken(participant.user_id);
+    if(!sessionToken) return res.status(500).send('FCLのセッション設定がありません。');
+    setFclSessionCookie(res,sessionToken);
+    return res.redirect('/?participant_id='+encodeURIComponent(participantId)+'&reengaged=1');
+  }catch(error){
+    console.error('[reengagement] continue failed',error);
+    return res.status(500).send('FCLの再開リンクを開けませんでした。');
+  }
+});
 app.post('/api/auth/logout',(req,res)=>{clearFclSessionCookie(res);res.json({ok:true});});
 
 app.use('/api',async(req,res,next)=>{
   const path=req.path||'';
-  const publicRoute=path==='/health'||path.startsWith('/auth/')||path==='/story-index'||path.startsWith('/story-person/')||(req.method==='GET'&&(path.match(/^\/matches\/[^/]+\/detail$/)||path.match(/^\/matches\/[^/]+\/messages$/)));
+  const publicRoute=path==='/health'||path.startsWith('/auth/')||path==='/story-index'||path.startsWith('/story-person/')||path.match(/^\/reengagement\/[^/]+\/continue$/)||(req.method==='GET'&&(path.match(/^\/matches\/[^/]+\/detail$/)||path.match(/^\/matches\/[^/]+\/messages$/)));
   if(publicRoute)return next();
   try{
     const user=await getAuthenticatedFclUser(req); if(!user)return res.status(401).json({error:'FCLログインが必要です。メール認証コードでログインしてください。'}); req.fclUser=user;
