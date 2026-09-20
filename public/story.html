@@ -25,7 +25,7 @@ button:disabled{opacity:.6}.error{padding:12px;border-radius:12px;background:#fe
 <div class="eyebrow">YOUR STORY</div>
 <h1>あなたの物語</h1>
 <p>挑戦の日も、普通の日も、迷った日も。日記や出来事として残した一日一日が、あなたの物語になっていきます。</p>
-<div class="user-bar" id="userBar"><input id="userId" placeholder="FCLユーザーID"><button id="load">物語を開く</button></div>
+<div class="user-bar" id="userBar"><button id="load">物語を開く</button><span id="sessionStatus" class="muted">ログイン中のFCLユーザーの物語を表示します。</span></div>
 <div id="error" class="error" hidden></div>
 </section>
 <section id="story" hidden></section>
@@ -272,10 +272,20 @@ function renderDetails(day){
   return '<div class="detail-body">'+rows.join('')+'</div>';
 }
 
-async function load(){
- const id=$('userId').value.trim();
- if(!id)return showError('FCLユーザーIDを入力してください。');
+async function load(providedId=''){
+ let id=String(providedId||'').trim()||String(localStorage.getItem('fcl-user-id')||'').trim();
  $('load').disabled=true;$('load').textContent='取得中…';$('error').hidden=true;
+ try{
+  if(!id){
+    const sessionResponse=await fetch('/api/auth/session',{credentials:'same-origin'});
+    const session=sessionResponse.ok?await sessionResponse.json().catch(()=>({})):({});
+    id=String(session?.user?.id||'').trim();
+    if(id) localStorage.setItem('fcl-user-id',id);
+  }
+  if(!id){
+    throw new Error('FCLログインが確認できません。まずFCLトップページでログインしてください。');
+  }
+  const status=$('sessionStatus'); if(status) status.textContent='ログイン中のFCLユーザーの物語を取得しています。';
  try{
   const response=await fetch('/api/story-user/'+encodeURIComponent(id));
   const data=await response.json().catch(()=>({}));
@@ -400,8 +410,10 @@ async function load(){
  }catch(e){$('story').hidden=true;showError(e.message||'物語の取得に失敗しました。')}
  finally{$('load').disabled=false;$('load').textContent='物語を開く'}
 }
-$('load').onclick=load;
-const p=new URLSearchParams(location.search), initial=p.get('user_id')||localStorage.getItem('fcl-user-id')||'';
-if(initial){$('userId').value=initial;$('userBar').style.display='none';load()}
+$('load').onclick=()=>load();
+const p=new URLSearchParams(location.search), initial=p.get('user_id')||'';
+// URLで渡されたIDがある場合も互換維持。ただし画面上でのID入力は不要。
+if(initial){load(initial)}
+else{load()}
 })();
 </script></body></html>
