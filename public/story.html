@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FCL｜あなたの挑戦の物語</title>
+<title>FCL｜あなたの物語</title>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#1f2937;background:#f6f7f9}
 *{box-sizing:border-box}body{margin:0;background:#f6f7f9}main{max-width:900px;margin:auto;padding:28px 16px 64px}
@@ -22,9 +22,9 @@ button:disabled{opacity:.6}.error{padding:12px;border-radius:12px;background:#fe
 </head>
 <body><main>
 <section class="hero">
-<div class="eyebrow">YOUR CHALLENGE STORY</div>
-<h1>あなたの挑戦の物語</h1>
-<p>できた日だけではなく、迷った日、立ち止まった日、もう一度動き出した日も、すべてが物語の一部です。</p>
+<div class="eyebrow">YOUR STORY</div>
+<h1>あなたの物語</h1>
+<p>挑戦の日も、普通の日も、迷った日も。日記や出来事として残した一日一日が、あなたの物語になっていきます。</p>
 <div class="user-bar" id="userBar"><input id="userId" placeholder="FCLユーザーID"><button id="load">物語を開く</button></div>
 <div id="error" class="error" hidden></div>
 </section>
@@ -201,6 +201,59 @@ function buildJournalResponse(analysis,outcomeStatus=''){
   const personalizedLine=insight&&!/観測|学習|解決策|次の一歩|状態を整理/.test(insight)?'今日の記録から、'+insight.replace(/[。．]$/,'')+'という部分も、ちゃんと伝わってきました。':'';
   return [pick(opening),personalizedLine,pick(middle,1),pick(closing,2)].filter(Boolean);
 }
+async function fetchLifeStory(userId){
+  try{
+    const response=await fetch('/api/life-story/'+encodeURIComponent(userId),{credentials:'same-origin'});
+    if(!response.ok) return null;
+    const data=await response.json().catch(()=>null);
+    if(!data) return null;
+
+    let pages=Array.isArray(data.story_pages)?data.story_pages:[];
+    try{
+      const pageResponse=await fetch('/api/life-story-pages/generate',{
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        credentials:'same-origin',
+        body:'{}'
+      });
+      const pageData=await pageResponse.json().catch(()=>({}));
+      if(pageResponse.ok&&Array.isArray(pageData.story_pages)) pages=pageData.story_pages;
+    }catch(error){ console.warn('life story generation unavailable',error); }
+
+    const entries=Array.isArray(data.journal_entries)?data.journal_entries:[];
+    const pageByDate=new Map(pages.map(page=>[String(page.page_date||''),page]));
+    if(!entries.length) return '';
+
+    const cards=entries.map((entry,index)=>{
+      const date=String(entry.entry_date||'');
+      const page=pageByDate.get(date);
+      const lines=Array.isArray(page?.lines)&&page.lines.length
+        ? page.lines
+        : [String(entry.raw_text||'').replace(/\s+/g,' ').trim().slice(0,120)];
+      const raw=String(entry.raw_text||'').trim();
+      return '<article class="daily-card">'+
+        '<div class="daily-meta"><span class="page-no">第'+(index+1)+'ページ</span><span class="daily-date">'+dateOnly(date)+'</span></div>'+
+        '<h3 style="margin:0 0 8px;">この日のページ</h3>'+
+        '<ol class="daily-lines">'+lines.slice(0,3).map(line=>'<li>'+esc(line)+'</li>').join('')+'</ol>'+
+        '<details><summary>元の日記を見る</summary><div class="detail-body"><div class="detail-row">'+esc(raw).replaceAll('\n','<br>')+'</div></div></details>'+
+      '</article>';
+    }).join('');
+
+    return '<section class="card">'+
+      '<div class="story-head">'+
+        '<span class="pill">LIFE STORY</span>'+
+        '<h2>日記から生まれた物語</h2>'+
+        '<p>挑戦だけに限定せず、日々の出来事そのものを一ページとして残しています。</p>'+
+        '<div class="story-counts">'+
+          '<div class="story-count"><div class="muted">日記の日数</div><strong>'+entries.length+'日</strong></div>'+
+          '<div class="story-count"><div class="muted">物語ページ</div><strong>'+pages.length+'ページ</strong></div>'+
+          '<div class="story-count"><div class="muted">素材</div><strong>原文保存</strong></div>'+
+        '</div>'+
+      '</div>'+
+      cards+
+    '</section>';
+}
+
 function renderDetails(day){
   const rows=[];
   if(day.journalReply?.length){
@@ -228,6 +281,7 @@ async function load(){
   const data=await response.json().catch(()=>({}));
   if(!response.ok) throw Error(data.error||'取得失敗');
   const participantRecords=Array.isArray(data.participants)?data.participants:[];
+  const lifeStory=await fetchLifeStory(id).catch(()=>null);
   let storyPages=[];
   try{
     const pageResponse=await fetch('/api/story-pages/generate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({participant_id:participantRecords[0]?.participant?.id||''})});
@@ -239,11 +293,12 @@ async function load(){
   const participants=records.map(item=>item.participant||{}); 
   const histories=records;
   if(!participants.length){
-    $('story').innerHTML='<div class="card empty">まだ挑戦者登録がありません。まずFCLで挑戦を登録すると、ここに物語が始まります。</div>';
+    $('story').innerHTML=lifeStory || '<div class="card empty">まだ日記も挑戦記録もありません。FCLに一日分を書き残すところから、あなたの物語を始められます。</div>';
     $('story').hidden=false;return;
   }
 
-  $('story').innerHTML=participants.map((p,i)=>{
+  const lifeHtml=lifeStory || '';
+  $('story').innerHTML=lifeHtml+participants.map((p,i)=>{
     const h=histories[i]||{};
     const checkins=h.checkins||[], actions=h.actions||[], events=h.events||[], matches=h.matches||[];
     const connectedMatches=matches.filter(m=>m.status==='connected');
@@ -341,6 +396,7 @@ async function load(){
       '<p class="muted" style="margin-top:20px">あなたの物語は、まだ途中です。次の1ページを残していきましょう。</p>'+
     '</section>';
   }).join('');
+  if(lifeHtml) $('story').innerHTML=lifeHtml+$('story').innerHTML;
   $('story').hidden=false;
  }catch(e){$('story').hidden=true;showError(e.message||'物語の取得に失敗しました。')}
  finally{$('load').disabled=false;$('load').textContent='物語を開く'}
