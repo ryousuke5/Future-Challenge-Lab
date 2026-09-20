@@ -255,6 +255,10 @@ async function fetchLifeStory(userId){
       '</div>'+
       cards+
     '</section>';
+  }catch(error){
+    console.warn('life story unavailable',error);
+    return null;
+  }
 }
 
 function renderDetails(day){
