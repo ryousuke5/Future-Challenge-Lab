@@ -52,6 +52,18 @@ function createAccessToken(matchId, role) {
   return `${payload}.${signature}`;
 }
 
+function createReengagementToken(participantId) {
+  if (!serviceRoleKey || !participantId) return '';
+  const payload = Buffer.from(JSON.stringify({
+    purpose: 'fcl-reengagement',
+    participant_id: participantId,
+    exp: Math.floor((Date.now() + 7 * 24 * 60 * 60 * 1000) / 1000)
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', serviceRoleKey).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+
 async function getRows(table, filters = {}) {
   let query = supabase.from(table).select('*');
   for (const [key, value] of Object.entries(filters)) query = query.eq(key, value);
@@ -337,6 +349,147 @@ async function poll() {
     if (lastConfigError) {
       console.log('[email-worker] email configuration is ready');
       lastConfigError = '';
+    }
+
+    const [participantResult, checkinResult, actionResult, reengagementResult] = await Promise.all([
+      supabase
+        .from('participants')
+        .select('id,user_id,name,email,challenge,goal,created_at,archived_at')
+        .is('archived_at', null)
+        .limit(1000),
+      supabase
+        .from('checkins')
+        .select('id,participant_id,checked_in_at,risk_score,risk_level')
+        .order('checked_in_at', { ascending: false })
+        .limit(5000),
+      supabase
+        .from('action_results')
+        .select('id,participant_id,created_at,completed_at,completed')
+        .order('created_at', { ascending: false })
+        .limit(5000),
+      supabase
+        .from('connection_events')
+        .select('participant_id,note,created_at')
+        .eq('event_type', 'reengagement_email_sent')
+        .gte('created_at', new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString())
+        .limit(1000)
+    ]);
+    if (participantResult.error) throw participantResult.error;
+    if (checkinResult.error) throw checkinResult.error;
+    if (actionResult.error) throw actionResult.error;
+    if (reengagementResult.error) throw reengagementResult.error;
+
+    const latestCheckinByParticipant = new Map();
+    for (const row of (checkinResult.data || [])) {
+      if (!latestCheckinByParticipant.has(row.participant_id)) latestCheckinByParticipant.set(row.participant_id, row);
+    }
+    const latestActionByParticipant = new Map();
+    for (const row of (actionResult.data || [])) {
+      const at = row.completed_at || row.created_at;
+      const previous = latestActionByParticipant.get(row.participant_id);
+      if (!previous || new Date(at || 0) > new Date(previous.at || 0)) {
+        latestActionByParticipant.set(row.participant_id, { ...row, at });
+      }
+    }
+
+    const sentReengagement = new Set();
+    for (const row of (reengagementResult.data || [])) {
+      try {
+        const note = JSON.parse(row.note || '{}');
+        const key = note.dedupe_key;
+        if (key) sentReengagement.add(key);
+      } catch {}
+    }
+
+    const byUser = new Map();
+    for (const participant of (participantResult.data || [])) {
+      const email = normalizeEmail(participant.email);
+      if (!email || isTestEmail(email) || !participant.user_id) continue;
+      const checkin = latestCheckinByParticipant.get(participant.id);
+      const action = latestActionByParticipant.get(participant.id);
+      const latestAt = [participant.created_at, checkin?.checked_in_at, action?.at]
+        .filter(Boolean)
+        .map(value => new Date(value))
+        .filter(date => Number.isFinite(date.getTime()))
+        .sort((a,b) => b.getTime() - a.getTime())[0] || null;
+      const current = byUser.get(participant.user_id);
+      if (!current || (latestAt && latestAt > current.latestAt)) {
+        byUser.set(participant.user_id, { participant, checkin, action, latestAt });
+      }
+    }
+
+    for (const { participant, checkin, action, latestAt } of byUser.values()) {
+      if (!latestAt) continue;
+      let trigger = '';
+      let dedupeKey = '';
+      let triggerMessage = '';
+
+      const highRisk = checkin && (String(checkin.risk_level || '') === 'high' || Number(checkin.risk_score || 0) >= 70);
+      const checkinAgeHours = checkin ? (Date.now() - new Date(checkin.checked_in_at || 0).getTime()) / 36e5 : Infinity;
+      const latestActivityMs = latestAt.getTime();
+      const inactivityDays = (Date.now() - latestActivityMs) / 86400000;
+
+      if (highRisk && checkinAgeHours <= 24) {
+        trigger = 'high_risk';
+        dedupeKey = `high_risk:${participant.id}:${checkin.id}`;
+        triggerMessage = '今日の記録から、少し立ち止まりやすいタイミングが見えています。大きく進めなくても大丈夫です。今の状態を確認して、次の一歩を小さく整理してみませんか。';
+      } else if (inactivityDays >= 3 && inactivityDays < 14) {
+        trigger = 'inactivity';
+        const activityDay = new Date(latestAt.getTime()).toISOString().slice(0, 10);
+        dedupeKey = `inactivity:${participant.id}:${activityDay}`;
+        triggerMessage = '少し間が空きました。FCLでは、できた日だけでなく、止まった日や迷った日もそのまま記録できます。今の自分を確認するところから、もう一度始めてみませんか。';
+      }
+
+      if (!trigger || sentReengagement.has(dedupeKey)) continue;
+      const token = createReengagementToken(participant.id);
+      if (!token) continue;
+      const resumeUrl = `${publicUrl}/api/reengagement/${encodeURIComponent(participant.id)}/continue?token=${encodeURIComponent(token)}`;
+      const name = participant.name || 'さん';
+      const email = {
+        subject: trigger === 'high_risk'
+          ? `FCL｜「${participant.challenge || '今の挑戦'}」をもう一度、一緒に整理しませんか`
+          : `FCL｜「${participant.challenge || '今の挑戦'}」の続きを、ここから`,
+        body: [
+          name === 'さん' ? 'FCLをお使いの方へ' : `${name}さん`,
+          '',
+          triggerMessage,
+          '',
+          '【今、進めている挑戦】',
+          `挑戦内容：${participant.challenge || '未登録'}`,
+          `目標：${participant.goal || '未登録'}`,
+          '',
+          'FCLでは、今日の状態を記録すると、今の現在地と次の一歩を一緒に整理できます。',
+          '',
+          `FCLを再開する：${resumeUrl}`,
+          '',
+          'このメールは、FCLの利用がしばらく途切れたこと、または継続が難しくなりやすい状態が記録されたことをきっかけに送っています。',
+          '心当たりがない場合は、このメールを無視してください。',
+          '',
+          'Future Challenge Lab'
+        ].join('\n'),
+        resumeUrl
+      };
+      const resend = await sendEmail({
+        to: emailAddressFor(participant.email),
+        email,
+        idempotencyKey: `fcl/reengagement/${dedupeKey}`
+      });
+      await supabase.from('connection_events').insert({
+        participant_id: participant.id,
+        supporter_id: null,
+        match_id: null,
+        event_type: 'reengagement_email_sent',
+        note: JSON.stringify({
+          trigger,
+          dedupe_key: dedupeKey,
+          recipient: participant.email,
+          subject: email.subject,
+          resend_id: resend?.id || null
+        }),
+        created_at: new Date().toISOString()
+      });
+      sentReengagement.add(dedupeKey);
+      console.log(`[email-worker] sent reengagement email for participant ${participant.id} trigger=${trigger} via ${email.source || 'fallback'}`);
     }
 
     const { data: events, error } = await supabase
