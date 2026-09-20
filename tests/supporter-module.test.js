@@ -178,17 +178,23 @@ test('support execution and outcome retrieval', { concurrency: false }, async ()
     answers: { q1: 1, q2: 1, q3: 1, q4: 1, q5: 1 }
   });
 
-  const candidate = (await api(`/api/supporter-candidates/${participant.id}`, undefined, 'GET')).candidates[0];
-  const executionSupporterId = candidate.supporter_id === executionSupporter.id ? supporter.id : executionSupporter.id;
   await login(executionSupporterEmail);
-  await api('/api/supporter-match', {
+  const supporterMatch = await api('/api/supporter-match', {
     participant_id: participant.id,
-    supporter_id: executionSupporterId
+    supporter_id: executionSupporter.id
   });
+  const executionMatchId = supporterMatch.match_id;
+
+  await login(participantEmail);
+  await api(`/api/matches/${executionMatchId}/challenger-approve`, {}, 'POST');
+  await login(executionSupporterEmail);
+  const connectedExecutionMatch = await api(`/api/matches/${executionMatchId}/supporter-approve`, {}, 'POST');
+  assert.equal(connectedExecutionMatch.status, 'connected');
 
   const execution = await api('/api/supporter/execute', {
     participant_id: participant.id,
-    supporter_id: executionSupporterId,
+    supporter_id: executionSupporter.id,
+    match_id: executionMatchId,
     recommendation_type: 'supporter',
     recommendation_reason: '高リスクのため',
     suggested_message: '今日の最初の一歩を10分だけ始めましょう。',
