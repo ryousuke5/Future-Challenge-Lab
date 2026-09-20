@@ -1,14 +1,42 @@
+process.env.NODE_ENV='development';
+process.env.FCL_SESSION_SECRET='fcl-test-session-secret';
+process.env.SUPABASE_URL='';
+process.env.SUPABASE_SERVICE_ROLE_KEY='';
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { app } from '../server.js';
+
+const { app } = await import('../server.js');
 
 const server = app.listen(0);
 const baseUrl = () => `http://127.0.0.1:${server.address().port}`;
+let sessionCookie = '';
+
+async function login(email){
+  const send=await fetch(`${baseUrl()}/api/auth/request-code`,{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify({email})
+  });
+  const sendData=await send.json();
+  assert.equal(send.status,200);
+  const verify=await fetch(`${baseUrl()}/api/auth/verify-code`,{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify({email,code:sendData.development_code})
+  });
+  const verifyData=await verify.json();
+  assert.equal(verify.status,200);
+  sessionCookie=(verify.headers.get('set-cookie')||'').split(';')[0];
+  return verifyData;
+}
 
 async function api(path, payload = undefined, method = 'POST') {
+  const headers = { 'content-type': 'application/json' };
+  if(sessionCookie) headers.cookie=sessionCookie;
   const response = await fetch(`${baseUrl()}${path}`, {
     method,
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: payload === undefined ? undefined : JSON.stringify(payload)
   });
   const data = await response.json();
@@ -17,9 +45,11 @@ async function api(path, payload = undefined, method = 'POST') {
 }
 
 test('Core v0.2 returns insight, adaptive questions, and personal evidence', async () => {
+  const participantEmail=`core-v02-${Date.now()}@example.com`;
+  await login(participantEmail);
   const participant = await api('/api/participants', {
     name: 'Core v0.2 test',
-    email: `core-v02-${Date.now()}@example.com`,
+    email: participantEmail,
     challenge: '毎日学習',
     goal: '継続'
   });

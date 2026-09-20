@@ -31,6 +31,46 @@
     return data;
   }
 
+  async function ensureFclSession(emailValue){
+    const email=String(emailValue||'').trim().toLowerCase();
+    if(!email) throw new Error('メールアドレスを入力してください。');
+
+    const sessionResponse=await fetch('/api/auth/session',{credentials:'same-origin'}).catch(()=>null);
+    if(sessionResponse?.ok){
+      const session=await sessionResponse.json().catch(()=>({}));
+      if(String(session?.user?.email||'').trim().toLowerCase()===email){
+        localStorage.setItem('fcl-user-id',session.user.id);
+        return session.user;
+      }
+      await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{});
+    }
+
+    const send=await fetch('/api/auth/request-code',{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      credentials:'same-origin',
+      body:JSON.stringify({email})
+    });
+    const sendJson=await send.json().catch(()=>({}));
+    if(!send.ok) throw new Error(sendJson.error||'認証コードの送信に失敗しました。');
+
+    let code=sendJson.development_code||'';
+    if(!code) code=window.prompt('メールに届いた6桁の認証コードを入力してください');
+    if(!code) throw new Error('認証コードが入力されませんでした。');
+
+    const verify=await fetch('/api/auth/verify-code',{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      credentials:'same-origin',
+      body:JSON.stringify({email,code})
+    });
+    const verifyJson=await verify.json().catch(()=>({}));
+    if(!verify.ok) throw new Error(verifyJson.error||'認証に失敗しました。');
+
+    localStorage.setItem('fcl-user-id',verifyJson.user_id||'');
+    return {id:verifyJson.user_id,email:verifyJson.email};
+  }
+
   function saveSupporterIdentity(userId, supporterId){
     if(userId) localStorage.setItem('fcl-user-id', userId);
     if(supporterId) localStorage.setItem('fcl-supporter-id', supporterId); // legacy compatibility
@@ -245,9 +285,11 @@
         timing_tags: (document.getElementById('timing')?.value || '').split(',').map(v=>v.trim()).filter(Boolean),
         description: document.getElementById('desc')?.value || ''
       };
+      await ensureFclSession(payload.email);
       const data = await fetchJson('/api/supporters/register', {
         method:'POST',
         headers:{'content-type':'application/json'},
+        credentials:'same-origin',
         body:JSON.stringify(payload)
       });
       saveSupporterIdentity(data.user_id, data.id);
