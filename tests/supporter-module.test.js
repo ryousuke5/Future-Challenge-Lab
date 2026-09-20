@@ -249,13 +249,29 @@ test('matching flow accepts both approvals and blocks declines', { concurrency: 
   assert.equal(supporterApproved.status, 'connected');
 
   await login(participantEmail);
-  const declinedMatch = await api('/api/matches', { participant_id: participant.id });
-  const secondCandidate = declinedMatch[0];
+  const secondSupporterEmail='reading-support-2@example.com';
+  await login(secondSupporterEmail);
+  const secondSupporter = await api('/api/supporters/register', {
+    organization_name: 'Reading Lab',
+    supporter_name: '読書支援者2',
+    email: secondSupporterEmail,
+    support_category: '読書',
+    strengths: ['読書', '習慣化'],
+    timing_tags: ['停滞時', '再開時'],
+    description: '読書継続を支える',
+    capacity: 2,
+    accepting_new_matches: true
+  });
+
+  await login(participantEmail);
+  const declinedMatches = await api('/api/matches', { participant_id: participant.id });
+  const secondCandidate = declinedMatches.find(row => row.supporter_id === secondSupporter.id);
   assert.ok(secondCandidate);
+
   const decline = await api(`/api/matches/${secondCandidate.id}/decline`, { actor: 'challenger' }, 'POST');
   assert.equal(decline.status, 'declined');
 
-  await login(supporterEmail);
+  await login(secondSupporterEmail);
   await assert.rejects(
     () => api(`/api/matches/${secondCandidate.id}/supporter-approve`, {}, 'POST'),
     /409|not active|match is not active/i
