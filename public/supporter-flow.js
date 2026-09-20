@@ -303,13 +303,14 @@
     const contactMethod = root?.querySelector(`[data-contact-method="${CSS.escape(matchId)}"]`)?.value || 'email';
     const restore = loading(btn, '保存中…');
     try{
+      let approvalResult=null;
       if(canSupport === 'no'){
         await fetchJson(`/api/matches/${encodeURIComponent(matchId)}/decline`, {
           method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({actor:'supporter'})
         });
       } else {
         try{
-          await fetchJson(`/api/matches/${encodeURIComponent(matchId)}/supporter-approve`, {
+          approvalResult = await fetchJson(`/api/matches/${encodeURIComponent(matchId)}/supporter-approve`, {
             method:'POST',headers:{'content-type':'application/json'},body:'{}'
           });
         } catch(error){
@@ -330,8 +331,27 @@
         })
       });
 
-      if(statusEl) statusEl.textContent = canSupport === 'no' ? ' 辞退を保存しました。' : ' 回答を保存しました。接続状態を確認してください。';
-      await window.loadSupporterDashboard();
+      let savedMessage=' 回答を保存しました。';
+      if(canSupport === 'no'){
+        savedMessage=' 辞退を保存しました。';
+      }else{
+        const savedStatus=approvalResult?.status || '';
+        savedMessage = savedStatus === 'connected'
+          ? ' 回答を保存しました。支援接続が成立しました。'
+          : ' 回答を保存しました。挑戦者側の承認を確認します。';
+      }
+
+      // 画面全体を再描画しても、保存完了メッセージが一瞬で消えないよう、
+      // 再描画後の同じ回答欄へもう一度表示する。
+      try{
+        await window.loadSupporterDashboard();
+        const refreshedRoot=document.querySelector(`[data-match-id="${CSS.escape(matchId)}"]`);
+        const refreshedStatus=refreshedRoot?.querySelector(`[data-response-status="${CSS.escape(matchId)}"]`);
+        if(refreshedStatus) refreshedStatus.textContent=savedMessage;
+      }catch(refreshError){
+        if(statusEl) statusEl.textContent=savedMessage;
+        throw refreshError;
+      }
     } catch(error){
       if(statusEl) statusEl.textContent = ` ${error.message || '保存に失敗しました。'}`;
     } finally { restore(); }
