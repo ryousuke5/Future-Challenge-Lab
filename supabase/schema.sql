@@ -36,7 +36,8 @@ create table if not exists checkins (
 
 create table if not exists journal_entries (
   id uuid primary key default gen_random_uuid(),
-  participant_id uuid not null references participants(id) on delete cascade,
+  participant_id uuid references participants(id) on delete cascade,
+  user_id uuid references fcl_users(id) on delete cascade,
   entry_date date not null,
   source text not null default 'chatgpt' check (source in ('chatgpt','fcl','manual')),
   raw_text text not null check (char_length(trim(raw_text)) between 1 and 20000),
@@ -48,7 +49,29 @@ create table if not exists journal_entries (
 );
 
 create index if not exists idx_journal_entries_participant_date on journal_entries(participant_id, entry_date desc);
+create index if not exists idx_journal_entries_user_date on journal_entries(user_id, entry_date desc);
+create unique index if not exists uq_journal_entries_user_date_source
+  on journal_entries(user_id, entry_date, source)
+  where participant_id is null;
+
 alter table journal_entries enable row level security;
+
+create table if not exists life_story_pages (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references fcl_users(id) on delete cascade,
+  page_date date not null,
+  page_no integer not null default 1,
+  lines jsonb not null default '[]'::jsonb,
+  source_entry_ids uuid[] not null default '{}',
+  generation_version text not null default 'v1-ai',
+  generated_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(user_id, page_date)
+);
+
+create index if not exists idx_life_story_pages_user_date on life_story_pages(user_id, page_date);
+alter table life_story_pages enable row level security;
 create table if not exists interventions (
   id uuid primary key default gen_random_uuid(),
   participant_id uuid not null references participants(id) on delete cascade,
