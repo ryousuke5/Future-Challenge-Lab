@@ -1,3 +1,6 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
 process.env.NODE_ENV='development';
 process.env.FCL_SESSION_SECRET='fcl-test-session-secret';
 process.env.SUPABASE_URL='';
