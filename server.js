@@ -3119,6 +3119,11 @@ app.get('/api/matches/:id/detail', async (req, res) => {
     const sessionAccessToken = viewerRole && sessionUser
       ? createAccessToken(match.id,viewerRole)
       : null;
+    const publicUrl = (process.env.FCL_PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+    const accessUrl = viewerRole
+      ? `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(sessionAccessToken || (tokenAuth ? req.query.token : ''))}`
+      : `/match-detail.html?match_id=${encodeURIComponent(match.id)}`;
+
     const detail = {
       match: {
         ...match,
@@ -3142,7 +3147,7 @@ app.get('/api/matches/:id/detail', async (req, res) => {
       },
       priority,
       current_state: recentCheckin ? { risk_score: recentCheckin.risk_score, autonomy_total: recentCheckin.autonomy_total, risk_level: recentCheckin.risk_level, summary: recentCheckin.analysis?.summary || '現在の観測を確認中' } : null,
-      email_redirect_url: `/match-detail.html?match_id=${match.id}`
+      email_redirect_url: accessUrl
     };
     res.json(detail);
   } catch (error) {
