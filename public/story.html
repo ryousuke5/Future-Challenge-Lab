@@ -210,12 +210,15 @@ async function fetchLifeStory(userId){
 
     let pages=Array.isArray(data.story_pages)?data.story_pages:[];
     try{
+      const controller=new AbortController();
+      const timeoutId=setTimeout(()=>controller.abort(),6000);
       const pageResponse=await fetch('/api/life-story-pages/generate',{
         method:'POST',
         headers:{'content-type':'application/json'},
         credentials:'same-origin',
-        body:'{}'
-      });
+        body:'{}',
+        signal:controller.signal
+      }).finally(()=>clearTimeout(timeoutId));
       const pageData=await pageResponse.json().catch(()=>({}));
       if(pageResponse.ok&&Array.isArray(pageData.story_pages)) pages=pageData.story_pages;
     }catch(error){ console.warn('life story generation unavailable',error); }
@@ -289,7 +292,8 @@ async function load(providedId=''){
   const data=await response.json().catch(()=>({}));
   if(!response.ok) throw Error(data.error||'取得失敗');
   const participantRecords=Array.isArray(data.participants)?data.participants:[];
-  const lifeStory=await fetchLifeStory(id).catch(()=>null);
+  // 日記からの物語生成は画面表示をブロックしない。まず既存の物語を表示し、生成結果は後から反映する。
+  const lifeStoryPromise=fetchLifeStory(id).catch(()=>null);
   let storyPages=[];
   try{
     const pageResponse=await fetch('/api/story-pages/generate',{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',body:JSON.stringify({participant_id:participantRecords[0]?.participant?.id||''})});
@@ -301,13 +305,14 @@ async function load(providedId=''){
   const participants=records.map(item=>item.participant||{});
   const histories=records;
   if(!participants.length){
-    $('story').innerHTML=lifeStory || '<div class="card empty">まだ日記も挑戦記録もありません。FCLに一日分を書き残すところから、あなたの物語を始められます。</div>';
+    $('story').innerHTML='<div class="card empty">日記と物語を読み込んでいます…</div>';
     $('story').hidden=false;
+    const lifeHtml=await lifeStoryPromise;
+    $('story').innerHTML=lifeHtml || '<div class="card empty">まだ日記も挑戦記録もありません。FCLに一日分を書き残すところから、あなたの物語を始められます。</div>';
     return;
   }
 
-  const lifeHtml=lifeStory || '';
-  $('story').innerHTML=lifeHtml+participants.map((p,i)=>{
+  $('story').innerHTML=participants.map((p,i)=>{
     const h=histories[i]||{};
     const checkins=h.checkins||[], actions=h.actions||[], events=h.events||[], matches=h.matches||[];
     const connectedMatches=matches.filter(m=>m.status==='connected');
@@ -402,8 +407,14 @@ async function load(providedId=''){
     '</section>';
   }).join('');
   $('story').hidden=false;
+
+  // 挑戦の物語を先に表示し、日記の物語は生成完了後に上へ追加する。
+  const renderedChallengeStory=$('story').innerHTML;
+  lifeStoryPromise.then(lifeHtml=>{
+    if(lifeHtml) $('story').innerHTML=lifeHtml+renderedChallengeStory;
+  }).catch(()=>{});
  }catch(e){
-   $('story').hidden=true;
+   $('story').hidden=false;
    showError(e.message||'物語の取得に失敗しました。');
  }finally{
    $('load').disabled=false;
