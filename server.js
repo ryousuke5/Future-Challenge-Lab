@@ -1552,7 +1552,9 @@ app.use('/api',async(req,res,next)=>{
     const matchAction=matchRoute?.[2] || '';
 
     const participantId=String(req.body?.participant_id||req.query?.participant_id||participantRoute?.[1]||supporterCandidateRoute?.[1]||'').trim();
-    if(participantId&&!(await requireParticipantOwnership(user.id,participantId)))return res.status(403).json({error:'この挑戦者データへアクセスする権限がありません。'});
+    // 支援者側の操作では対象挑戦者IDを送るが、本人確認は各支援者ルート側で行う。
+    const participantOwnershipExemptRoutes = new Set(['/supporter-outcomes','/supporter/execute','/supporter-match']);
+    if(participantId&&!participantOwnershipExemptRoutes.has(path)&&!(await requireParticipantOwnership(user.id,participantId)))return res.status(403).json({error:'この挑戦者データへアクセスする権限がありません。'});
 
     const supporterId=String(req.body?.supporter_id||req.query?.supporter_id||'').trim();
     if(supporterId&&path!=='/supporter-outcomes'&&!(await requireSupporterOwnership(user.id,supporterId)))return res.status(403).json({error:'この支援者データへアクセスする権限がありません。'});
@@ -2436,18 +2438,50 @@ app.post('/api/supporter-outcomes',async(req,res)=>{
     if(!participant_id||!supporter_id) return res.status(400).json({error:'invalid participant_id or supporter_id'});
 
     const outcomeKey=String(req.body.outcome||'positive').toLowerCase();
-    const allowedOutcome=new Set(['restarted','action_completed','connected_and_progressed','partial_progress','no_progress','not_used','positive']);
+    const supporterResponseOutcomes=new Set(['supporter_response_yes','supporter_response_maybe','supporter_declined']);
+    const allowedOutcome=new Set(['restarted','action_completed','connected_and_progressed','partial_progress','no_progress','not_used','positive',...supporterResponseOutcomes]);
     const outcome=allowedOutcome.has(outcomeKey)?outcomeKey:'positive';
+    const isSupporterResponse=supporterResponseOutcomes.has(outcomeKey);
     const outcomeScore=Number.isFinite(Number(req.body.outcome_score))
       ? Number(req.body.outcome_score)
-      : ['restarted','action_completed','connected_and_progressed','positive'].includes(outcome) ? 1
-        : outcome==='partial_progress' ? 0.5
+      : ['restarted','action_completed','connected_and_progressed','positive','supporter_response_yes'].includes(outcome) ? 1
+        : ['partial_progress','supporter_response_maybe'].includes(outcome) ? 0.5
         : 0;
     const note=String(req.body.note||'').trim();
     const executionEventId=req.body.support_execution_event_id||null;
     if(!match_id)return res.status(400).json({error:'match_id is required for support outcome'});
     const linkedMatch=(await select('supporter_matches',{id:match_id}))[0];
-    if(!linkedMatch||linkedMatch.participant_id!==participant_id||linkedMatch.supporter_id!==supporter_id||effectiveMatchStatus(linkedMatch)!=='connected')return res.status(403).json({error:'接続済みの支援結果のみ記録できます。'});
+    if(!linkedMatch||linkedMatch.participant_id!==participant_id||linkedMatch.supporter_id!==supporter_id)return res.status(403).json({error:'接続当事者本人のみこの回答を記録できます。'});
+    // 支援可否の回答は接続成立前でも保存する。実際の「支援後の結果」は接続成立後のみ記録する。
+    if(isSupporterResponse){
+      const responseEvent=await insert('connection_events',{
+        participant_id,
+        supporter_id,
+        match_id,
+        event_type:'supporter_response',
+        note,
+        created_at:new Date().toISOString()
+      });
+      await insert('model_learning_events',{
+        participant_id,
+        features:{
+          action_type:'supporter_response',
+          supporter_id,
+          match_id,
+          response:outcome,
+          response_score:outcomeScore,
+          observed_at:new Date().toISOString()
+        },
+        label:{response:outcome,response_score:outcomeScore}
+      });
+      return res.json({
+        ok:true,
+        supporter_response:outcome,
+        response_score:outcomeScore,
+        response_event:responseEvent
+      });
+    }
+    if(effectiveMatchStatus(linkedMatch)!=='connected')return res.status(403).json({error:'接続済みの支援結果のみ記録できます。'});
 
     const allSupportEvents=await select('connection_events');
     const learningEvents=await select('model_learning_events',{participant_id});
