@@ -9,7 +9,7 @@
   }
 
   async function saveJournalEntry(){
-    const participantId=localStorage.getItem('fcl-participant-id') || '';
+    let participantId=localStorage.getItem('fcl-participant-id') || '';
     const dateInput=document.getElementById('journalEntryDate');
     const textInput=document.getElementById('journalEntryText');
     const status=document.getElementById('journalImportStatus');
@@ -22,6 +22,14 @@
         const session=await sessionResponse.json();
         userId=String(session?.user?.id||userId||'');
         if(userId) localStorage.setItem('fcl-user-id',userId);
+        if(userId && participantId){
+          try{
+            const challenges=await fetchUserChallenges(userId);
+            if(!challenges.some(row=>row.id===participantId)) participantId='';
+          }catch(error){
+            participantId='';
+          }
+        }
       }
       if(!userId){
         const email=String(document.getElementById('email')?.value||'').trim();
