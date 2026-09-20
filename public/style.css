@@ -58,3 +58,8 @@ button:disabled{opacity:.6;cursor:not-allowed}
 .challenge-manage-btn:hover{background:#2b2f36}
 #currentChallengeBar label{color:#17191d}
 #challengeSelector{color:#17191d;background:#fff}
+
+/* --- secondary links/buttons --- */
+.secondary-btn{display:inline-flex;align-items:center;justify-content:center;background:#fff;color:#111827!important;border:1px solid #cbd5e1;text-decoration:none;font-weight:700;}
+.secondary-btn:visited{color:#111827!important;}
+.secondary-btn:hover{background:#f8fafc;color:#111827!important;}
