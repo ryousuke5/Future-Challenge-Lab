@@ -137,7 +137,8 @@
 
   async function loadDetail(){
     if(!matchId) throw new Error('match_idがありません');
-    const data = await getJson(`/api/matches/${encodeURIComponent(matchId)}/detail`);
+    const detailQuery = accessToken ? `?token=${encodeURIComponent(accessToken)}` : '';
+    const data = await getJson(`/api/matches/${encodeURIComponent(matchId)}/detail${detailQuery}`);
 
     if(data.access_token) accessToken = data.access_token;
     if(data.viewer_role) viewerRole = data.viewer_role;
