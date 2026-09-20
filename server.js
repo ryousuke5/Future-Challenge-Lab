@@ -3095,6 +3095,10 @@ app.get('/api/matches/:id/detail', async (req, res) => {
     const participant = (await select('participants',{id:match.participant_id}))[0];
     const supporter = (await select('supporters',{id:match.supporter_id}))[0];
     const recentCheckin = (await select('checkins',{participant_id:match.participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0];
+    // 支援接続ページでは「priority」を必ずローカルで生成する。
+    // 未定義変数をJSONへ渡すと、挑戦内容・支援者情報まで全体が500になるため、
+    // 取得失敗時もページ本体は表示できるようにする。
+    const priority = await buildSupporterPriority(match.participant_id).catch(() => null);
     const viewerRole = sessionUser
       ? (participant?.user_id === sessionUser.id ? 'challenger' : supporter?.user_id === sessionUser.id ? 'supporter' : null)
       : tokenAuth?.role || null;
