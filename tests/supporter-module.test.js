@@ -1,15 +1,41 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { app } from '../server.js';
+process.env.NODE_ENV='development';
+process.env.FCL_SESSION_SECRET='fcl-test-session-secret';
+process.env.SUPABASE_URL='';
+process.env.SUPABASE_SERVICE_ROLE_KEY='';
+
+const { app } = await import('../server.js');
 
 const server = app.listen(0);
 const port = () => server.address().port;
 const baseUrl = () => `http://127.0.0.1:${port()}`;
+let sessionCookie = '';
+
+async function login(email){
+  const send = await fetch(`${baseUrl()}/api/auth/request-code`, {
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify({email})
+  });
+  const sendData=await send.json();
+  assert.equal(send.status,200);
+  const verify = await fetch(`${baseUrl()}/api/auth/verify-code`, {
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify({email,code:sendData.development_code})
+  });
+  const verifyData=await verify.json();
+  assert.equal(verify.status,200);
+  const setCookie=verify.headers.get('set-cookie')||'';
+  sessionCookie=setCookie.split(';')[0];
+  return verifyData;
+}
 
 async function api(path, payload = undefined, method = 'POST') {
+  const headers = { 'content-type': 'application/json' };
+  if(sessionCookie) headers.cookie=sessionCookie;
   const response = await fetch(`${baseUrl()}${path}`, {
     method,
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: payload === undefined ? undefined : JSON.stringify(payload)
   });
   const text = await response.text();
@@ -22,17 +48,21 @@ async function api(path, payload = undefined, method = 'POST') {
 }
 
 test('supporter dashboard and recommendation generation', async () => {
+  const participantEmail='support-test@example.com';
+  await login(participantEmail);
   const participant = await api('/api/participants', {
     name: '支援テスト',
-    email: 'support-test@example.com',
+    email: participantEmail,
     challenge: '毎日30分学習',
     goal: '継続する'
   });
 
+  const supporterEmail='supporterA@example.com';
+  await login(supporterEmail);
   const supporter = await api('/api/supporters/register', {
     organization_name: 'Future Challenge Lab',
     supporter_name: 'サポーターA',
-    email: 'supporterA@example.com',
+    email: supporterEmail,
     support_category: '学習支援',
     strengths: ['学習', '継続'],
     timing_tags: ['停滞時', '再開時'],
@@ -41,7 +71,8 @@ test('supporter dashboard and recommendation generation', async () => {
     accepting_new_matches: true
   });
 
-  await api('/api/checkins', {
+  await login(participantEmail);
+  await api('/api/checkins',
     participant_id: participant.id,
     answers: { q1: 1, q2: 1, q3: 1, q4: 1, q5: 1 }
   });
@@ -51,6 +82,7 @@ test('supporter dashboard and recommendation generation', async () => {
   assert.ok(candidates.candidates.length >= 1);
   assert.match(candidates.candidates[0].recommended_support_type || '', /支援|介入|相談|整理/);
 
+  await login(supporterEmail);
   const dashboard = await api(`/api/supporter/dashboard?supporter_id=${supporter.id}`, undefined, 'GET');
   assert.ok(Array.isArray(dashboard.targets));
   assert.ok(typeof dashboard.summary.total_support_count === 'number');
@@ -58,17 +90,21 @@ test('supporter dashboard and recommendation generation', async () => {
 });
 
 test('duplicate supporter match is rejected', async () => {
+  const participantEmail='duplicate@example.com';
+  await login(participantEmail);
   const participant = await api('/api/participants', {
     name: '重複テスト',
-    email: 'duplicate@example.com',
+    email: participantEmail,
     challenge: '毎日20分',
     goal: '習慣化'
   });
 
+  const supporterEmail='duplicate-supporter@example.com';
+  await login(supporterEmail);
   const supporter = await api('/api/supporters/register', {
     organization_name: 'FCL',
     supporter_name: '重複支援者',
-    email: 'duplicate-supporter@example.com',
+    email: supporterEmail,
     support_category: '習慣化',
     strengths: ['習慣化'],
     timing_tags: ['停滞時'],
@@ -77,7 +113,10 @@ test('duplicate supporter match is rejected', async () => {
     accepting_new_matches: true
   });
 
+  await login(participantEmail);
+  await login(participantEmail);
   const candidate = (await api(`/api/supporter-candidates/${participant.id}`, undefined, 'GET')).candidates[0];
+  await login(supporterEmail);
   const first = await api('/api/supporter-match', {
     participant_id: participant.id,
     supporter_id: candidate.supporter_id || supporter.id
@@ -94,17 +133,21 @@ test('duplicate supporter match is rejected', async () => {
 });
 
 test('support execution and outcome retrieval', async () => {
+  const participantEmail='execution@example.com';
+  await login(participantEmail);
   const participant = await api('/api/participants', {
     name: '支援実行テスト',
-    email: 'execution@example.com',
+    email: participantEmail,
     challenge: '毎日15分の筋トレ',
     goal: '継続'
   });
 
+  const supporterEmail='execution-supporter@example.com';
+  await login(supporterEmail);
   const supporter = await api('/api/supporters/register', {
     organization_name: 'Exercise Lab',
     supporter_name: '実行支援者',
-    email: 'execution-supporter@example.com',
+    email: supporterEmail,
     support_category: '運動',
     strengths: ['運動'],
     timing_tags: ['再開時'],
@@ -113,10 +156,12 @@ test('support execution and outcome retrieval', async () => {
     accepting_new_matches: true
   });
 
+  const executionSupporterEmail='execution-supporter-2@example.com';
+  await login(executionSupporterEmail);
   const executionSupporter = await api('/api/supporters/register', {
     organization_name: 'Exercise Lab',
     supporter_name: '実行支援者2',
-    email: 'execution-supporter-2@example.com',
+    email: executionSupporterEmail,
     support_category: '運動',
     strengths: ['運動', '習慣化'],
     timing_tags: ['再開時', '伴走'],
@@ -125,6 +170,7 @@ test('support execution and outcome retrieval', async () => {
     accepting_new_matches: true
   });
 
+  await login(participantEmail);
   await api('/api/checkins', {
     participant_id: participant.id,
     answers: { q1: 1, q2: 1, q3: 1, q4: 1, q5: 1 }
@@ -132,6 +178,7 @@ test('support execution and outcome retrieval', async () => {
 
   const candidate = (await api(`/api/supporter-candidates/${participant.id}`, undefined, 'GET')).candidates[0];
   const executionSupporterId = candidate.supporter_id === executionSupporter.id ? supporter.id : executionSupporter.id;
+  await login(executionSupporterEmail);
   await api('/api/supporter-match', {
     participant_id: participant.id,
     supporter_id: executionSupporterId
@@ -155,17 +202,21 @@ test('support execution and outcome retrieval', async () => {
 });
 
 test('matching flow accepts both approvals and blocks declines', async () => {
+  const participantEmail='approval-flow@example.com';
+  await login(participantEmail);
   const participant = await api('/api/participants', {
     name: '承認フロー',
-    email: 'approval-flow@example.com',
+    email: participantEmail,
     challenge: '毎日20分の読書',
     goal: '継続'
   });
 
+  const supporterEmail='reading-support@example.com';
+  await login(supporterEmail);
   const supporter = await api('/api/supporters/register', {
     organization_name: 'Reading Lab',
     supporter_name: '読書支援者',
-    email: 'reading-support@example.com',
+    email: supporterEmail,
     support_category: '読書',
     strengths: ['読書', '習慣化'],
     timing_tags: ['停滞時', '再開時'],
@@ -174,6 +225,7 @@ test('matching flow accepts both approvals and blocks declines', async () => {
     accepting_new_matches: true
   });
 
+  await login(participantEmail);
   const match = await api('/api/matches', { participant_id: participant.id });
   const candidate = match.find(x => x.supporter_id === supporter.id) || match[0];
   assert.ok(candidate);
@@ -184,9 +236,11 @@ test('matching flow accepts both approvals and blocks declines', async () => {
   assert.equal(emailTrigger.status, 'sent');
 
   await api(`/api/matches/${candidate.id}/challenger-approve`, {}, 'POST');
+  await login(supporterEmail);
   const supporterApproved = await api(`/api/matches/${candidate.id}/supporter-approve`, {}, 'POST');
   assert.equal(supporterApproved.status, 'connected');
 
+  await login(participantEmail);
   const declinedMatch = await api('/api/matches', { participant_id: participant.id });
   const secondCandidate = declinedMatch[0];
   assert.ok(secondCandidate);
