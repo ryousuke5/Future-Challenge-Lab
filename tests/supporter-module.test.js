@@ -72,7 +72,7 @@ test('supporter dashboard and recommendation generation', async () => {
   });
 
   await login(participantEmail);
-  await api('/api/checkins',
+  await api('/api/checkins', {
     participant_id: participant.id,
     answers: { q1: 1, q2: 1, q3: 1, q4: 1, q5: 1 }
   });
@@ -113,7 +113,6 @@ test('duplicate supporter match is rejected', async () => {
     accepting_new_matches: true
   });
 
-  await login(participantEmail);
   await login(participantEmail);
   const candidate = (await api(`/api/supporter-candidates/${participant.id}`, undefined, 'GET')).candidates[0];
   await login(supporterEmail);
@@ -247,6 +246,7 @@ test('matching flow accepts both approvals and blocks declines', async () => {
   const decline = await api(`/api/matches/${secondCandidate.id}/decline`, { actor: 'challenger' }, 'POST');
   assert.equal(decline.status, 'declined');
 
+  await login(supporterEmail);
   await assert.rejects(
     () => api(`/api/matches/${secondCandidate.id}/supporter-approve`, {}, 'POST'),
     /409|not active|match is not active/i
