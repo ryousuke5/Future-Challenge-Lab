@@ -1,4 +1,7 @@
-process.env.NODE_ENV='development';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+process.env.NODE_ENV='test';
 process.env.FCL_SESSION_SECRET='fcl-test-session-secret';
 process.env.SUPABASE_URL='';
 process.env.SUPABASE_SERVICE_ROLE_KEY='';
@@ -47,7 +50,7 @@ async function api(path, payload = undefined, method = 'POST') {
   return json;
 }
 
-test('supporter dashboard and recommendation generation', async () => {
+test('supporter dashboard and recommendation generation', { concurrency: false }, async () => {
   const participantEmail='support-test@example.com';
   await login(participantEmail);
   const participant = await api('/api/participants', {
@@ -89,7 +92,7 @@ test('supporter dashboard and recommendation generation', async () => {
   assert.ok(typeof dashboard.summary.support_capacity === 'number');
 });
 
-test('duplicate supporter match is rejected', async () => {
+test('duplicate supporter match is rejected', { concurrency: false }, async () => {
   const participantEmail='duplicate@example.com';
   await login(participantEmail);
   const participant = await api('/api/participants', {
@@ -131,7 +134,7 @@ test('duplicate supporter match is rejected', async () => {
   );
 });
 
-test('support execution and outcome retrieval', async () => {
+test('support execution and outcome retrieval', { concurrency: false }, async () => {
   const participantEmail='execution@example.com';
   await login(participantEmail);
   const participant = await api('/api/participants', {
@@ -175,17 +178,23 @@ test('support execution and outcome retrieval', async () => {
     answers: { q1: 1, q2: 1, q3: 1, q4: 1, q5: 1 }
   });
 
-  const candidate = (await api(`/api/supporter-candidates/${participant.id}`, undefined, 'GET')).candidates[0];
-  const executionSupporterId = candidate.supporter_id === executionSupporter.id ? supporter.id : executionSupporter.id;
   await login(executionSupporterEmail);
-  await api('/api/supporter-match', {
+  const supporterMatch = await api('/api/supporter-match', {
     participant_id: participant.id,
-    supporter_id: executionSupporterId
+    supporter_id: executionSupporter.id
   });
+  const executionMatchId = supporterMatch.match_id;
+
+  await login(participantEmail);
+  await api(`/api/matches/${executionMatchId}/challenger-approve`, {}, 'POST');
+  await login(executionSupporterEmail);
+  const connectedExecutionMatch = await api(`/api/matches/${executionMatchId}/supporter-approve`, {}, 'POST');
+  assert.equal(connectedExecutionMatch.status, 'connected');
 
   const execution = await api('/api/supporter/execute', {
     participant_id: participant.id,
-    supporter_id: executionSupporterId,
+    supporter_id: executionSupporter.id,
+    match_id: executionMatchId,
     recommendation_type: 'supporter',
     recommendation_reason: '高リスクのため',
     suggested_message: '今日の最初の一歩を10分だけ始めましょう。',
@@ -195,12 +204,12 @@ test('support execution and outcome retrieval', async () => {
   assert.equal(execution.status, 'saved');
   assert.ok(execution.assignment || execution.execution_event);
 
-  const outcome = await api(`/api/supporter/outcomes/${executionSupporterId}`, undefined, 'GET');
+  const outcome = await api(`/api/supporter/outcomes/${executionSupporter.id}`, undefined, 'GET');
   assert.ok(Array.isArray(outcome.outcomes));
   assert.ok(typeof outcome.summary.observed_execution_rate === 'number');
 });
 
-test('matching flow accepts both approvals and blocks declines', async () => {
+test('matching flow accepts both approvals and blocks declines', { concurrency: false }, async () => {
   const participantEmail='approval-flow@example.com';
   await login(participantEmail);
   const participant = await api('/api/participants', {
@@ -240,13 +249,29 @@ test('matching flow accepts both approvals and blocks declines', async () => {
   assert.equal(supporterApproved.status, 'connected');
 
   await login(participantEmail);
-  const declinedMatch = await api('/api/matches', { participant_id: participant.id });
-  const secondCandidate = declinedMatch[0];
+  const secondSupporterEmail='reading-support-2@example.com';
+  await login(secondSupporterEmail);
+  const secondSupporter = await api('/api/supporters/register', {
+    organization_name: 'Reading Lab',
+    supporter_name: '読書支援者2',
+    email: secondSupporterEmail,
+    support_category: '読書',
+    strengths: ['読書', '習慣化'],
+    timing_tags: ['停滞時', '再開時'],
+    description: '読書継続を支える',
+    capacity: 2,
+    accepting_new_matches: true
+  });
+
+  await login(participantEmail);
+  const declinedMatches = await api('/api/matches', { participant_id: participant.id });
+  const secondCandidate = declinedMatches.find(row => row.supporter_id === secondSupporter.id);
   assert.ok(secondCandidate);
+
   const decline = await api(`/api/matches/${secondCandidate.id}/decline`, { actor: 'challenger' }, 'POST');
   assert.equal(decline.status, 'declined');
 
-  await login(supporterEmail);
+  await login(secondSupporterEmail);
   await assert.rejects(
     () => api(`/api/matches/${secondCandidate.id}/supporter-approve`, {}, 'POST'),
     /409|not active|match is not active/i

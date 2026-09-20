@@ -103,9 +103,10 @@ function isTestEmail(value){
 }
 function uniqueProductionContacts(rows = []){
   const byEmail=new Map();
+  const allowSyntheticContacts = process.env.NODE_ENV === 'test';
   for(const row of rows){
     const email=normalizeContactEmail(row?.email);
-    if(!email || isTestEmail(email) || row?.archived_at) continue;
+    if(!email || ((!allowSyntheticContacts) && isTestEmail(email)) || row?.archived_at) continue;
     const current=byEmail.get(email);
     const currentTime=new Date(current?.created_at || 0).getTime();
     const rowTime=new Date(row?.created_at || 0).getTime();
@@ -1488,7 +1489,7 @@ app.post('/api/auth/request-code',async(req,res)=>{
     if(sentAt&&Date.now()-sentAt<60000)return res.status(429).json({error:'認証コードは1分に1回まで送信できます。'});
     const code=String(crypto.randomInt(100000,1000000));
     await update('fcl_users',user.id,{auth_code_hash:hashSha256(code),auth_code_expires_at:new Date(Date.now()+10*60*1000).toISOString(),auth_code_sent_at:new Date().toISOString(),auth_code_attempts:0,updated_at:new Date().toISOString()});
-    const testMode=isTestEmail(email)&&process.env.NODE_ENV==='development';
+    const testMode=isTestEmail(email)&&(process.env.NODE_ENV==='development'||process.env.NODE_ENV==='test');
     if(!testMode){
       if(!process.env.RESEND_API_KEY||!process.env.FCL_FROM_EMAIL)return res.status(503).json({error:'認証メールの送信設定がまだ完了していません。'});
       const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+process.env.RESEND_API_KEY},body:JSON.stringify({from:process.env.FCL_FROM_EMAIL,to:[email],subject:'FCL｜ログイン認証コード',text:'FCLのログイン認証コードは '+code+' です。\n\n10分以内にFCLの画面へ入力してください。\n\n心当たりがない場合は、このメールを無視してください。\n\nFuture Challenge Lab',html:'<p>FCLのログイン認証コードです。</p><p style="font-size:28px;font-weight:700;letter-spacing:4px">'+code+'</p><p>10分以内にFCLの画面へ入力してください。</p><p>心当たりがない場合は、このメールを無視してください。</p><p>Future Challenge Lab</p>'})});
