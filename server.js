@@ -19,7 +19,7 @@ app.use(express.static('public'));
 const port = process.env.PORT || 3000;
 const hasSupabase = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 const supabase = hasSupabase ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY) : null;
-const memory = { fcl_users: [], participants: [], checkins: [], journal_entries: [], interventions: [], intervention_assignments: [], action_results: [], supporters: [], supporter_matches: [], connection_events: [], intervention_outcomes: [], model_learning_events: [], intervention_policy_decisions: [], supporter_outcomes: [], journal_replies: [], challenge_story_pages: [], supporter_ai_summaries: [], personal_ai_profiles: [] };
+const memory = { fcl_users: [], participants: [], checkins: [], journal_entries: [], life_story_pages: [], interventions: [], intervention_assignments: [], action_results: [], supporters: [], supporter_matches: [], connection_events: [], intervention_outcomes: [], model_learning_events: [], intervention_policy_decisions: [], supporter_outcomes: [], journal_replies: [], challenge_story_pages: [], supporter_ai_summaries: [], personal_ai_profiles: [] };
 const supporterApprovalState = new Map();
 
 function readSupporterApprovalState(matchId){
@@ -1135,10 +1135,20 @@ async function saveFclCoreDecision({ participant_id, selected_option, reason, ne
 }
 
 
-async function saveJournalEntry({ participant_id, entry_date = todayJstDate(), source = 'chatgpt', raw_text, metadata = {} }){
-  if(!participant_id) throw new Error('invalid participant_id');
-  const participant = (await select('participants',{id:participant_id}))[0];
-  if(!participant) throw new Error('participant not found');
+async function saveJournalEntry({ participant_id = null, user_id = null, entry_date = todayJstDate(), source = 'chatgpt', raw_text, metadata = {} }){
+  if(!participant_id && !user_id) throw new Error('participant_id or user_id is required');
+
+  let participant=null;
+  if(participant_id){
+    participant=(await select('participants',{id:participant_id}))[0];
+    if(!participant) throw new Error('participant not found');
+    user_id=user_id||participant.user_id||null;
+  }
+  if(user_id){
+    const user=(await select('fcl_users',{id:user_id}))[0];
+    if(!user) throw new Error('user not found');
+  }
+
   const date = String(entry_date || todayJstDate()).slice(0,10);
   if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('invalid entry_date');
   const allowedSources = ['chatgpt','fcl','manual'];
@@ -1146,18 +1156,149 @@ async function saveJournalEntry({ participant_id, entry_date = todayJstDate(), s
   const text = String(raw_text || '').trim();
   if(!text) throw new Error('empty raw_text');
   if(text.length > 20000) throw new Error('journal is too long (max 20000 characters)');
-  const payload = { participant_id, entry_date:date, source:normalizedSource, raw_text:text, metadata:(metadata && typeof metadata==='object') ? metadata : {}, imported_at:new Date().toISOString(), updated_at:new Date().toISOString() };
-  const q = db('journal_entries');
+
+  const payload = {
+    participant_id: participant_id || null,
+    user_id: user_id || null,
+    entry_date: date,
+    source: normalizedSource,
+    raw_text: text,
+    metadata: (metadata && typeof metadata==='object') ? metadata : {},
+    imported_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+
+  const q=db('journal_entries');
   if(q){
-    const {data,error}=await q.upsert(payload,{onConflict:'participant_id,entry_date,source'}).select().single();
+    if(participant_id){
+      const {data,error}=await q.upsert(payload,{onConflict:'participant_id,entry_date,source'}).select().single();
+      if(error) throw error;
+      return data;
+    }
+    const {data:existing,error:existingError}=await q
+      .select('*')
+      .eq('user_id',user_id)
+      .is('participant_id',null)
+      .eq('entry_date',date)
+      .eq('source',normalizedSource)
+      .maybeSingle();
+    if(existingError) throw existingError;
+    if(existing){
+      const {data,error}=await q.update(payload).eq('id',existing.id).select().single();
+      if(error) throw error;
+      return data;
+    }
+    const {data,error}=await q.insert(payload).select().single();
     if(error) throw error;
     return data;
   }
-  const existing = memory.journal_entries.find(row => row.participant_id===participant_id && row.entry_date===date && row.source===normalizedSource);
+
+  const existing=memory.journal_entries.find(row=>
+    (participant_id ? row.participant_id===participant_id : !row.participant_id && row.user_id===user_id) &&
+    row.entry_date===date && row.source===normalizedSource
+  );
   if(existing){ Object.assign(existing,payload); return existing; }
   const stored={id:uuid(),created_at:new Date().toISOString(),...payload};
   memory.journal_entries.push(stored);
   return stored;
+}
+
+function lifeStoryFallbackLines(entry={},index=0){
+  const raw=String(entry?.raw_text||'').trim();
+  const normalized=raw
+    .replace(/【[^】]+】/g,'')
+    .replace(/^\s*[#＃]+.*$/gm,'')
+    .replace(/^\s*[■□◆].*$/gm,'')
+    .trim();
+  const pieces=normalized
+    .split(/[\n。！？!?]+/)
+    .map(s=>s.trim())
+    .filter(s=>s && s.length>2)
+    .slice(0,3);
+  const lines=[...pieces];
+  if(lines.length<3 && raw){
+    const compact=raw.replace(/\s+/g,' ').trim();
+    if(lines.length===0) lines.push(compact.slice(0,70));
+    if(lines.length===1) lines.push('その日の出来事も、記録として残った。');
+    if(lines.length===2) lines.push('この一日が、あなたの物語の一ページになる。');
+  }
+  while(lines.length<3) lines.push('この日の記録が、次のページにつながっていく。');
+  return lines.slice(0,3).map((line,i)=>String(line).slice(0,120));
+}
+
+async function saveLifeStoryPage(row={}){
+  const payload={
+    user_id:row.user_id,
+    page_date:row.page_date,
+    page_no:Number(row.page_no||1),
+    lines:Array.isArray(row.lines)?row.lines.slice(0,3):[],
+    source_entry_ids:Array.isArray(row.source_entry_ids)?row.source_entry_ids.filter(Boolean):[],
+    generation_version:row.generation_version||'v1-ai',
+    generated_at:row.generated_at||new Date().toISOString(),
+    updated_at:new Date().toISOString()
+  };
+  const q=db('life_story_pages');
+  if(q){
+    const {data,error}=await q.upsert(payload,{onConflict:'user_id,page_date'}).select('*').single();
+    if(error) throw error;
+    return data;
+  }
+  const existing=memory.life_story_pages.find(x=>x.user_id===payload.user_id&&x.page_date===payload.page_date);
+  if(existing){Object.assign(existing,payload);return existing;}
+  const created={id:uuid(),created_at:new Date().toISOString(),...payload};
+  memory.life_story_pages.push(created);
+  return created;
+}
+
+async function generateLifeStoryPagesWithOpenAI({user,entries=[]}={}){
+  const key=process.env.OPENAI_API_KEY;
+  if(!key||!entries.length)return {};
+  const prompt=[
+    'Future Challenge Lab（FCL）の「あなたの物語」を編集してください。',
+    '入力された日記・出来事の事実だけを使い、日ごとに3行の短い物語を作る。',
+    '挑戦に関係する日も、仕事・生活・迷い・小さな出来事だけの日も、その日そのものを素材として扱う。',
+    '日ごとに文章の入り方、語彙、リズム、焦点を変える。同じ定型文を繰り返さない。',
+    '事実にない出来事や感情を作らない。過度に感動的にしない。評価・説教・診断をしない。',
+    '各ページは日本語3行、1行20〜70文字程度。JSONだけを返す。',
+    '',
+    'ユーザーID：'+String(user?.id||''),
+    '',
+    '日ごとの日記：',
+    JSON.stringify(entries.map((e,i)=>({page_date:e.entry_date,page_no:i+1,source:e.source,raw_text:String(e.raw_text||'').slice(0,6000)})),null,2),
+    '',
+    '出力形式：{"pages":[{"page_date":"YYYY-MM-DD","lines":["1行目","2行目","3行目"]}]}'
+  ].join('\n');
+
+  try{
+    const response=await fetch('https://api.openai.com/v1/chat/completions',{
+      method:'POST',
+      headers:{'Content-Type':'application/json',Authorization:'Bearer '+key},
+      body:JSON.stringify({
+        model:'gpt-4o-mini',
+        temperature:0.9,
+        response_format:{type:'json_object'},
+        messages:[
+          {role:'system',content:'FCLの物語編集者です。日記にない事実や感情を足さず、毎日の表現を変えてください。'},
+          {role:'user',content:prompt}
+        ]
+      })
+    });
+    if(!response.ok)throw new Error('OpenAI '+response.status+': '+await response.text());
+    const json=await response.json();
+    const raw=json?.choices?.[0]?.message?.content;
+    if(!raw)throw new Error('life story AI response missing content');
+    const parsed=JSON.parse(raw);
+    const byDate={};
+    for(const page of Array.isArray(parsed?.pages)?parsed.pages:[]){
+      const date=String(page?.page_date||'');
+      const lines=Array.isArray(page?.lines)?page.lines.map(x=>String(x||'').trim()).filter(Boolean).slice(0,3):[];
+      if(/^\d{4}-\d{2}-\d{2}$/.test(date)&&lines.length===3) byDate[date]=lines;
+    }
+    return byDate;
+  }catch(error){
+    console.error('[life-story] OpenAI generation failed',error?.message||error);
+    return {};
+  }
 }
 async function saveJournalReply({ participant_id, checkin_id = null, source_analysis_event_id, reply_text, reply_version = 'v1', reply_date = todayJstDate() }){
   if(!participant_id) throw new Error('invalid participant_id');
@@ -2060,18 +2201,80 @@ app.get('/api/core/history/:participant_id',async(req,res)=>{
 
 app.post('/api/journal-entries',async(req,res)=>{
   try{
-    const participant_id=String(req.body?.participant_id||'').trim();
+    const userId=req.fclUser?.id||'';
+    const participant_id=String(req.body?.participant_id||'').trim()||null;
     const raw_text=String(req.body?.raw_text||'').trim();
     const entry_date=String(req.body?.entry_date||todayJstDate()).slice(0,10);
     const source=String(req.body?.source||'chatgpt').toLowerCase();
-    if(!participant_id)return res.status(400).json({error:'participant_id is required'});
+    if(!userId)return res.status(401).json({error:'FCLログインが必要です。'});
     if(!raw_text)return res.status(400).json({error:'日誌本文を入力してください。'});
     if(raw_text.length>20000)return res.status(400).json({error:'日誌は20000文字以内で保存してください。'});
-    const entry=await saveJournalEntry({participant_id,entry_date,source,raw_text,metadata:{imported_via:'fcl-journal-import'}});
-    res.json({ok:true,entry,updated:true});
+    const entry=await saveJournalEntry({participant_id,user_id:userId,entry_date,source,raw_text,metadata:{imported_via:'fcl-journal-import'}});
+    res.json({ok:true,entry,updated:true,story_scope:participant_id?'challenge':'life'});
   }catch(e){
     console.error('journal entry save error',e);
     res.status(500).json({error:e.message||'journal entry save failed'});
+  }
+});
+
+app.get('/api/life-story/:user_id',async(req,res)=>{
+  try{
+    const userId=String(req.params.user_id||'').trim();
+    if(!userId)return res.status(400).json({error:'user_id is required'});
+    if(!req.fclUser?.id || req.fclUser.id!==userId)return res.status(403).json({error:'この物語へアクセスする権限がありません。'});
+    const [entries,pages]=await Promise.all([
+      select('journal_entries',{user_id:userId}),
+      select('life_story_pages',{user_id:userId})
+    ]);
+    res.json({
+      user_id:userId,
+      journal_entries:entries
+        .filter(row=>!row.participant_id)
+        .sort((a,b)=>String(a.entry_date||'').localeCompare(String(b.entry_date||''))),
+      story_pages:pages
+        .sort((a,b)=>String(a.page_date||'').localeCompare(String(b.page_date||'')))
+    });
+  }catch(error){
+    console.error('life story error',error);
+    res.status(500).json({error:error.message||'life story failed'});
+  }
+});
+
+app.post('/api/life-story-pages/generate',async(req,res)=>{
+  try{
+    const userId=req.fclUser?.id||'';
+    if(!userId)return res.status(401).json({error:'FCLログインが必要です。'});
+    const user=req.fclUser;
+    const entries=(await select('journal_entries',{user_id:userId}))
+      .filter(row=>!row.participant_id)
+      .sort((a,b)=>String(a.entry_date||'').localeCompare(String(b.entry_date||'')));
+    if(!entries.length)return res.json({ok:true,story_pages:[],generated_count:0,ai_generated_count:0});
+
+    const existing=await select('life_story_pages',{user_id:userId});
+    const existingByDate=new Map(existing.map(row=>[String(row.page_date),row]));
+    const missing=entries.filter(entry=>{
+      const page=existingByDate.get(String(entry.entry_date));
+      return !page || String(page.generation_version||'').startsWith('v1-fallback');
+    });
+    const generated=missing.length?await generateLifeStoryPagesWithOpenAI({user,entries:missing}):{};
+    const saved=[];
+    for(let i=0;i<missing.length;i++){
+      const entry=missing[i];
+      const lines=generated[entry.entry_date]||lifeStoryFallbackLines(entry,i);
+      saved.push(await saveLifeStoryPage({
+        user_id:userId,
+        page_date:entry.entry_date,
+        page_no:entries.findIndex(x=>x.id===entry.id)+1,
+        lines,
+        source_entry_ids:[entry.id],
+        generation_version:generated[entry.entry_date]?'v1-ai':'v1-fallback'
+      }));
+    }
+    const unique=new Map(existing.concat(saved).map(row=>[String(row.page_date),row]));
+    res.json({ok:true,story_pages:[...unique.values()].sort((a,b)=>String(a.page_date).localeCompare(String(b.page_date))),generated_count:saved.length,ai_generated_count:saved.filter(x=>x.generation_version==='v1-ai').length});
+  }catch(error){
+    console.error('life story pages generation error',error);
+    res.status(500).json({error:error.message||'life story pages generation failed'});
   }
 });
 app.post('/api/checkins',async(req,res)=>{
@@ -2091,7 +2294,7 @@ app.post('/api/checkins',async(req,res)=>{
     const checkinJournalText=String(req.body?.checkin_text||'').trim();
     if(checkinJournalText){
       try{
-        await saveJournalEntry({participant_id,entry_date:todayJstDate(),source:'fcl',raw_text:checkinJournalText,metadata:{imported_via:'checkin',checkin_id:checkin.id}});
+        await saveJournalEntry({participant_id,user_id:(await select('participants',{id:participant_id}))[0]?.user_id||null,entry_date:todayJstDate(),source:'fcl',raw_text:checkinJournalText,metadata:{imported_via:'checkin',checkin_id:checkin.id}});
       }catch(journalError){
         console.warn('[journal-entries] FCL note save failed',journalError?.message||journalError);
       }
