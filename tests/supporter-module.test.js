@@ -1,3 +1,6 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
 process.env.NODE_ENV='development';
 process.env.FCL_SESSION_SECRET='fcl-test-session-secret';
 process.env.SUPABASE_URL='';
@@ -47,7 +50,7 @@ async function api(path, payload = undefined, method = 'POST') {
   return json;
 }
 
-test('supporter dashboard and recommendation generation', async () => {
+test('supporter dashboard and recommendation generation', { concurrency: false }, async () => {
   const participantEmail='support-test@example.com';
   await login(participantEmail);
   const participant = await api('/api/participants', {
@@ -89,7 +92,7 @@ test('supporter dashboard and recommendation generation', async () => {
   assert.ok(typeof dashboard.summary.support_capacity === 'number');
 });
 
-test('duplicate supporter match is rejected', async () => {
+test('duplicate supporter match is rejected', { concurrency: false }, async () => {
   const participantEmail='duplicate@example.com';
   await login(participantEmail);
   const participant = await api('/api/participants', {
@@ -131,7 +134,7 @@ test('duplicate supporter match is rejected', async () => {
   );
 });
 
-test('support execution and outcome retrieval', async () => {
+test('support execution and outcome retrieval', { concurrency: false }, async () => {
   const participantEmail='execution@example.com';
   await login(participantEmail);
   const participant = await api('/api/participants', {
@@ -200,7 +203,7 @@ test('support execution and outcome retrieval', async () => {
   assert.ok(typeof outcome.summary.observed_execution_rate === 'number');
 });
 
-test('matching flow accepts both approvals and blocks declines', async () => {
+test('matching flow accepts both approvals and blocks declines', { concurrency: false }, async () => {
   const participantEmail='approval-flow@example.com';
   await login(participantEmail);
   const participant = await api('/api/participants', {
