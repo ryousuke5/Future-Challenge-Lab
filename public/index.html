@@ -1,6 +1,6 @@
 <!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Future Challenge Lab</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="supporter-flow.css"></head><body><main>
-<header><div><span class="eyebrow">FUTURE CHALLENGE LAB</span><h1>挑戦を、物語に。</h1><p>一日一日の挑戦を記録し、迷いも一歩も積み重ねて、あなた自身の物語をつくっていく。</p><p class="muted">挑戦継続エンジン — 現在地を測り、自己決定を回復し、行動と支援につなげる。</p></div><div style="display:flex;gap:8px;align-items:center"><a href="/user.html"><button type="button" class="secondary-btn">FCLマイページ</button></a><span id="mode" class="pill">checking…</span></div></header>
-<section class="card" style="background:linear-gradient(135deg,#f8fafc,#eef6ff);"><span class="eyebrow">YOUR CHALLENGE STORY</span><h2 style="margin-top:8px;">ここから、あなたの物語が始まります。</h2><p>できた日だけではなく、迷った日、止まった日、もう一度動き出した日も、すべてが挑戦の一部です。</p><div class="grid"><div><h3>挑戦する</h3><p>副業・勉強・運動・資格・転職・発信・起業など、今なにかに挑戦している人。</p><a href="#challenger-registration"><button type="button">挑戦の物語をはじめる</button></a></div><div><h3>支援する</h3><p>挑戦している人の話を聞き、次の一歩を一緒に支えたい人・企業・団体。</p><a href="#supporter-registration"><button type="button">物語を支える</button></a></div></div></section>
+<header><div><span class="eyebrow">FUTURE CHALLENGE LAB</span><h1>挑戦を、物語に。</h1><p>日記や出来事を残すだけでも、迷いも一歩も積み重ねて、あなた自身の物語をつくっていく。</p><p class="muted">挑戦継続エンジン — 現在地を測り、自己決定を回復し、行動と支援につなげる。</p></div><div style="display:flex;gap:8px;align-items:center"><a href="/user.html"><button type="button" class="secondary-btn">FCLマイページ</button></a><span id="mode" class="pill">checking…</span></div></header>
+<section class="card" style="background:linear-gradient(135deg,#f8fafc,#eef6ff);"><span class="eyebrow">YOUR CHALLENGE STORY</span><h2 style="margin-top:8px;">ここから、あなたの物語が始まります。</h2><p>できた日だけではなく、迷った日、止まった日、もう一度動き出した日も、すべてが挑戦の一部です。</p><div class="grid"><div><h3>日記から始める</h3><p>特別な挑戦を登録していなくても、今日あったことを書けば、その一日を物語の材料として残せます。</p><a href="#journal-import"><button type="button">日記を残す</button></a></div><div><h3>挑戦する</h3><p>副業・勉強・運動・資格・転職・発信・起業など、具体的な挑戦も登録して続きの物語をつくれます。</p><a href="#challenger-registration"><button type="button">挑戦を登録する</button></a></div><div><h3>支援する</h3><p>挑戦している人の話を聞き、次の一歩を一緒に支えたい人・企業・団体。</p><a href="#supporter-registration"><button type="button">物語を支える</button></a></div></div></section>
 <section class="card daily-loop-shell" id="daily-loop">
   <div class="daily-loop-heading"><div><span class="eyebrow">FCL DAY LOOP</span><h2>今日を、次の一歩へ</h2><p>記録したあとに、「ほめる・発見する・次へ進む」をひとつの流れで返します。</p></div></div>
   <div id="fclDailyLoopContent"></div>
@@ -10,18 +10,18 @@
     <a href="/user.html" class="challenge-manage-btn">挑戦を管理</a>
   </div>
 </section>
-<section class="card" id="challenger-registration"><h2>1. 挑戦を登録する</h2><p>取り組んでいる挑戦を1つずつ登録できます。同じFCLユーザーID・メールアドレスの中に、複数の挑戦を持てます。</p><div class="grid"><input id="name" placeholder="名前"><input id="email" placeholder="メール"><input id="challenge" placeholder="挑戦テーマ"><input id="goal" placeholder="目標"></div><button id="registerBtn" onclick="register()">登録する</button><span id="participantStatus"></span><a id="participantUserPageLink" class="user-page-link" href="/user.html" hidden>マイページを開く</a><div class="muted" style="margin-top:8px;">FCLでは、挑戦者・支援者のどちらで参加しても同じユーザーIDを使います。</div></section>
+<section class="card" id="challenger-registration"><h2>1. 挑戦を登録する（任意）</h2><p>挑戦を登録すると、日々の記録を特定の挑戦にひもづけて管理できます。登録しなくても、日記から物語を始められます。同じFCLユーザーID・メールアドレスの中に、複数の挑戦を持てます。</p><div class="grid"><input id="name" placeholder="名前"><input id="email" placeholder="メール"><input id="challenge" placeholder="挑戦テーマ"><input id="goal" placeholder="目標"></div><button id="registerBtn" onclick="register()">登録する</button><span id="participantStatus"></span><a id="participantUserPageLink" class="user-page-link" href="/user.html" hidden>マイページを開く</a><div class="muted" style="margin-top:8px;">FCLでは、挑戦者・支援者のどちらで参加しても同じユーザーIDを使います。</div></section>
 <section class="card" id="journal-import">
-  <h2>FCLに日誌を残す</h2>
-  <p>ChatGPTで書いた<strong>【人生OSアップデート日誌】</strong>を、そのままFCLの原文データとして保存できます。保存した原文は、「物語をつくっていく」ための素材になります。</p>
+  <h2>日記を残して、物語をつくる</h2>
+  <p>ChatGPTの日誌や、今日あった出来事を、そのままFCLの原文データとして保存できます。挑戦登録がなくても、保存した日記は「あなたの物語」をつくる素材になります。</p>
   <div style="display:grid;gap:10px;">
     <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">日付 <input id="journalEntryDate" type="date"></label>
     <textarea id="journalEntryText" rows="10" placeholder="ChatGPTで作成した【人生OSアップデート日誌】をここに貼り付けてください"></textarea>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <button id="saveJournalEntryBtn" type="button" onclick="saveJournalEntry()">この日誌をFCLに保存</button>
+      <button id="saveJournalEntryBtn" type="button" onclick="saveJournalEntry()">この日記をFCLに保存</button><a href="/story.html" class="secondary-btn" style="display:inline-block;padding:11px 16px;border-radius:12px;text-decoration:none;">あなたの物語を見る</a>
       <span id="journalImportStatus" class="muted"></span>
     </div>
-    <small class="muted">同じ日付のChatGPT日誌をもう一度保存した場合は、その日の原文を更新します。</small>
+    <small class="muted">同じ日付の同じ種類の日記を保存した場合は、その日の原文を更新します。挑戦を登録している場合は、現在の挑戦にもひもづけられます。</small>
   </div>
 </section>
 <section class="card"><h2>2. 今日の1ページ</h2><p>今日の状態を記録すると、あなたの挑戦の物語に1ページが加わります。各問 1〜5点。高いほど「自分で選べている」状態。</p><div id="questions"></div><div class="daily-note-field" style="margin-top:14px;"><label for="dailyNote"><strong>今日ひとこと</strong> <span class="muted">（任意）</span></label><textarea id="dailyNote" rows="3" placeholder="今日、何があった？ できたこと・迷ったこと・止まったことなど自由に書いてください"></textarea><small class="muted">ここに書いた内容をAIが今日の分析と「あなたの日誌への返信」に使います。</small></div><button id="checkinBtn" onclick="checkin()">今日の1ページを記録する</button><div id="checkinCelebration" class="result-panel"></div><div id="analysis" class="result-panel"></div></section>
