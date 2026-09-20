@@ -329,6 +329,16 @@ async function match(){
       const requestDone=['requested','challenger_approved','supporter_approved','connected'].includes(status);
       const connected=status==='connected';
       const accessUrl=x.access_url||'';
+      const supporterResponseLabel = x.supporter_response === 'maybe'
+        ? '△ 少しなら支援できる'
+        : x.supporter_response === 'yes'
+          ? '○ 支援できる'
+          : x.supporter_response === 'no'
+            ? '× 今回は難しい'
+            : '';
+      const supporterResponseHint = x.supporter_response === 'maybe'
+        ? '<small class="muted">まずは負担の少ない形で、少し試しながら支援したいという回答です。</small>'
+        : '';
       let actionHtml='';
       if(connected && accessUrl){
         actionHtml=`<a href="${esc(accessUrl)}" class="secondary-btn">接続ページを開く</a><div class="support-outcome-box"><strong>支援後の結果</strong><p class="muted">どんな関わり方が次の一歩につながったか、FCLに残します。</p><select data-support-outcome-status="${esc(x.id)}"><option value="action_completed">行動につながった</option><option value="partial_progress">一部前進した</option><option value="no_progress">まだ前進しなかった</option><option value="restarted">再開につながった</option><option value="not_used">支援をまだ使っていない</option></select><textarea data-support-outcome-note="${esc(x.id)}" rows="2" placeholder="支援を受けて、何が起きた？"></textarea><button type="button" onclick="saveSupportOutcome('${esc(x.id)}','${esc(x.supporter_id || x.supporter?.id || '')}',this)">支援結果を保存</button><span data-support-outcome-status-text="${esc(x.id)}"></span></div>`;
@@ -338,7 +348,7 @@ async function match(){
       } else {
         actionHtml=`<button type="button" onclick="requestConnection('${esc(x.id)}', this)">この支援者に支援をお願いする</button>`;
       }
-      return `<div class="match"><strong>${esc(x.supporter?.organization_name||'支援者')}</strong> / ${esc(x.supporter?.supporter_name||'')}<div>マッチ度 ${esc(x.score)}点</div><p>${esc(x.reason)}</p><div data-match-status="${esc(x.id)}">状態: ${esc(status)}</div>${actionHtml}</div>`;
+      return `<div class="match"><strong>${esc(x.supporter?.organization_name||'支援者')}</strong> / ${esc(x.supporter?.supporter_name||'')}<div>マッチ度 ${esc(x.score)}点</div><p>${esc(x.reason)}</p><div data-match-status="${esc(x.id)}">状態: ${esc(status)}</div>${supporterResponseLabel ? `<div class="supporter-response-display" style="margin-top:8px;padding:10px 12px;border-radius:10px;background:#f8fafc;"><strong>支援者の回答：</strong>${esc(supporterResponseLabel)}${supporterResponseHint ? `<br>${supporterResponseHint}` : ''}</div>` : ''}${actionHtml}</div>`;
     }).join('')||'<p>現在候補がありません。支援パートナーを登録してください。</p>';
   });
 }
