@@ -467,7 +467,8 @@ async function poll() {
           '',
           'Future Challenge Lab'
         ].join('\n'),
-        resumeUrl
+        resumeUrl,
+        detailUrl: resumeUrl
       };
       const resend = await sendEmail({
         to: emailAddressFor(participant.email),
