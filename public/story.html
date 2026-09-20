@@ -282,29 +282,28 @@ async function load(providedId=''){
     id=String(session?.user?.id||'').trim();
     if(id) localStorage.setItem('fcl-user-id',id);
   }
-  if(!id){
-    throw new Error('FCLログインが確認できません。まずFCLトップページでログインしてください。');
-  }
+  if(!id) throw new Error('FCLログインが確認できません。まずFCLトップページでログインしてください。');
   const status=$('sessionStatus'); if(status) status.textContent='ログイン中のFCLユーザーの物語を取得しています。';
- try{
-  const response=await fetch('/api/story-user/'+encodeURIComponent(id));
+
+  const response=await fetch('/api/story-user/'+encodeURIComponent(id),{credentials:'same-origin'});
   const data=await response.json().catch(()=>({}));
   if(!response.ok) throw Error(data.error||'取得失敗');
   const participantRecords=Array.isArray(data.participants)?data.participants:[];
   const lifeStory=await fetchLifeStory(id).catch(()=>null);
   let storyPages=[];
   try{
-    const pageResponse=await fetch('/api/story-pages/generate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({participant_id:participantRecords[0]?.participant?.id||''})});
+    const pageResponse=await fetch('/api/story-pages/generate',{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',body:JSON.stringify({participant_id:participantRecords[0]?.participant?.id||''})});
     const pageData=await pageResponse.json().catch(()=>({}));
     if(pageResponse.ok&&Array.isArray(pageData.story_pages)) storyPages=pageData.story_pages;
   }catch(pageError){ console.warn('story pages generation unavailable',pageError); }
   const pageByDate=new Map(storyPages.map(page=>[String(page.page_date||''),page]));
   const records=participantRecords;
-  const participants=records.map(item=>item.participant||{}); 
+  const participants=records.map(item=>item.participant||{});
   const histories=records;
   if(!participants.length){
     $('story').innerHTML=lifeStory || '<div class="card empty">まだ日記も挑戦記録もありません。FCLに一日分を書き残すところから、あなたの物語を始められます。</div>';
-    $('story').hidden=false;return;
+    $('story').hidden=false;
+    return;
   }
 
   const lifeHtml=lifeStory || '';
@@ -324,11 +323,10 @@ async function load(providedId=''){
     connectedMatches.forEach(m=>addItem(map,dayKey(m.updated_at||m.created_at),{kind:'connection',data:m,at:m.updated_at||m.created_at}));
 
     const ordered=Array.from(map.entries()).sort((a,b)=>a[0]<b[0]?-1:1);
-    const totalDays=ordered.length;
     const allCheckinsAsc=[...checkins].sort((a,b)=>new Date(a.checked_in_at)-new Date(b.checked_in_at));
     const completedAsc=actions.filter(a=>a.completed).sort((a,b)=>new Date(a.completed_at||a.created_at)-new Date(b.completed_at||b.created_at));
     const firstCompletedKey=completedAsc[0]?dayKey(completedAsc[0].completed_at||completedAsc[0].created_at):'';
-    const daily=ordered.map(([key,items],idx)=>{
+    const daily=ordered.map(([key,items])=>{
       const d={
         key,items,checkins:items.filter(x=>x.kind==='checkin').map(x=>x.data).sort((a,b)=>new Date(a.checked_in_at)-new Date(b.checked_in_at)),
         actions:items.filter(x=>x.kind==='action').map(x=>x.data),
@@ -361,7 +359,6 @@ async function load(providedId=''){
     });
 
     daily.forEach(d=>{ const page=pageByDate.get(d.key); if(page?.lines) d.aiStoryLines=Array.isArray(page.lines)?page.lines:[]; });
-    // Page numbers follow check-in history when available; activity-only days receive the nearest page marker.
     let pageNo=1;
     const cards=daily.map((d,idx)=>{
       const lines=d.aiStoryLines?.length ? d.aiStoryLines : buildDailySummary(d);
@@ -375,9 +372,7 @@ async function load(providedId=''){
     }).join('');
 
     const startAt=p.created_at?new Date(p.created_at):null;
-    const days=startAt?Math.max(1,Math.floor((Date.now()-startAt.getTime())/86400000)+1):null;
     const completedActions=actions.filter(a=>a.completed).length;
-    const actionDays=new Set(actions.map(a=>dayKey(a.completed_at||a.created_at))).size;
     const storyStart = startAt ? dateOnly(startAt) : '開始日不明';
     const nowLabel = new Date().toLocaleDateString('ja-JP',{year:'numeric',month:'numeric',day:'numeric'});
     const storyText='この挑戦を始めたのは'+storyStart+'。そこから今日まで、'+checkins.length+'回、自分の現在地を記録しました。'+
@@ -391,7 +386,7 @@ async function load(providedId=''){
         '<p><strong>目標：</strong>'+esc(p.goal||'未登録')+'</p>'+
         '<div class="story-intro"><strong>このページは、あなた自身の振り返りです。</strong><br>できた日だけでなく、迷った日、止まった日、もう一度動き出した日も、ここでは全部「物語」として残ります。</div>'+
         '<div class="story-counts">'+
-          '<div class="story-count"><div class="muted">挑戦の日数</div><strong>'+(days??'-')+'日</strong></div>'+
+          '<div class="story-count"><div class="muted">挑戦の日数</div><strong>'+((startAt)?Math.max(1,Math.floor((Date.now()-startAt.getTime())/86400000)+1):'-')+'日</strong></div>'+
           '<div class="story-count"><div class="muted">現在地の記録</div><strong>'+checkins.length+'回</strong></div>'+
           '<div class="story-count"><div class="muted">実行した行動</div><strong>'+completedActions+'件</strong></div>'+
         '</div>'+
@@ -407,8 +402,13 @@ async function load(providedId=''){
     '</section>';
   }).join('');
   $('story').hidden=false;
- }catch(e){$('story').hidden=true;showError(e.message||'物語の取得に失敗しました。')}
- finally{$('load').disabled=false;$('load').textContent='物語を開く'}
+ }catch(e){
+   $('story').hidden=true;
+   showError(e.message||'物語の取得に失敗しました。');
+ }finally{
+   $('load').disabled=false;
+   $('load').textContent='物語を開く';
+ }
 }
 $('load').onclick=()=>load();
 const p=new URLSearchParams(location.search), initial=p.get('user_id')||'';
