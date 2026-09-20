@@ -16,7 +16,7 @@
   <p>日記や「今日あった出来事」を書くだけで、その人自身の物語をつくるデータにできます。そのままFCLの原文データとして保存できます。保存した原文は、「物語をつくっていく」ための素材になります。</p>
   <div style="display:grid;gap:10px;">
     <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">日付 <input id="journalEntryDate" type="date"></label>
-    <textarea id="journalEntryText" rows="10" placeholder="ChatGPTで作成した【人生OSアップデート日誌】をここに貼り付けてください"></textarea>
+    <textarea id="journalEntryText" rows="10" placeholder="ここに「今日あった出来事」を書いてください"></textarea>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
       <button id="saveJournalEntryBtn" type="button" onclick="saveJournalEntry()">この日記をFCLに保存</button><a href="/story.html" class="secondary-btn" style="display:inline-block;padding:11px 16px;border-radius:12px;text-decoration:none;">あなたの物語を見る</a>
       <span id="journalImportStatus" class="muted"></span>
