@@ -2294,7 +2294,7 @@ app.post('/api/checkins',async(req,res)=>{
     const checkinJournalText=String(req.body?.checkin_text||'').trim();
     if(checkinJournalText){
       try{
-        await saveJournalEntry({participant_id,user_id:(await select('participants',{id:participant_id}))[0]?.user_id||null,entry_date:todayJstDate(),source:'fcl',raw_text:checkinJournalText,metadata:{imported_via:'checkin',checkin_id:checkin.id}});
+        await saveJournalEntry({participant_id,entry_date:todayJstDate(),source:'fcl',raw_text:checkinJournalText,metadata:{imported_via:'checkin',checkin_id:checkin.id}});
       }catch(journalError){
         console.warn('[journal-entries] FCL note save failed',journalError?.message||journalError);
       }
