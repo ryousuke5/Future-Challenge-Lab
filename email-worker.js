@@ -44,6 +44,11 @@ function normalizeEmail(value) {
   const email = String(value || '').trim();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
 }
+function isTestEmail(value) {
+  const email = normalizeEmail(value);
+  const domain = email.split('@').pop() || '';
+  return domain === 'example.com' || domain === 'test.com';
+}
 
 function createAccessToken(matchId, role) {
   if (!serviceRoleKey) return '';
