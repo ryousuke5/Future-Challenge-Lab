@@ -368,11 +368,10 @@ async function poll() {
         .order('created_at', { ascending: false })
         .limit(5000),
       supabase
-        .from('connection_events')
-        .select('participant_id,note,created_at')
-        .eq('event_type', 'reengagement_email_sent')
+        .from('model_learning_events')
+        .select('participant_id,features,label,created_at')
         .gte('created_at', new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString())
-        .limit(1000)
+        .limit(2000)
     ]);
     if (participantResult.error) throw participantResult.error;
     if (checkinResult.error) throw checkinResult.error;
@@ -395,8 +394,10 @@ async function poll() {
     const sentReengagement = new Set();
     for (const row of (reengagementResult.data || [])) {
       try {
-        const note = JSON.parse(row.note || '{}');
-        const key = note.dedupe_key;
+        const features = row.features || {};
+        const label = row.label || {};
+        if (features.action_type !== 'reengagement_email_sent') continue;
+        const key = label.dedupe_key || features.dedupe_key;
         if (key) sentReengagement.add(key);
       } catch {}
     }
@@ -433,7 +434,7 @@ async function poll() {
         trigger = 'high_risk';
         dedupeKey = `high_risk:${participant.id}:${checkin.id}`;
         triggerMessage = '今日の記録から、少し立ち止まりやすいタイミングが見えています。大きく進めなくても大丈夫です。今の状態を確認して、次の一歩を小さく整理してみませんか。';
-      } else if (inactivityDays >= 3 && inactivityDays < 14) {
+      } else if ((checkin || action) && inactivityDays >= 3 && inactivityDays < 14) {
         trigger = 'inactivity';
         const activityDay = new Date(latestAt.getTime()).toISOString().slice(0, 10);
         dedupeKey = `inactivity:${participant.id}:${activityDay}`;
@@ -475,18 +476,19 @@ async function poll() {
         email,
         idempotencyKey: `fcl/reengagement/${dedupeKey}`
       });
-      await supabase.from('connection_events').insert({
+      await supabase.from('model_learning_events').insert({
         participant_id: participant.id,
-        supporter_id: null,
-        match_id: null,
-        event_type: 'reengagement_email_sent',
-        note: JSON.stringify({
+        features: {
+          action_type: 'reengagement_email_sent',
           trigger,
           dedupe_key: dedupeKey,
-          recipient: participant.email,
+          recipient: participant.email
+        },
+        label: {
+          email_type: 'reengagement',
           subject: email.subject,
           resend_id: resend?.id || null
-        }),
+        },
         created_at: new Date().toISOString()
       });
       sentReengagement.add(dedupeKey);
