@@ -3017,6 +3017,17 @@ app.post('/api/matches',async(req,res)=>{
     const personalLearning=buildPersonalLearningProfile({events:personalEvents});
     personalLearning.support_method_events=personalEvents.filter(event=>event.features?.action_type==='support_method_outcome');
     const supporterOutcomes=await select('supporter_outcomes');
+    const supporterResponseEvents=(await select('connection_events'))
+      .filter(event=>event.event_type==='supporter_response' && event.match_id)
+      .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
+    const latestSupporterResponseByMatch=new Map();
+    for(const event of supporterResponseEvents){
+      if(!latestSupporterResponseByMatch.has(event.match_id)){
+        let response='supporter_response_yes';
+        try{ response=JSON.parse(String(event.note||'{}')).can_support || response; }catch{}
+        latestSupporterResponseByMatch.set(event.match_id,{response,created_at:event.created_at||null});
+      }
+    }
     const ranked=ss.map(s=>{
       const adaptiveSupportFit=buildAdaptiveSupportFit({participant:ps||{},supporter:s,last,pattern:personalLearning,supporterOutcomes});
       return {s,...matchScore(ps||{},s,last,adaptiveSupportFit)};
@@ -3028,6 +3039,7 @@ app.post('/api/matches',async(req,res)=>{
       if (existing) {
         const status = effectiveMatchStatus(existing);
         const token = status === 'connected' ? createAccessToken(existing.id, 'challenger') : '';
+        const supporter_response = latestSupporterResponseByMatch.get(existing.id)?.response || null;
         rows.push({
           ...existing,
           supporter: x.s,
@@ -3035,6 +3047,7 @@ app.post('/api/matches',async(req,res)=>{
           reason: x.reason,
           adaptive_support_fit: x.adaptive_support_fit || null,
           status,
+          supporter_response,
           access_url: token ? `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(existing.id)}&token=${encodeURIComponent(token)}` : null
         });
         continue;
@@ -3062,6 +3075,7 @@ app.post('/api/matches',async(req,res)=>{
         supporter: x.s,
         match_score: Number(record.score),
         status,
+        supporter_response: null,
         access_url: token ? `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(record.id)}&token=${encodeURIComponent(token)}` : null
       });
     }
