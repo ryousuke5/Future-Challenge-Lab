@@ -204,7 +204,7 @@ test('support execution and outcome retrieval', { concurrency: false }, async ()
   assert.equal(execution.status, 'saved');
   assert.ok(execution.assignment || execution.execution_event);
 
-  const outcome = await api(`/api/supporter/outcomes/${executionSupporterId}`, undefined, 'GET');
+  const outcome = await api(`/api/supporter/outcomes/${executionSupporter.id}`, undefined, 'GET');
   assert.ok(Array.isArray(outcome.outcomes));
   assert.ok(typeof outcome.summary.observed_execution_rate === 'number');
 });
