@@ -3773,6 +3773,7 @@ async function generateJournalReplyWithOpenAI({ participant, checkinText, analys
 app.post('/api/journal-replies/generate', async (req, res) => {
   try {
     const { participant_id, checkin_id, source_analysis_event_id, checkin_text = '', analysis, decision, outcome } = req.body || {};
+    const checkinText = String(checkin_text || '').trim();
     if(!participant_id || !source_analysis_event_id) return res.status(400).json({error:'participant_id and source_analysis_event_id are required'});
 
     const participant=(await select('participants',{id:participant_id}))[0];
