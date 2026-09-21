@@ -56,7 +56,13 @@
           source:'chatgpt',
           raw_text:rawText
         });
-        if(status) status.textContent=' 保存しました。'+(data?.entry?.entry_date || dateInput?.value || todayJst())+' の日誌をFCLの物語データに追加しました。'+(data?.story_scope==='life'?' 挑戦登録はまだ必要ありません。':'');
+        if(status) status.textContent=' 保存しました。'+(data?.entry?.entry_date || dateInput?.value || todayJst())+' の日誌をFCLの物語データに追加しました。'+(data?.story_scope==='life'?' 挑戦登録はまだ必要ありません。':'')+(data?.journal_reply?.reply_text?' 「あなたの日誌への返信」も更新しました。':'');
+        if(data?.journal_reply?.reply_text && typeof window.renderJournalReplyText==='function'){
+          window.renderJournalReplyText(data.journal_reply.reply_text);
+        }
+        if(typeof window.markJournalReplySeen==='function' && data?.journal_reply?.reply_text){
+          window.markJournalReplySeen(participantId);
+        }
         if(typeof window.refreshFclDailyLoop==='function') window.refreshFclDailyLoop();
         if(textInput) textInput.value='';
       });
