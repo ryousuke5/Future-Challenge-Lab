@@ -111,21 +111,27 @@
   }
 
   function buildDiscovery(history, coreHistory=null){
+    const today=todayKey();
     const checkins = [...(history.checkins || [])]
       .sort((a,b) => new Date(a.checked_in_at||0) - new Date(b.checked_in_at||0));
-    const latest = checkins[checkins.length-1];
-    const previous = checkins[checkins.length-2];
-    const continuation=coreHistory?.analysis?.continuation_risk||null;
+    const todayCheckins = checkins.filter(row => dateKey(row.checked_in_at) === today);
+    const latestToday = todayCheckins[todayCheckins.length-1];
+    const latestIndex = latestToday ? checkins.findIndex(row => row.id===latestToday.id || row.checked_in_at===latestToday.checked_in_at) : -1;
+    const previous = latestIndex>0 ? checkins[latestIndex-1] : null;
+    const todayAnalysis = coreHistory?.analysis_event_id &&
+      dateKey(coreHistory?.checkin_checked_in_at || coreHistory?.analysis?.created_at || coreHistory?.journal_reply?.reply_date) === today
+      ? coreHistory?.analysis : null;
+    const continuation=todayAnalysis?.continuation_risk||null;
 
     if(continuation?.reasons?.length) return 'AIが今日見つけた「続けにくさ」の手がかり：' + continuation.reasons.slice(0,2).join(' / ');
 
-    if(!latest){
-      return '今日の記録を1ページ残すと、これからの自分の変化をFCLで見つけられるようになります。';
+    if(!latestToday){
+      return '今日はまだ記録前です。今の自分を1ページ残すと、今日の変化や気づきをFCLで見つけられるようになります。';
     }
 
     if(previous){
-      const autonomyDelta = Number(latest.autonomy_total ?? 0) - Number(previous.autonomy_total ?? 0);
-      const riskDelta = Number(previous.risk_score ?? 0) - Number(latest.risk_score ?? 0);
+      const autonomyDelta = Number(latestToday.autonomy_total ?? 0) - Number(previous.autonomy_total ?? 0);
+      const riskDelta = Number(previous.risk_score ?? 0) - Number(latestToday.risk_score ?? 0);
       if(autonomyDelta > 0){
         return `前回より自己決定度が +${autonomyDelta}点。今日は「自分で選べている感覚」が少し強くなっています。`;
       }
@@ -135,23 +141,27 @@
       if(autonomyDelta < 0){
         return `前回より自己決定度は ${Math.abs(autonomyDelta)}点下がっています。悪い・良いで決めつけず、今の自分の変化を知る材料にできます。`;
       }
-      return '前回と大きな数値差はありません。変化が小さい日も、記録が積み重なるほど自分のパターンが見えやすくなります。';
+      return '前回と大きな数値差はありません。今日も現在地を記録したことが、次のページの材料になります。';
     }
 
-    return '今回が最初の記録です。ここから積み重ねることで、あなた自身の変化が見えてきます。';
+    return '今日が最初の記録です。ここから積み重ねることで、あなた自身の変化が見えてきます。';
   }
 
   function buildNextStep(history, coreHistory=null){
-    const coreNextAction=coreHistory?.analysis?.next_action;
+    const today=todayKey();
+    const todayEvents=(history.events || []).filter(event => dateKey(event.created_at) === today);
+    const todayActions=(history.actions || []).filter(row => dateKey(row.created_at || row.completed_at) === today);
+    const todayAnalysisDate = coreHistory?.checkin_checked_in_at ? dateKey(coreHistory.checkin_checked_in_at) : '';
+    const coreNextAction=(todayAnalysisDate===today) ? coreHistory?.analysis?.next_action : '';
     if(coreNextAction) return coreNextAction;
 
-    const outcome = latestCoreEvent(history.events, 'core_outcome');
-    const decision = latestCoreEvent(history.events, 'core_decision');
+    const outcome = [...todayEvents].reverse().find(event => (event.features?.action_type||event.label) === 'core_outcome');
+    const decision = [...todayEvents].reverse().find(event => (event.features?.action_type||event.label) === 'core_decision');
     const nextAction = outcome?.features?.next_action || decision?.features?.next_action || '';
 
     if(nextAction) return nextAction;
 
-    const latestAction = latestByCreated(history.actions || []);
+    const latestAction = latestByCreated(todayActions);
     if(latestAction?.action_text && !latestAction.completed){
       return `「${String(latestAction.action_text).slice(0,80)}」を、明日はもっと小さくして再開する。`;
     }
