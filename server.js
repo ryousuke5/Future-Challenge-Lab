@@ -19,6 +19,7 @@ app.use(express.static('public'));
 // Register token-protected match message routes before the generic /api auth guard.
 // The email link token is the authorization mechanism for the connection thread.
 registerMatchMessageRoutes(app);
+app.__fclMatchMessagesRegistered = true;
 
 const port = process.env.PORT || 3000;
 const hasSupabase = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
