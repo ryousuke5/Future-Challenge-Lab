@@ -1331,7 +1331,12 @@ async function refreshJournalReplyForEntry({ participant_id, checkin_id = null, 
   const events=await select('model_learning_events',{participant_id});
   const sameDayEvents=events
     .filter(event=>String(event.features?.action_type || event.label || '')==='core_analysis')
-    .filter(event=>String(event.created_at||'').slice(0,10)===replyDate)
+    .filter(event=>{
+      const eventDate=event.created_at
+        ? new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo'}).format(new Date(event.created_at))
+        : '';
+      return eventDate===replyDate;
+    })
     .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
   let analysisEvent=sameDayEvents[0] || null;
   let analysis=analysisEvent?.features?.result || analysisEvent?.features || {};
