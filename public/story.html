@@ -39,10 +39,13 @@ const dateTime=v=>v?new Date(v).toLocaleString('ja-JP',{year:'numeric',month:'nu
 function showError(m){$('error').textContent=m;$('error').hidden=false}
 
 function dayKey(v){
+  const raw=String(v??'').trim();
+  // reply_date / entry_date は YYYY-MM-DD の保存値をそのまま使う。
+  // タイムスタンプはFCL全体の基準である日本時間（JST）にそろえる。
+  if(/^\\d{4}-\\d{2}-\\d{2}$/.test(raw)) return raw;
   const d=new Date(v||0);
   if(Number.isNaN(d.getTime())) return 'unknown';
-  const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');
-  return y+'-'+m+'-'+day;
+  return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo'}).format(d);
 }
 function addItem(map,key,item){
   if(!map.has(key)) map.set(key,[]);
@@ -263,9 +266,11 @@ async function fetchLifeStory(userId){
 
 function renderDetails(day){
   const rows=[];
-  if(day.journalReply?.length){
-    rows.push('<div class="journal-history"><div class="journal-history-heading"><span class="section-tag">FCL RESPONSE</span><h4>あなたの日誌への返信</h4></div><div class="journal-history-body">'+day.journalReply.map(p=>'<p>'+esc(p)+'</p>').join('')+'</div></div>');
-  }
+  // 「この日の詳細を見る」では、保存済みの「あなたの日誌への返信」を必ず先頭に表示する。
+  // 保存済み返信がある場合は再生成せず、そのままの文章を表示する。
+  const savedReply=Array.isArray(day.journalReply)?day.journalReply.map(x=>String(x||'').trim()).filter(Boolean):[];
+  const replyParagraphs=savedReply.length?savedReply:['この日の「あなたの日誌への返信」は、まだ保存されていません。'];
+  rows.push('<div class="journal-history"><div class="journal-history-heading"><span class="section-tag">FCL RESPONSE</span><h4>あなたの日誌への返信</h4></div><div class="journal-history-body">'+replyParagraphs.map(p=>'<p>'+esc(p)+'</p>').join('')+'</div></div>');
   day.checkins.forEach((c,i)=>rows.push('<div class="detail-row"><strong>チェックイン '+(i+1)+'回目</strong><br>自己決定度：'+esc(c.autonomy_total||0)+' / 25　現在の状態：'+esc(c.risk_level||'確認中')+'<br><span class="muted">'+dateTime(c.checked_in_at)+'</span></div>'));
   day.actions.forEach(a=>rows.push('<div class="detail-row"><strong>'+(a.completed?'実行した一歩':'記録した一歩')+'</strong><br>'+esc(a.action_text||'行動記録')+(a.result_note?'<br>結果：'+esc(a.result_note):'')+'<br><span class="muted">'+dateTime(a.completed_at||a.created_at)+'</span></div>'));
   day.events.forEach(e=>{
