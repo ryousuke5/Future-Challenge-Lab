@@ -113,6 +113,7 @@ async function restoreParticipantHistory(participantId, userId){
   const nextAction=history.decision?.next_action || history.analysis?.label?.next_action;
   if(nextAction) document.getElementById('coreNextAction').value=nextAction;
   if(history.outcome?.outcome_status) document.getElementById('coreOutcomeStatus').value=history.outcome.outcome_status;
+  await window.refreshJournalReply?.();
   window.refreshFclDailyLoop?.();
   return true;
 }
@@ -124,6 +125,7 @@ async function selectCurrentChallenge(participantId){
 
   try{
     await restoreParticipantHistory(participantId,userId);
+    await window.refreshJournalReply?.();
     const selector=document.getElementById('challengeSelector');
     if(selector) selector.value=participantId;
   }catch(error){
@@ -195,6 +197,7 @@ async function restoreCoreSession(){
     if(!selectedId && challenges.length===0){
       localStorage.removeItem('fcl-participant-id');
     }
+    await window.refreshJournalReply?.();
     window.refreshFclDailyLoop?.();
   }
 }
@@ -297,7 +300,14 @@ try { await withLoadingUI(document.getElementById('checkinBtn'), 'AI分析中で
       document.getElementById('coreCheckinText').value=dailyNote;
       renderCoreResult(coreData);renderInsight(coreData);renderSolutions(coreData);
       document.getElementById('coreNextAction').value=coreData?.result?.next_action||'';
-      if(coreData?.journal_reply?.reply_text && typeof window.renderJournalReplyText==='function'){window.renderJournalReplyText(coreData.journal_reply.reply_text);window.markJournalReplySeen?.(participant.id);}
+      if(coreData?.journal_reply?.reply_text && typeof window.renderJournalReplyText==='function'){
+    const alreadyDoneToday=coreData.journal_reply_source==='saved_today';
+    window.renderJournalReplyText(
+      coreData.journal_reply.reply_text,
+      alreadyDoneToday ? '今日はすでに「あなたの日誌への返信」は済んでいます。' : ''
+    );
+    if(!alreadyDoneToday) window.markJournalReplySeen?.(participant.id);
+  }
     }catch(coreError){console.warn('unified daily AI analysis failed',coreError);showUiError(document.getElementById('coreInsight'),'今日のAI深掘り分析は後から「AIで今日の状態を分析する」で再実行できます。');}
   }
 }); } catch(error) { showUiError(document.getElementById('decisionBanner'),'分析に失敗しました。もう一度お試しください。'); }
