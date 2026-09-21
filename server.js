@@ -2065,13 +2065,14 @@ app.get('/api/story-user/:user_id', async (req,res)=>{
     const id=currentParticipant.id;
 
     if(db('checkins') && db('action_results') && db('model_learning_events') && db('supporter_matches')){
-      const [checkinsResult,actionsResult,eventsResult,matchesResult]=await Promise.all([
+      const [checkinsResult,actionsResult,eventsResult,matchesResult,journalRepliesResult]=await Promise.all([
         db('checkins').select('*').eq('participant_id',id),
         db('action_results').select('*').eq('participant_id',id),
         db('model_learning_events').select('*').eq('participant_id',id),
-        db('supporter_matches').select('*').eq('participant_id',id)
+        db('supporter_matches').select('*').eq('participant_id',id),
+        db('journal_replies').select('*').eq('participant_id',id).order('reply_date',{ascending:true}).order('created_at',{ascending:true})
       ]);
-      for(const result of [checkinsResult,actionsResult,eventsResult,matchesResult]){
+      for(const result of [checkinsResult,actionsResult,eventsResult,matchesResult,journalRepliesResult]){
         if(result?.error) throw result.error;
       }
 
@@ -2088,7 +2089,8 @@ app.get('/api/story-user/:user_id', async (req,res)=>{
           checkins:(checkinsResult.data||[]).sort((a,b)=>new Date(a.checked_in_at||0)-new Date(b.checked_in_at||0)),
           actions:(actionsResult.data||[]).sort((a,b)=>new Date(a.completed_at||a.created_at||0)-new Date(b.completed_at||b.created_at||0)),
           events:(eventsResult.data||[]).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0)),
-          matches:(matchesResult.data||[]).map(hydrateMatchApprovalState).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0))
+          matches:(matchesResult.data||[]).map(hydrateMatchApprovalState).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0)),
+          journal_replies:(journalRepliesResult.data||[]).sort((a,b)=>String(a.reply_date||'').localeCompare(String(b.reply_date||'')) || new Date(a.created_at||0)-new Date(b.created_at||0))
         }],
         server_ms:Date.now()-startedAt,
         historical_challenges_available:Math.max(0,participants.length-1)
@@ -2108,7 +2110,8 @@ app.get('/api/story-user/:user_id', async (req,res)=>{
         checkins:(await select('checkins',{participant_id:id})).sort((a,b)=>new Date(a.checked_in_at||0)-new Date(b.checked_in_at||0)),
         actions:(await select('action_results',{participant_id:id})).sort((a,b)=>new Date(a.completed_at||a.created_at||0)-new Date(b.completed_at||b.created_at||0)),
         events:(await select('model_learning_events',{participant_id:id})).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0)),
-        matches:(await select('supporter_matches',{participant_id:id})).map(hydrateMatchApprovalState).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0))
+        matches:(await select('supporter_matches',{participant_id:id})).map(hydrateMatchApprovalState).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0)),
+        journal_replies:(await select('journal_replies',{participant_id:id})).sort((a,b)=>String(a.reply_date||'').localeCompare(String(b.reply_date||'')) || new Date(a.created_at||0)-new Date(b.created_at||0))
       }],
       server_ms:Date.now()-startedAt,
       historical_challenges_available:Math.max(0,participants.length-1)
