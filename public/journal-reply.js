@@ -174,6 +174,9 @@ async function saveExactJournalReply(history, replyText){
 }
 
 async function loadJournalReply(){
+  const panel=document.getElementById('journalReply');
+  // 挑戦を切り替えた直後に、前の挑戦の返信が残らないようにする。
+  if(panel) panel.innerHTML='';
   const participantId = localStorage.getItem('fcl-participant-id');
   if(!participantId) return;
   try {
@@ -262,3 +265,4 @@ if(document.readyState !== 'loading'){
 window.renderJournalReplyText = renderJournalReplyText;
 window.markJournalReplySeen = markJournalReplySeen;
 window.hasSeenJournalReply = hasSeenJournalReply;
+window.refreshJournalReply = loadJournalReply;
