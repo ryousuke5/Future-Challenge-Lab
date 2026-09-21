@@ -321,7 +321,7 @@ async function load(providedId=''){
 
   $('story').innerHTML=participants.map((p,i)=>{
     const h=histories[i]||{};
-    const checkins=h.checkins||[], actions=h.actions||[], events=h.events||[], matches=h.matches||[];
+    const checkins=h.checkins||[], actions=h.actions||[], events=h.events||[], matches=h.matches||[], journalReplies=h.journal_replies||[];
     const connectedMatches=matches.filter(m=>m.status==='connected');
     const map=new Map();
 
@@ -333,6 +333,10 @@ async function load(providedId=''){
       if(['core_analysis','core_decision','core_outcome'].includes(type)) addItem(map,dayKey(e.created_at),{kind:type,data:e,at:e.created_at});
     });
     connectedMatches.forEach(m=>addItem(map,dayKey(m.updated_at||m.created_at),{kind:'connection',data:m,at:m.updated_at||m.created_at}));
+    journalReplies.forEach(r=>{
+      const key=String(r.reply_date||dayKey(r.created_at)||'');
+      if(key) addItem(map,key,{kind:'journal_reply',data:r,at:r.created_at||r.reply_date});
+    });
 
     const ordered=Array.from(map.entries()).sort((a,b)=>a[0]<b[0]?-1:1);
     const allCheckinsAsc=[...checkins].sort((a,b)=>new Date(a.checked_in_at)-new Date(b.checked_in_at));
@@ -344,6 +348,7 @@ async function load(providedId=''){
         actions:items.filter(x=>x.kind==='action').map(x=>x.data),
         events:items.filter(x=>['core_analysis','core_decision','core_outcome'].includes(x.kind)).map(x=>x.data),
         connections:items.filter(x=>x.kind==='connection').map(x=>x.data),
+        journalReplies:items.filter(x=>x.kind==='journal_reply').map(x=>x.data),
         isStart:items.some(x=>x.kind==='start'),restarted:false,newConnection:false,firstCompletedAction:false,autonomyRise:false,autonomyDrop:false,journalReply:[],
         challenge:p.challenge||'挑戦'
       };
@@ -362,7 +367,15 @@ async function load(providedId=''){
       if(d.actions.some(a=>a.completed) && key===firstCompletedKey) d.firstCompletedAction=true;
       const analysisEvent=d.events.find(e=>(e.features?.action_type||e.label)==='core_analysis');
       const outcomeEvent=d.events.find(e=>(e.features?.action_type||e.label)==='core_outcome');
-      if(analysisEvent){
+      if(d.journalReplies.length){
+        const saved=d.journalReplies
+          .map(row=>String(row.reply_text||'').trim())
+          .filter(Boolean)
+          .join('\n\n');
+        d.journalReply=saved
+          ? saved.split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean)
+          : [];
+      }else if(analysisEvent){
         const analysis=analysisEvent.features?.result||analysisEvent.features||{};
         const status=outcomeEvent?.features?.outcome_status||outcomeEvent?.features?.result?.outcome_status||'';
         d.journalReply=buildJournalResponse(analysis,status);
