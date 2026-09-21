@@ -68,8 +68,14 @@ function registerWithStableParticipantId(req, res, fallbackHandlers) {
         if (actionError) throw actionError;
 
         const history = new Map(ids.map(id => [id, { checkins: 0, actions: 0 }]));
-        for (const row of checkinRows || []) history.get(row.participant_id)?.checkins++;
-        for (const row of actionRows || []) history.get(row.participant_id)?.actions++;
+        for (const row of checkinRows || []) {
+          const entry = history.get(row.participant_id);
+          if (entry) entry.checkins += 1;
+        }
+        for (const row of actionRows || []) {
+          const entry = history.get(row.participant_id);
+          if (entry) entry.actions += 1;
+        }
 
         const canonical = [...duplicates].sort((a, b) => {
           const ac = history.get(a.id) || { checkins: 0, actions: 0 };
