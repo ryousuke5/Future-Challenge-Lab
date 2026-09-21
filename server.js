@@ -1320,6 +1320,69 @@ async function generateLifeStoryPagesWithOpenAI({user,entries=[]}={}){
     return {};
   }
 }
+async function refreshJournalReplyForEntry({ participant_id, checkin_id = null, entry_date = todayJstDate(), checkin_text = '' } = {}){
+  if(!participant_id) return null;
+  const participant=(await select('participants',{id:participant_id}))[0];
+  if(!participant) return null;
+  const replyDate=String(entry_date || todayJstDate()).slice(0,10);
+  const journalText=String(checkin_text || '').trim();
+  if(!journalText) return null;
+
+  const events=await select('model_learning_events',{participant_id});
+  const sameDayEvents=events
+    .filter(event=>String(event.features?.action_type || event.label || '')==='core_analysis')
+    .filter(event=>String(event.created_at||'').slice(0,10)===replyDate)
+    .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
+  let analysisEvent=sameDayEvents[0] || null;
+  let analysis=analysisEvent?.features?.result || analysisEvent?.features || {};
+  if(!analysisEvent){
+    const core=await runFclAiCore({
+      participant_id,
+      checkin_text:journalText,
+      participant_profile:{goal:participant.goal||'',barrier:''},
+      current_goal:participant.goal||'',
+      answers:{}
+    });
+    analysisEvent=core?.analysis_event_id ? (await select('model_learning_events',{id:core.analysis_event_id}))[0] : null;
+    analysis=core || {};
+  }
+  if(!analysisEvent?.id) throw new Error('analysis event could not be created');
+
+  const aiReply=await generateJournalReplyWithOpenAI({
+    participant,
+    checkinText:journalText,
+    analysis,
+    decision:null,
+    outcome:null
+  });
+  const replyText=aiReply || [
+    '今日の日誌を読みました。',
+    '「'+journalText.slice(0,180)+'」という今日の記録から、今の状況が伝わってきました。',
+    analysis?.insight || '今日の出来事を言葉にして残せたこと自体が、次の一歩を考える材料になっています。'
+  ].join('\\n\\n');
+
+  const row={
+    participant_id,
+    checkin_id:checkin_id || null,
+    source_analysis_event_id:analysisEvent.id,
+    reply_text:replyText,
+    reply_version:aiReply ? 'v2-ai-journal' : 'v2-ai-journal-fallback',
+    reply_date:replyDate,
+    displayed_at:new Date().toISOString()
+  };
+  const q=db('journal_replies');
+  if(q){
+    const {data,error}=await q.upsert(row,{onConflict:'participant_id,reply_date'}).select().maybeSingle();
+    if(error) throw error;
+    return data;
+  }
+  const existing=memory.journal_replies.find(item=>item.participant_id===participant_id && item.reply_date===replyDate);
+  if(existing){ Object.assign(existing,row); return existing; }
+  const stored={id:uuid(),created_at:new Date().toISOString(),...row};
+  memory.journal_replies.push(stored);
+  return stored;
+}
+
 async function saveJournalReply({ participant_id, checkin_id = null, source_analysis_event_id, reply_text, reply_version = 'v1', reply_date = todayJstDate() }){
   if(!participant_id) throw new Error('invalid participant_id');
   if(!source_analysis_event_id) throw new Error('invalid source_analysis_event_id');
@@ -2250,8 +2313,19 @@ app.post('/api/journal-entries',async(req,res)=>{
     if(!userId)return res.status(401).json({error:'FCLログインが必要です。'});
     if(!raw_text)return res.status(400).json({error:'日誌本文を入力してください。'});
     if(raw_text.length>20000)return res.status(400).json({error:'日誌は20000文字以内で保存してください。'});
+
     const entry=await saveJournalEntry({participant_id,user_id:userId,entry_date,source,raw_text,metadata:{imported_via:'fcl-journal-import'}});
-    res.json({ok:true,entry,updated:true,story_scope:participant_id?'challenge':'life'});
+    let journal_reply=null;
+    let journal_reply_source='none';
+    if(participant_id){
+      try{
+        journal_reply=await refreshJournalReplyForEntry({participant_id,entry_date,checkin_text:raw_text});
+        journal_reply_source=journal_reply ? 'journal_entry_refresh' : 'none';
+      }catch(replyError){
+        console.error('[journal-reply] journal entry refresh failed',replyError?.message||replyError);
+      }
+    }
+    res.json({ok:true,entry,updated:true,story_scope:participant_id?'challenge':'life',journal_reply,journal_reply_source});
   }catch(e){
     console.error('journal entry save error',e);
     res.status(500).json({error:e.message||'journal entry save failed'});
