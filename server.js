@@ -1347,7 +1347,7 @@ async function saveJournalReply({ participant_id, checkin_id = null, source_anal
   const q = db('journal_replies');
   if(q){
     const { data, error } = await q
-      .upsert(row, { onConflict: 'participant_id,source_analysis_event_id', ignoreDuplicates: true })
+      .upsert(row, { onConflict: 'participant_id,reply_date', ignoreDuplicates: true })
       .select()
       .maybeSingle();
     if(error) throw error;
@@ -1355,14 +1355,14 @@ async function saveJournalReply({ participant_id, checkin_id = null, source_anal
     const { data: existing, error: existingError } = await q
       .select('*')
       .eq('participant_id', participant_id)
-      .eq('source_analysis_event_id', source_analysis_event_id)
+      .eq('reply_date', row.reply_date)
       .maybeSingle();
     if(existingError) throw existingError;
     return existing;
   }
 
   const existing = memory.journal_replies.find(
-    item => item.participant_id === participant_id && item.source_analysis_event_id === source_analysis_event_id
+    item => item.participant_id === participant_id && item.reply_date === (reply_date || todayJstDate())
   );
   if(existing) return existing;
 
