@@ -3233,6 +3233,10 @@ app.get('/api/matches/:id/detail', async (req, res) => {
       },
       priority,
       current_state: recentCheckin ? { risk_score: recentCheckin.risk_score, autonomy_total: recentCheckin.autonomy_total, risk_level: recentCheckin.risk_level, summary: recentCheckin.analysis?.summary || '現在の観測を確認中' } : null,
+      // When the user is authenticated by FCL session, hand the scoped match token
+      // back to the browser so the message API can use the same authorization path.
+      viewer_role: viewerRole,
+      access_token: sessionAccessToken || (tokenAuth ? req.query.token : ''),
       email_redirect_url: accessUrl
     };
     res.json(detail);
