@@ -4,7 +4,7 @@ import express from 'express';
 import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
 import { pathToFileURL } from 'node:url';
-import { createAccessToken } from './match-messages.js';
+import { createAccessToken, registerMatchMessageRoutes } from './match-messages.js';
 
 const app = express();
 app.use(cors());
@@ -15,6 +15,10 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.static('public'));
+
+// Register token-protected match message routes before the generic /api auth guard.
+// The email link token is the authorization mechanism for the connection thread.
+registerMatchMessageRoutes(app);
 
 const port = process.env.PORT || 3000;
 const hasSupabase = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -321,8 +325,11 @@ async function optimizeAction({participant_id, checkin}){
 
 async function insert(table, row){
   const q=db(table); if(q){
-    const compatibleRow = stripUnsupportedColumns(table, row);
+    const compatibleRow = { ...row };
     if (table === 'supporter_matches') {
+      // The production DB may still use legacy status values (suggested/requested)
+      // while the approval timestamps/meta columns persist the real state.
+      compatibleRow.status = toCompatibleMatchStatus(row.status || 'pending');
       writeSupporterApprovalState(row.id, {
         approvals: row.meta?.approvals || {},
         meta: row.meta || {},
@@ -367,7 +374,12 @@ async function select(table, filters={}){
 }
 async function update(table,id,patch){
   const q=db(table); if(q){
-    const compatiblePatch = stripUnsupportedColumns(table, patch);
+    const compatiblePatch = { ...patch };
+    if (table === 'supporter_matches' && Object.prototype.hasOwnProperty.call(compatiblePatch, 'status')) {
+      // Keep compatibility with the current production status CHECK while
+      // persisting approval timestamps/meta in the real DB columns.
+      compatiblePatch.status = toCompatibleMatchStatus(patch.status || 'pending');
+    }
     if (table === 'supporter_matches') {
       writeSupporterApprovalState(id, {
         approvals: patch?.meta?.approvals || readSupporterApprovalState(id).approvals || {},
@@ -3090,7 +3102,7 @@ app.post('/api/matches',async(req,res)=>{
     const allMatches = (await select('supporter_matches')).filter(m => !['connected','declined','expired'].includes(effectiveMatchStatus(m)));
     const activeCounts = new Map();
     for (const match of allMatches) {
-      if (['connected','challenger_approved','supporter_approved'].includes(match.status)) {
+      if (['connected','challenger_approved','supporter_approved'].includes(effectiveMatchStatus(match))) {
         activeCounts.set(match.supporter_id, (activeCounts.get(match.supporter_id) || 0) + 1);
       }
     }
