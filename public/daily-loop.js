@@ -61,6 +61,57 @@
     return latestByCreated((events || []).filter(event => event.features?.action_type === actionType));
   }
 
+  function previousDateKey(history, today=todayKey()){
+    const days=[...new Set([
+      ...(history?.checkins||[]).map(row=>dateKey(row.checked_in_at)),
+      ...(history?.actions||[]).map(row=>dateKey(row.created_at||row.completed_at)),
+      ...(history?.events||[]).map(row=>dateKey(row.created_at))
+    ].filter(Boolean))].sort();
+    const before=days.filter(day=>day<today);
+    return before.length ? before[before.length-1] : '';
+  }
+
+  function latestActionForDate(history, date){
+    return latestByCreated((history?.actions||[]).filter(row=>dateKey(row.created_at||row.completed_at)===date));
+  }
+
+  function latestOutcomeForDate(history, date){
+    return latestCoreEvent((history?.events||[]).filter(event=>dateKey(event.created_at)===date),'core_outcome');
+  }
+
+  function buildDayDifference(history, today=todayKey()){
+    const yesterday=previousDateKey(history,today);
+    if(!yesterday) return '昨日の記録がまだないため、今日の内容がこの日の変化として残ります。';
+
+    const todayAction=latestActionForDate(history,today);
+    const prevAction=latestActionForDate(history,yesterday);
+    const todayOutcome=latestOutcomeForDate(history,today);
+    const prevOutcome=latestOutcomeForDate(history,yesterday);
+
+    const parts=[];
+    if(Boolean(todayAction?.completed)!==Boolean(prevAction?.completed)){
+      parts.push(Boolean(todayAction?.completed) ? '今日は一歩を実行できました。' : '今日は実行状況が昨日と変わっています。');
+    }
+    if(todayOutcome?.features?.outcome_status && todayOutcome.features.outcome_status!==prevOutcome?.features?.outcome_status){
+      parts.push('今日の行動結果が昨日と変わっています。');
+    }
+
+    const checks=(history?.checkins||[]).filter(row=>dateKey(row.checked_in_at)===today);
+    const prevChecks=(history?.checkins||[]).filter(row=>dateKey(row.checked_in_at)===yesterday);
+    const tc=checks[checks.length-1], pc=prevChecks[prevChecks.length-1];
+    if(tc&&pc){
+      const delta=Number(tc.autonomy_total||0)-Number(pc.autonomy_total||0);
+      if(delta!==0) parts.push(`自己決定度が昨日から ${delta>0?'+':''}${delta}点変わっています。`);
+    }
+
+    if(!parts.length){
+      const todayText=(todayAction?.action_text||todayOutcome?.features?.result_note||'').trim();
+      if(todayText) parts.push('今日は「'+String(todayText).slice(0,60)+'」という具体的な記録が残っています。');
+      else parts.push('今日は昨日と違う日として、今日の記録そのものを残しています。');
+    }
+    return parts.slice(0,2).join(' ');
+  }
+
   function buildPraise(history){
     const today = todayKey();
     const checkins = history.checkins || [];
@@ -211,26 +262,30 @@
       const praise = buildPraise(history);
       const discovery = buildDiscovery(history, coreHistory);
       const nextStep = buildNextStep(history, coreHistory);
+      const dailyDifference = buildDayDifference(history);
 
 
       root.innerHTML = `
         <div class="daily-loop-grid">
           <article class="daily-loop-card praise ${esc(praise.tone)}">
             <span class="section-tag">TODAY'S PRAISE</span>
-            <h3>${esc(praise.title)}</h3>
+            <h3>今日のほめポイント</h3>
             <p>${esc(praise.text)}</p>
+            <div class="daily-loop-difference"><strong>昨日との違い</strong><br>${esc(dailyDifference)}</div>
           </article>
 
           <article class="daily-loop-card discovery">
             <span class="section-tag">TODAY'S DISCOVERY</span>
             <h3>今日の発見</h3>
             <p>${esc(discovery)}</p>
+            <div class="daily-loop-difference"><strong>昨日との違い</strong><br>${esc(dailyDifference)}</div>
           </article>
 
           <article class="daily-loop-card next">
             <span class="section-tag">NEXT PAGE</span>
             <h3>次のページ</h3>
             <p>${esc(nextStep)}</p>
+            <div class="daily-loop-difference"><strong>今日からつながる一歩</strong><br>${esc(dailyDifference)}</div>
           </article>
         </div>
 
