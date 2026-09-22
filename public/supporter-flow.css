@@ -14,3 +14,19 @@
 .supporter-ai-next p,.supporter-ai-caution p{margin:6px 0 0;line-height:1.7}
 .supporter-ai-caution{margin-top:8px;padding:10px 12px;border-radius:10px;background:#fff7ed;color:#7c2d12;font-size:13px}
 @media(max-width:700px){.supporter-ai-summary-grid{grid-template-columns:1fr}.supporter-ai-summary-title{display:block}.supporter-ai-summary-badge{display:block;margin-top:5px}}
+
+/* FCL outcome action: keep the primary record button readable on every dashboard surface. */
+.supporter-outcome-box button.secondary-btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  background:linear-gradient(135deg,#4f8df7,#6e9ef7)!important;
+  color:#fff!important;
+  border:0!important;
+  box-shadow:0 7px 16px rgba(79,141,247,.2)!important;
+  font-weight:800;
+}
+.supporter-outcome-box button.secondary-btn:hover{
+  background:linear-gradient(135deg,#477fe0,#638fdf)!important;
+  color:#fff!important;
+}
