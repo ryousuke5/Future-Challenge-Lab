@@ -225,3 +225,20 @@ body>main>section.card:first-of-type .grid p{color:#536a81;margin:0 0 10px}
   background:#f7fbff!important;
   color:#2e557f!important;
 }
+
+/* Journal section story link: keep the action light, readable, and consistent with FCL. */
+.story-view-btn{
+  display:inline-flex!important;
+  align-items:center;
+  justify-content:center;
+  padding:11px 16px!important;
+  border-radius:12px!important;
+  text-decoration:none!important;
+  background:#fff!important;
+  color:#2e557f!important;
+  border:1px solid #cfe0ef!important;
+  font-weight:800!important;
+  box-shadow:0 5px 12px rgba(74,112,150,.07)!important;
+}
+.story-view-btn:visited{color:#2e557f!important}
+.story-view-btn:hover{background:#f7fbff!important;color:#2e557f!important}
