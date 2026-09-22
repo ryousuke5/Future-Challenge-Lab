@@ -327,6 +327,10 @@ async function optimizeAction({participant_id, checkin}){
 async function insert(table, row){
   const q=db(table); if(q){
     const compatibleRow = { ...row };
+    if (table === 'supporter_matches') {
+      // The production DB may still use legacy status values (suggested/requested)
+      // while the approval timestamps/meta columns persist the real state.
+      compatibleRow.status = toCompatibleMatchStatus(row.status || 'pending');
       writeSupporterApprovalState(row.id, {
         approvals: row.meta?.approvals || {},
         meta: row.meta || {},
@@ -372,6 +376,11 @@ async function select(table, filters={}){
 async function update(table,id,patch){
   const q=db(table); if(q){
     const compatiblePatch = { ...patch };
+    if (table === 'supporter_matches' && Object.prototype.hasOwnProperty.call(compatiblePatch, 'status')) {
+      // Keep compatibility with the current production status CHECK while
+      // persisting approval timestamps/meta in the real DB columns.
+      compatiblePatch.status = toCompatibleMatchStatus(patch.status || 'pending');
+    }
     if (table === 'supporter_matches') {
       writeSupporterApprovalState(id, {
         approvals: patch?.meta?.approvals || readSupporterApprovalState(id).approvals || {},
