@@ -1338,6 +1338,8 @@ async function refreshJournalReplyForEntry({ participant_id, checkin_id = null, 
   const participant=(await select('participants',{id:participant_id}))[0];
   if(!participant) return null;
   const replyDate=String(entry_date || todayJstDate()).slice(0,10);
+  const today=todayJstDate();
+  if(replyDate>today) return null;
   const journalText=String(checkin_text || '').trim();
   if(!journalText) return null;
 
@@ -1415,13 +1417,16 @@ async function saveJournalReply({ participant_id, checkin_id = null, source_anal
     if(!checkin) throw new Error('checkin not found');
   }
 
+  const normalizedReplyDate=String(reply_date || todayJstDate()).slice(0,10);
+  if(normalizedReplyDate>todayJstDate()) throw new Error('未来日の「あなたの日誌への返信」は保存できません。');
+
   const row = {
     participant_id,
     checkin_id: checkin_id || null,
     source_analysis_event_id,
     reply_text: text,
     reply_version: sanitizeText(reply_version, 'v1'),
-    reply_date: reply_date || todayJstDate(),
+    reply_date: normalizedReplyDate,
     displayed_at: new Date().toISOString()
   };
 
@@ -1628,10 +1633,23 @@ app.use('/api',async(req,res,next)=>{
     const supporterStatusRoute=path.match(/^\/supporters\/([^/]+)\/status$/);
     const supporterOutcomeHistoryRoute=path.match(/^\/supporter\/outcomes\/([^/]+)$/);
     const supporterCandidateRoute=path.match(/^\/supporter-candidates\/([^/]+)$/);
+    const storyUserRoute=path.match(/^\/story-user\/([^/]+)$/);
+    const storyParticipantRoute=path.match(/^\/story\/([^/]+)$/);
+    const coreHistoryRoute=path.match(/^\/core\/history\/([^/]+)$/);
     const userRoute=path.match(/^\/users\/([^/]+)(?:\/(?:overview|challenges))?$/);
     const matchRoute=path.match(/^\/matches\/([^/]+)(?:\/(request|challenger-approve|supporter-approve|decline))?$/);
     const matchId=matchRoute?.[1] || '';
     const matchAction=matchRoute?.[2] || '';
+
+    if(storyUserRoute && String(storyUserRoute[1]||'').trim()!==user.id){
+      return res.status(403).json({error:'この物語へアクセスする権限がありません。'});
+    }
+    if(storyParticipantRoute && !(await requireParticipantOwnership(user.id,String(storyParticipantRoute[1]||'').trim()))){
+      return res.status(403).json({error:'この物語へアクセスする権限がありません。'});
+    }
+    if(coreHistoryRoute && !(await requireParticipantOwnership(user.id,String(coreHistoryRoute[1]||'').trim()))){
+      return res.status(403).json({error:'この履歴へアクセスする権限がありません。'});
+    }
 
     const participantId=String(req.body?.participant_id||req.query?.participant_id||participantRoute?.[1]||supporterCandidateRoute?.[1]||'').trim();
     // 支援者側の操作では対象挑戦者IDを送るが、本人確認は各支援者ルート側で行う。
@@ -2093,7 +2111,11 @@ app.get('/api/story-user/:user_id', async (req,res)=>{
   const startedAt=Date.now();
   try{
     const userId=String(req.params.user_id||'').trim();
+    const sessionUserId=String(req.fclUser?.id||'').trim();
+    if(!sessionUserId) return res.status(401).json({error:'FCLログインが必要です。'});
     if(!userId) return res.status(400).json({error:'user_id is required'});
+    if(userId!==sessionUserId) return res.status(403).json({error:'この物語へアクセスする権限がありません。'});
+    const today=todayJstDate();
 
     const participantsQuery=db('participants');
     let participants=[];
@@ -2151,7 +2173,7 @@ app.get('/api/story-user/:user_id', async (req,res)=>{
         db('action_results').select('*').eq('participant_id',id),
         db('model_learning_events').select('*').eq('participant_id',id),
         db('supporter_matches').select('*').eq('participant_id',id),
-        db('journal_replies').select('*').eq('participant_id',id).order('reply_date',{ascending:true}).order('created_at',{ascending:true})
+        db('journal_replies').select('*').eq('participant_id',id).lte('reply_date',today).order('reply_date',{ascending:true}).order('created_at',{ascending:true})
       ]);
       for(const result of [checkinsResult,actionsResult,eventsResult,matchesResult,journalRepliesResult]){
         if(result?.error) throw result.error;
@@ -2192,7 +2214,9 @@ app.get('/api/story-user/:user_id', async (req,res)=>{
         actions:(await select('action_results',{participant_id:id})).sort((a,b)=>new Date(a.completed_at||a.created_at||0)-new Date(b.completed_at||b.created_at||0)),
         events:(await select('model_learning_events',{participant_id:id})).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0)),
         matches:(await select('supporter_matches',{participant_id:id})).map(hydrateMatchApprovalState).sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0)),
-        journal_replies:(await select('journal_replies',{participant_id:id})).sort((a,b)=>String(a.reply_date||'').localeCompare(String(b.reply_date||'')) || new Date(a.created_at||0)-new Date(b.created_at||0))
+        journal_replies:(await select('journal_replies',{participant_id:id}))
+          .filter(row=>String(row.reply_date||'')<=today)
+          .sort((a,b)=>String(a.reply_date||'').localeCompare(String(b.reply_date||'')) || new Date(a.created_at||0)-new Date(b.created_at||0))
       }],
       server_ms:Date.now()-startedAt,
       historical_challenges_available:Math.max(0,participants.length-1)
