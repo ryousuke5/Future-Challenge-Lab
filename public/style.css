@@ -23,7 +23,7 @@ body{font-family:inherit;background:
 }
 main{max-width:1040px;margin:auto;padding:28px 18px 72px}
 header{display:flex;justify-content:space-between;align-items:flex-start;gap:22px;margin-bottom:22px;padding:24px 24px 8px}
-header>div:first-child{max-width:700px}
+header>div:first-child{flex:1;max-width:none;min-width:0}
 .eyebrow{font-size:11px;letter-spacing:.14em;color:#6d8197;font-weight:800}
 h1{font-size:clamp(32px,5vw,48px);letter-spacing:-.03em;margin:7px 0 10px;line-height:1.15}
 h2{font-size:22px;letter-spacing:-.02em;margin-top:0;line-height:1.35}
