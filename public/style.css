@@ -149,6 +149,7 @@ button:disabled{opacity:.58;cursor:not-allowed;transform:none}
 .daily-loop-card{border:1px solid #dae6f0;border-radius:18px;padding:18px;background:#fff;box-shadow:0 6px 15px rgba(74,112,150,.045)}
 .daily-loop-card h3{margin:12px 0 8px}
 .daily-loop-card p{margin:0;color:#40576d;line-height:1.8}
+.daily-loop-difference{margin-top:14px;padding:10px 12px;border-radius:11px;background:rgba(255,255,255,.72);border:1px dashed #cbdbe8;color:#5c7288;font-size:12px;line-height:1.65}.daily-loop-difference strong{color:#40576d;font-size:12px}
 .daily-loop-card.praise{background:linear-gradient(135deg,#fff9e7,#fff)}
 .daily-loop-card.praise.done,.daily-loop-card.praise.progress{background:linear-gradient(135deg,#effbf6,#fff)}
 .daily-loop-card.praise.return{background:linear-gradient(135deg,#eef7ff,#fff)}
