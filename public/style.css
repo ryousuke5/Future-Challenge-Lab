@@ -211,3 +211,17 @@ a{color:#4679ba}
 body>main>section.card:first-of-type .grid{margin-top:18px}
 body>main>section.card:first-of-type .grid h3{font-size:17px;margin:0 0 7px}
 body>main>section.card:first-of-type .grid p{color:#536a81;margin:0 0 10px}
+
+/* FCL top navigation: keep the My Page control light and readable. */
+.hero-actions a .secondary-btn,
+.hero-actions .secondary-btn{
+  background:#fff!important;
+  color:#2e557f!important;
+  border:1px solid #cfe0ef!important;
+  box-shadow:0 5px 12px rgba(74,112,150,.07)!important;
+}
+.hero-actions a .secondary-btn:hover,
+.hero-actions .secondary-btn:hover{
+  background:#f7fbff!important;
+  color:#2e557f!important;
+}
