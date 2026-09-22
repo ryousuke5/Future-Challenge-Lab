@@ -1368,12 +1368,18 @@ async function refreshJournalReplyForEntry({ participant_id, checkin_id = null, 
   }
   if(!analysisEvent?.id) throw new Error('analysis event could not be created');
 
+  const previousReplies=(await select('journal_replies',{participant_id}))
+    .filter(row=>String(row.reply_date||'')<replyDate)
+    .sort((a,b)=>new Date(b.reply_date||0)-new Date(a.reply_date||0))
+    .slice(0,1);
+
   const aiReply=await generateJournalReplyWithOpenAI({
     participant,
     checkinText:journalText,
     analysis,
     decision:null,
-    outcome:null
+    outcome:null,
+    recentReplies:previousReplies
   });
   const replyText=aiReply || [
     '今日の日誌を読みました。',
@@ -3879,7 +3885,10 @@ app.post('/api/core/analyze', async (req, res) => {
             analysis:response,
             decision:null,
             outcome:null,
-            recentReplies:await select('journal_replies',{participant_id})
+            recentReplies:(await select('journal_replies',{participant_id}))
+              .filter(row=>String(row.reply_date||'')<today)
+              .sort((a,b)=>new Date(b.reply_date||0)-new Date(a.reply_date||0))
+              .slice(0,1)
           });
           const replyText=aiReply || [
             `今日の記録「${String(checkin_text || '').trim().slice(0,180)}」を読みました。`,
@@ -3921,18 +3930,25 @@ app.post('/api/core/analyze', async (req, res) => {
   }
 });
 
-async function generateJournalReplyWithOpenAI({ participant, checkinText, analysis, decision, outcome } = {}){
+async function generateJournalReplyWithOpenAI({ participant, checkinText, analysis, decision, outcome, recentReplies = [] } = {}){
   const key = process.env.OPENAI_API_KEY;  if(!key) return null;
+
+  const previousReply = (Array.isArray(recentReplies) ? recentReplies : [])
+    .map(row => String(row?.reply_text || row || '').trim())
+    .filter(Boolean)[0] || '';
 
   const prompt = `
 あなたはFuture Challenge Lab（FCL）の「あなたの日誌への返信」を書く担当です。
 目的は、今日の挑戦の記録をきちんと読んだ人間から、本人に向けて自然に返事をすることです。
 
 重要なルール：
-- 今日の日誌・自由記述の具体的な内容を必ず1つ以上取り上げる。
+- 今日の日誌・自由記述の具体的な内容を必ず2つ以上取り上げる。
 - 今日の日誌に書かれていない過去の出来事を持ち出さない。
 - 分析結果に含まれる「過去の観測」「以前」「過去の推移」などは、そのまま返信の主題にしない。
 - 前回までの一般的な励まし文を繰り返さない。
+- 昨日の返信と同じ主題・同じ言い回し・同じ締め方にしない。
+- 今日の返信だけを読んでも「昨日とは違う今日の記録を受け取って返している」と分かるように、今日だけの具体的な出来事・行動・気づき・変化を必ず1つ明示する。
+- 昨日の返信で使われた具体的な表現や例をそのまま再利用しない。
 - 「今日もお疲れさまでした」「無理せず頑張りましょう」だけで終わらせない。
 - 分析結果をそのまま説明するのではなく、人間の返信として自然に書く。
 - 評価・説教・過度なポジティブ表現は避ける。
@@ -3956,7 +3972,16 @@ async function generateJournalReplyWithOpenAI({ participant, checkinText, analys
 行動結果：${outcome?.outcome_status || ''}
 結果メモ：${outcome?.result_note || ''}
 
-{"reply_text":"日誌を読んだ人からの自然な返信"}
+昨日の「あなたの日誌への返信」（表現や内容を繰り返さないための内部参照）：
+${previousReply || '昨日の返信はありません。'}
+
+出力条件：
+- 今日の返信であることが分かる、今日固有の具体点を明示する。
+- 昨日の返信との差が自然に伝わる文章にする。
+- 「昨日は〜、今日は〜」という定型比較を毎回使う必要はない。ただし、今日の変化が分かる書き方にする。
+- 昨日の返信本文を引用しない。
+
+{"reply_text":"今日の日誌を読んだ人からの、昨日とは異なる自然な返信"}
 `.trim();
 
   try{
@@ -4002,12 +4027,18 @@ app.post('/api/journal-replies/generate', async (req, res) => {
     if(existing) return res.json({ok:true,reply:existing,source:'saved_today'});
 
 
+    const previousReplies=(await select('journal_replies',{participant_id}))
+      .filter(row=>String(row.reply_date||'')<today)
+      .sort((a,b)=>new Date(b.reply_date||0)-new Date(a.reply_date||0))
+      .slice(0,1);
+
     const aiReply=await generateJournalReplyWithOpenAI({
       participant,
       checkinText,
       analysis: analysis || {},
       decision: decision || null,
-      outcome: outcome || null
+      outcome: outcome || null,
+      recentReplies:previousReplies
     });
 
     const replyText=aiReply || [
