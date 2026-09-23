@@ -20,15 +20,100 @@ button:disabled{opacity:.6}.error{padding:12px;border-radius:12px;background:#fe
 @media(max-width:650px){.user-bar{flex-direction:column;align-items:stretch}.story-head>div[style*="grid-template-columns"]{grid-template-columns:1fr!important}}
 .daily-card{padding:18px;border:1px solid #e5e7eb;border-radius:16px;background:#fff;margin-bottom:12px}.daily-meta{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.page-no{font-size:12px;color:#64748b;font-weight:700}.daily-date{font-size:13px;color:#64748b}.daily-lines{margin:0;padding-left:20px}.daily-lines li{margin:7px 0;line-height:1.7}.daily-card details{margin-top:12px}.daily-card summary{cursor:pointer;color:#334155;font-weight:700}.detail-body{margin-top:10px;padding:12px 14px;border-radius:12px;background:#f8fafc}.detail-row{padding:8px 0;border-bottom:1px solid #e5e7eb;line-height:1.6}.detail-row:last-child{border-bottom:0}.milestone-comment{margin:12px 0;padding:14px 16px;border-left:4px solid #94a3b8;background:#f8fafc;border-radius:10px;line-height:1.7}.privacy-notice{margin-top:12px;padding:12px 14px;border:1px solid #dbe4ee;border-radius:12px;background:#f8fafc;color:#334155;line-height:1.65;font-size:13px}.privacy-notice strong{font-size:13px}.privacy-notice span{color:#64748b}
 .journal-history{margin:0 0 14px;padding:14px;border:1px solid #dbe4ee;border-radius:14px;background:#fff}.journal-history-heading h4{margin:9px 0 12px;font-size:1.05rem}.reply-fresh-note{margin:-4px 0 12px;padding:9px 11px;border-radius:10px;background:#f8fafc;color:#64748b;font-size:12px;line-height:1.6}.journal-history-body{padding:13px 14px;background:#f8fafc;border-radius:11px;line-height:1.85}.journal-history-body p{margin:0 0 10px}.journal-history-body p:last-child{margin-bottom:0}.roadmap{margin:16px 0 4px;padding:16px;border:1px solid #e5e7eb;border-radius:16px;background:#fff}.roadmap-title{font-size:14px;font-weight:700;margin-bottom:12px}.roadmap-track{display:flex;align-items:flex-start;gap:0;overflow-x:auto;padding:4px 2px 8px}.roadmap-step{min-width:150px;position:relative;text-align:center}.roadmap-step:not(:last-child):after{content:"";position:absolute;top:12px;left:50%;width:100%;height:2px;background:#e2e8f0}.roadmap-dot{position:relative;z-index:1;width:24px;height:24px;margin:0 auto 7px;border-radius:50%;border:2px solid #cbd5e1;background:#fff}.roadmap-step.done .roadmap-dot{background:#334155;border-color:#334155}.roadmap-step.current .roadmap-dot{box-shadow:0 0 0 4px #e2e8f0}.roadmap-label{font-size:12px;font-weight:700}.roadmap-note{font-size:11px;color:#64748b;margin-top:3px;line-height:1.4}.story-end{margin-top:18px;padding:20px;border-radius:16px;background:#f8fafc}@media(max-width:650px){.daily-meta{align-items:flex-start;flex-direction:column}}</style>
-<link rel="stylesheet" href="style.css?v=20260922-0925"></head>
+<link rel="stylesheet" href="style.css?v=20260922-0925"><style id="fcl-v3-design">
+/* FCL Story V3 — timeline + AI reflection */
+body{background:linear-gradient(180deg,#f7fbff 0%,#ffffff 52%,#f8f5ff 100%)!important}
+main{max-width:1080px!important;padding:16px 14px 64px!important}
+.fcl-story-hero{
+  position:relative;overflow:hidden;margin-bottom:16px;padding:28px;border-radius:26px;
+  color:#fff;background:linear-gradient(135deg,#267fe8 0%,#5e9cf0 55%,#8a69dc 100%);
+  box-shadow:0 18px 45px rgba(62,91,164,.16);border:1px solid #cfe0fa
+}
+.fcl-story-hero:before{content:"";position:absolute;width:360px;height:360px;right:-150px;top:-210px;border-radius:50%;background:rgba(255,255,255,.12)}
+.fcl-story-hero .story-hero-inner{position:relative;z-index:2;max-width:760px}
+.fcl-story-hero .eyebrow{color:rgba(255,255,255,.85)}
+.fcl-story-hero h1{font-size:clamp(36px,5vw,54px);letter-spacing:-.03em;margin:9px 0 10px}
+.fcl-story-hero p{font-size:16px;line-height:1.75;color:rgba(255,255,255,.94);margin:0}
+.fcl-story-badge-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:15px}
+.fcl-story-badge{padding:7px 11px;border-radius:999px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22);font-size:12px;font-weight:800}
+.fcl-story-hero .user-bar{margin-top:18px}
+.fcl-story-hero .user-bar button{background:#fff!important;color:#2567b5!important}
+.fcl-story-hero .session-status{color:rgba(255,255,255,.86)!important}
+.fcl-story-hero .privacy-notice{
+  margin-top:13px;border-color:rgba(255,255,255,.28)!important;background:rgba(255,255,255,.12)!important;color:#fff!important
+}
+.fcl-story-hero .privacy-notice span{color:rgba(255,255,255,.80)!important}
+#story>section.card{padding:18px 18px 22px;border-color:#dfe8f5!important;box-shadow:0 14px 35px rgba(31,82,126,.07)}
+#story>section.card .story-head{
+  background:linear-gradient(135deg,#edf8ff,#f6f0ff)!important;border:1px solid #dcebf8!important;
+  padding:20px!important;border-radius:20px!important
+}
+#story>section.card .story-head .pill{background:#fff;color:#3269b3;border:1px solid #d9e7f5}
+#story>section.card .story-head h2{font-size:28px;color:#183d63;margin:9px 0}
+.story-counts{gap:12px!important}
+.story-count{border-color:#dfeaf4!important;box-shadow:0 8px 22px rgba(44,94,136,.04)}
+.timeline-shell-v3{margin-top:18px}
+.daily-card{
+  position:relative;margin:0 0 12px 46px!important;padding:17px 18px 18px!important;border:1px solid #e1ebf5!important;
+  border-radius:18px!important;box-shadow:0 9px 25px rgba(38,92,136,.06)!important;background:#fff!important
+}
+.daily-card:before{
+  content:"";position:absolute;left:-35px;top:20px;width:20px;height:20px;border-radius:50%;
+  border:4px solid #fff;background:#2f83e8;box-shadow:0 0 0 3px #a9cef3
+}
+.daily-card:not(:last-child):after{
+  content:"";position:absolute;left:-25px;top:47px;bottom:-13px;width:3px;border-radius:999px;background:linear-gradient(180deg,#bdd8f2,#e6e1f9)
+}
+.daily-card:nth-child(3n+2):before{background:#ef981b;box-shadow:0 0 0 3px #f7d79b}
+.daily-card:nth-child(3n+3):before{background:#815dd8;box-shadow:0 0 0 3px #d8cdf4}
+.daily-card .daily-meta{margin-bottom:8px}
+.daily-card .page-no{color:#4c77a3}
+.daily-card .daily-date{font-weight:800;color:#74889a}
+.daily-card h3{font-size:19px!important;color:#173f65;margin-bottom:9px!important}
+.daily-lines{padding-left:19px!important}
+.daily-lines li{color:#506b83;font-size:13px}
+.milestone-comment{
+  border-left:0!important;border-radius:14px!important;background:#fff8ea!important;border:1px solid #f7e5bc!important;
+  color:#6f5a30!important
+}
+.story-ai-reply{
+  margin-top:11px;padding:13px 15px;border-radius:15px;
+  background:linear-gradient(135deg,#eef6ff,#f5efff);border:1px solid #dce8fb
+}
+.story-ai-reply .ai-label{font-size:12px;font-weight:900;color:#5d63b6;margin-bottom:5px}
+.story-ai-reply p{margin:0;color:#38506e;font-size:13px;line-height:1.75}
+.detail-body{background:#f8fbff!important;border:1px solid #e2edf6;border-radius:14px!important}
+.journal-history{border-color:#dce8f3!important;background:#fff!important}
+.journal-history-heading h4{color:#1a4267}
+.journal-history-body{background:#f6faff!important}
+.story-end{background:linear-gradient(135deg,#edf8ff,#f5f0ff)!important;border:1px solid #dce8f5}
+.story-finish{border-color:#dce7f1!important;background:#fff}
+.next-step{border-color:#dbe8f5!important;background:#fff}
+@media(max-width:650px){
+  main{padding:10px 10px 46px!important}
+  .fcl-story-hero{padding:22px 18px;border-radius:20px}
+  .fcl-story-hero h1{font-size:36px}
+  .daily-card{margin-left:35px!important}
+  .daily-card:before{left:-27px}
+  .daily-card:not(:last-child):after{left:-17px}
+}
+</style></head>
 <body><main>
-<section class="hero">
-<div class="eyebrow">YOUR STORY</div>
-<h1>あなたの物語</h1>
-<p>挑戦の日も、普通の日も、迷った日も。日記や出来事として残した一日一日が、あなたの物語になっていきます。</p>
-<div class="user-bar" id="userBar"><button id="load">物語を開く</button><span id="sessionStatus" class="muted">ログイン中のFCLユーザーの物語を表示します。</span></div>
-<div class="privacy-notice"><strong>🔒 あなたの日誌への返信は本人専用です</strong><br><span>この画面はログイン中の本人の記録だけを取得します。日誌への返信は他のユーザーや支援者の画面には表示しません。</span></div>
-<div id="error" class="error" hidden></div>
+<section class="fcl-story-hero">
+  <div class="story-hero-inner">
+    <div class="eyebrow">YOUR STORY</div>
+    <h1>あなたの物語</h1>
+    <p>挑戦のはじまりから、今日まで。<br>続けた日も、迷った日も、再開した日も、全部があなたの一ページです。</p>
+    <div class="fcl-story-badge-row">
+      <span class="fcl-story-badge">🌱 はじまり</span>
+      <span class="fcl-story-badge">🔥 転機・気づき</span>
+      <span class="fcl-story-badge">📍 現在地</span>
+      <span class="fcl-story-badge">✨ AIからのひとこと</span>
+    </div>
+    <div class="user-bar" id="userBar"><button id="load">物語を開く</button><span id="sessionStatus" class="muted session-status">ログイン中のFCLユーザーの物語を表示します。</span></div>
+    <div class="privacy-notice"><strong>🔒 あなたの日誌への返信は本人専用です</strong><br><span>この物語は、ログイン中の本人の記録だけを表示します。</span></div>
+    <div id="error" class="error" hidden></div>
+  </div>
 </section>
 <section id="story" hidden></section>
 </main>
@@ -272,7 +357,7 @@ function renderDetails(day){
   // 保存済み返信がある場合は再生成せず、そのままの文章を表示する。
   const savedReply=Array.isArray(day.journalReply)?day.journalReply.map(x=>String(x||'').trim()).filter(Boolean):[];
   const replyParagraphs=savedReply.length?savedReply:['この日の「あなたの日誌への返信」は、まだ保存されていません。'];
-  rows.push('<div class="journal-history"><div class="journal-history-heading"><span class="section-tag">FCL RESPONSE</span><h4>あなたの日誌への返信 <span class="muted" style="font-weight:500">🔒 本人専用</span></h4><div class="reply-fresh-note">今日は今日の日誌に書かれた内容をもとにした返信です。前日の返信をそのまま繰り返さず、今日の出来事・気づき・変化を反映します。</div></div><div class="journal-history-body">'+replyParagraphs.map(p=>'<p>'+esc(p)+'</p>').join('')+'</div></div>');
+  rows.push('<div class="journal-history"><div class="journal-history-heading"><span class="section-tag">AIからのひとこと</span><h4>あなたの日誌への返信 <span class="muted" style="font-weight:500">🔒 本人専用</span></h4><div class="reply-fresh-note">今日は今日の日誌に書かれた内容をもとにした返信です。前日の返信をそのまま繰り返さず、今日の出来事・気づき・変化を反映します。</div></div><div class="journal-history-body">'+replyParagraphs.map(p=>'<p>'+esc(p)+'</p>').join('')+'</div></div>');
   day.checkins.forEach((c,i)=>rows.push('<div class="detail-row"><strong>チェックイン '+(i+1)+'回目</strong><br>自己決定度：'+esc(c.autonomy_total||0)+' / 25　現在の状態：'+esc(c.risk_level||'確認中')+'<br><span class="muted">'+dateTime(c.checked_in_at)+'</span></div>'));
   day.actions.forEach(a=>rows.push('<div class="detail-row"><strong>'+(a.completed?'実行した一歩':'記録した一歩')+'</strong><br>'+esc(a.action_text||'行動記録')+(a.result_note?'<br>結果：'+esc(a.result_note):'')+'<br><span class="muted">'+dateTime(a.completed_at||a.created_at)+'</span></div>'));
   day.events.forEach(e=>{
@@ -397,6 +482,7 @@ async function load(){
       const details=renderDetails(d);
       return '<article class="daily-card"><div class="daily-meta"><span class="page-no">'+pageLabel+'</span><span class="daily-date">'+dateOnly(d.key)+'</span></div><h3 style="margin:0 0 8px;">'+(d.isStart?'物語のはじまり':idx===daily.length-1?'今日のページ':'この日のページ')+'</h3><ol class="daily-lines">'+lines.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ol>'+
         (comment?'<div class="milestone-comment"><strong>FCLからのコメント</strong><br>'+esc(comment)+'</div>':'')+
+        (d.journalReply.length?'<div class="story-ai-reply"><div class="ai-label">✨ AIからのひとこと</div>'+d.journalReply.slice(0,2).map(x=>'<p>'+esc(x)+'</p>').join('')+'</div>':'')+
         '<details><summary>この日の詳細を見る</summary>'+details+'</details></article>';
     }).join('');
 
