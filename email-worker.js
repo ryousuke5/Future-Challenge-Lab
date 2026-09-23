@@ -52,7 +52,13 @@ function isTestEmail(value) {
 
 function createAccessToken(matchId, role) {
   if (!serviceRoleKey) return '';
-  const payload = Buffer.from(JSON.stringify({ match_id: matchId, role })).toString('base64url');
+  const now = Math.floor(Date.now() / 1000);
+  const payload = Buffer.from(JSON.stringify({
+    match_id: matchId,
+    role,
+    iat: now,
+    exp: now + (30 * 24 * 60 * 60)
+  })).toString('base64url');
   const signature = crypto.createHmac('sha256', serviceRoleKey).update(payload).digest('base64url');
   return `${payload}.${signature}`;
 }
