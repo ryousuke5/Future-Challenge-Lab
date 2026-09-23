@@ -896,41 +896,64 @@ function buildContinuationProfile({ checkins = [], actions = [], journalReplies 
 async function callOpenAiFallback(prompt){
   const key = process.env.OPENAI_API_KEY;
   if(!key) return null;
-  try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        temperature: 0.4,
-        messages: [{ role: 'system', content: 'You are a helpful assistant for challenge continuation. Return valid JSON with keys: state, state_change, risk, continuation_risk, insight, problem, solutions, recommended_option, next_action, adaptive_questions, personal_support_pattern, personal_learning, reply_text. continuation_risk must contain level, reasons (array), and signals (array). reply_text must be a natural Japanese reply to the current diary entry, 3-5 paragraphs and about 250-450 Japanese characters. Use at least two concrete details from today\'s diary, do not repeat the previous reply, do not invent facts, do not diagnose personality or health, and do not merely restate the analysis. Use only observed facts.' }, { role: 'user', content: prompt }],
-        response_format: { type: 'json_object' }
-      })
-    });
-
-    if(!response.ok){
-      const err = await response.text();
-      throw new Error(err || 'OpenAI API error');
-    }
-
-    const json = await response.json();
-    const text = json?.choices?.[0]?.message?.content;
-    if(!text) throw new Error('AI response missing content');
-
+  const maxAttempts=2;
+  for(let attempt=1;attempt<=maxAttempts;attempt++){
+    let controller=null;
+    let timeoutId=null;
     try {
-      return JSON.parse(text);
-    } catch (parseError) {
-      return { state: 'unknown', state_change: 'AI response parse failed', risk: { level: 'unknown', reason: 'AI response parse failed' }, insight: 'AI応答の形式が想定と違いました。', problem: '問題を整理し直すことが必要です。', solutions: [], recommended_option: 'A', next_action: '問題を3つまでに整理する' };
-    }
-  } catch (error) {
-    console.error('OpenAI API error', error.message);
-    return null;
-  }
-}
+      controller=new AbortController();
+      timeoutId=setTimeout(()=>controller.abort(),20000);
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer '+key },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          temperature: 0.4,
+          messages: [{ role: 'system', content: 'You are a helpful assistant for challenge continuation. Return valid JSON with keys: state, state_change, risk, continuation_risk, insight, problem, solutions, recommended_option, next_action, adaptive_questions, personal_support_pattern, personal_learning, reply_text. continuation_risk must contain level, reasons (array), and signals (array). reply_text must be a natural Japanese reply to the current diary entry, 3-5 paragraphs and about 250-450 Japanese characters. Use at least two concrete details from today\\'s diary, do not repeat the previous reply, do not invent facts, do not diagnose personality or health, and do not merely restate the analysis. Use only observed facts.' }, { role: 'user', content: prompt }],
+          response_format: { type: 'json_object' }
+        }),
+        signal: controller.signal
+      });
 
+      if(!response.ok){
+        const err = await response.text();
+        const retryable=response.status===408||response.status===409||response.status===429||response.status>=500;
+        if(retryable && attempt<maxAttempts){
+          console.warn('[OpenAI] transient error '+response.status+'; retrying');
+          await new Promise(resolve=>setTimeout(resolve,350*attempt));
+          continue;
+        }
+        throw new Error('OpenAI '+response.status+': '+err.slice(0,2000));
+      }
+
+      const json = await response.json();
+      const content = json?.choices?.[0]?.message?.content;
+      if(!content) throw new Error('AI response missing content');
+      try {
+        return JSON.parse(content);
+      } catch(parseError){
+        if(attempt<maxAttempts){
+          console.warn('[OpenAI] invalid JSON response; retrying');
+          await new Promise(resolve=>setTimeout(resolve,350*attempt));
+          continue;
+        }
+        throw new Error('AI response JSON parse failed');
+      }
+    }catch(error){
+      const retryable=error?.name==='AbortError'||/OpenAI (408|409|429|5\\d\\d)/.test(String(error?.message||''));
+      if(retryable && attempt<maxAttempts){
+        console.warn('[OpenAI] '+(error?.message||error)+'; retrying');
+        await new Promise(resolve=>setTimeout(resolve,350*attempt));
+        continue;
+      }
+      console.error('OpenAI API error', error?.message||error);
+      return null;
+    }finally{
+      if(timeoutId) clearTimeout(timeoutId);
+    }
+  }
+  return null;
+}
 function normalizePersonalLearning(value, baseResult){
   const base=baseResult.personal_learning||{};
   if(!value||typeof value!=='object'||Array.isArray(value)) return base;
@@ -2147,7 +2170,7 @@ app.post('/api/story-pages/generate',async(req,res)=>{
     const participant=(await select('participants',{id:participant_id}))[0];
     if(!participant||participant.archived_at)return res.status(404).json({error:'participant not found'});
     const [checkins,actions,events,matches,existingPages,journalEntries]=await Promise.all([
-      select('checkins',{participant_id}),select('action_results',{participant_id}),select('model_learning_events',{participant_id}),select('supporter_matches',{participant_id}),select('challenge_story_pages',{participant_id})
+      select('checkins',{participant_id}),select('action_results',{participant_id}),select('model_learning_events',{participant_id}),select('supporter_matches',{participant_id}),select('challenge_story_pages',{participant_id}),select('journal_entries',{participant_id})
     ]);
     const sources=buildStorySourceDays({participant,checkins,actions,events,matches,journalEntries});
     const existingByDate=new Map(existingPages.map(row=>[String(row.page_date),row]));
@@ -2161,7 +2184,7 @@ app.post('/api/story-pages/generate',async(req,res)=>{
     }
     const unique=new Map(existingPages.concat(saved).map(row=>[String(row.page_date),row]));
     const story_pages=[...unique.values()].sort((a,b)=>String(a.page_date).localeCompare(String(b.page_date)));
-    res.json({ok:true,story_pages,generated_count:saved.length,ai_generated_count:saved.filter(x=>x.generation_version==='v2-ai').length});
+    res.json({ok:true,story_pages,generated_count:saved.length,ai_generated_count:saved.filter(x=>x.generation_version==='v3-ai').length});
   }catch(error){console.error('story pages generation error',error);res.status(500).json({error:error.message||'story pages generation failed'});}
 });
 
