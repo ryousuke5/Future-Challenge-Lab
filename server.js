@@ -305,11 +305,12 @@ async function optimizeAction({participant_id, checkin}){
   const [allI, allA, supporters, supportOutcomes, participant] = await Promise.all([
     select('intervention_assignments'),
     select('action_results'),
-    uniqueProductionContacts(await select('supporters')).filter(s=>s.user_id!==currentParticipant.user_id),
+    uniqueProductionContacts(await select('supporters')),
     select('supporter_outcomes'),
     select('participants',{id:participant_id})
   ]);
   const currentParticipant = participant[0] || {};
+  const eligibleSupporters = supporters.filter(s=>s.user_id!==currentParticipant.user_id);
   const challengeText=`${currentParticipant.challenge||''} ${currentParticipant.goal||''}`.toLowerCase();
   const ownI=allI.filter(x=>x.participant_id===participant_id);
   const ownA=allA.filter(x=>x.participant_id===participant_id);
@@ -333,7 +334,7 @@ async function optimizeAction({participant_id, checkin}){
   });
 
   const supporterOptions=[];
-  for(const supporter of supporters.filter(s=>s.active!==false)){
+  for(const supporter of eligibleSupporters.filter(s=>s.active!==false)){
     const outcomes=supportOutcomes.filter(o=>o.supporter_id===supporter.id);
     const success=outcomes.filter(o=>['restarted','action_completed','connected_and_progressed','positive'].includes(o.outcome)).length;
     const supportRate=posterior(success,outcomes.length);
