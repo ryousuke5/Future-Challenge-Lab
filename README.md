@@ -30,7 +30,7 @@
 npm install
 node server.js
 ```
-`.env` に `SUPABASE_URL` と `SUPABASE_SECRET_KEY` を設定するとSupabaseを使用し、未設定ならメモリモードで動きます。
+`.env` に `SUPABASE_URL` と `SUPABASE_SERVICE_ROLE_KEY` を設定するとSupabaseを使用し、未設定ならメモリモードで動きます。
 
 ## API
 - `POST /api/checkins` — チェックイン＋最適化AIによる介入選択
