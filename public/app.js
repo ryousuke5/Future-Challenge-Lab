@@ -98,10 +98,11 @@ function renderChallengeSelector(challenges, selectedId){
     return '';
   }
 
+  const esc=(value)=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;");
   selector.innerHTML=challenges.map((row,index)=>{
     const label=row.challenge || '挑戦テーマ未登録';
     const goal=row.goal ? ' — ' + row.goal : '';
-    return `<option value="${row.id.replaceAll('"','&quot;')}">${index+1}. ${label}${goal}</option>`;
+    return `<option value="${esc(row.id)}">${index+1}. ${esc(label)}${esc(goal)}</option>`;
   }).join('');
 
   const valid=challenges.some(row=>row.id===selectedId);
@@ -260,7 +261,7 @@ function buildAnalysisCards(data){
   const signals = data?.checkin?.analysis?.signals || {};
   const selected = data?.optimization?.selected || {};
   const candidates = data?.optimization?.candidates || [];
-  const interventionText = intervention?.intervention_text || selected?.supporter_name ? '支援者と相談して今日の一歩を決める' : '自分で選ぶ最小行動を1つ決める';
+  const interventionText = intervention?.intervention_text || (selected?.supporter_name ? '支援者と相談して今日の一歩を決める' : '自分で選ぶ最小行動を1つ決める');
   const resultRisk = Number(signals.risk ?? data?.checkin?.risk_score ?? 0);
   const autonomyScore = Number(signals.score ?? data?.checkin?.autonomy_total ?? 0);
   const riskLabel = { low: '低い', medium: '中程度', high: '高い' }[signals.level || data?.checkin?.risk_level || 'low'] || '中程度';
@@ -284,24 +285,26 @@ function buildAnalysisCards(data){
     { title: '今日の次の一歩', value: '1つに絞る', description: nextStepText, kind: 'success' }
   ];
 
+  const esc=(value)=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;");
   const candidateText = candidates.length ? candidates.slice(0,3).map(c => {
-    const label = c.action_type === 'intervention' ? `AI介入:${c.variant}` : c.action_type === 'supporter' ? `支援者:${c.supporter_name || '候補'}` : 'AI＋支援者';
-    return `<li>${label}（期待値 ${(Number(c.score || 0) * 100).toFixed(0)}%）</li>`;
+    const label = c.action_type === 'intervention' ? `AI介入:${esc(c.variant)}` : c.action_type === 'supporter' ? `支援者:${esc(c.supporter_name || '候補')}` : 'AI＋支援者';
+    return `<li>${label}（期待値 ${esc((Number(c.score || 0) * 100).toFixed(0))}%）</li>`;
   }).join('') : '<li>候補を生成できていません。</li>';
 
+  const esc=(value)=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;");
   analysis.innerHTML = `
     <div class="analysis-grid">
       ${cards.map(card => `
         <div class="result-card ${card.kind === 'warning' ? 'highlight' : ''}">
-          <span class="section-tag">${card.title}</span>
-          <h3>${card.value}</h3>
-          <p>${card.description}</p>
+          <span class="section-tag">${esc(card.title)}</span>
+          <h3>${esc(card.value)}</h3>
+          <p>${esc(card.description)}</p>
         </div>
       `).join('')}
     </div>
     <div class="result-card" style="margin-top:14px;">
       <span class="section-tag">AIサマリー</span>
-      <p style="margin-top:12px;">${data?.checkin?.analysis?.summary || '現在の状態を評価しています。'}</p>
+      <p style="margin-top:12px;">${esc(data?.checkin?.analysis?.summary || '現在の状態を評価しています。')}</p>
       <ul class="bullet-list">${candidateText}</ul>
     </div>
   `;
@@ -352,11 +355,13 @@ async function checkin(){
           both:'AI介入＋支援者接続'
         }[sel.action_type]||'最適化候補';
 
-        decisionBanner.innerHTML=`<strong>今回の推奨：${modeLabel}</strong><span>スコア ${(Number(sel.score||0)*100).toFixed(1)}%</span>${sel.organization_name?`<div>候補支援先：${sel.organization_name} / ${sel.supporter_name||''}</div>`:''}<small>${x.optimization?.decision?.exploration?'探索モード：まだデータが少ないため他の選択肢も試します。':'過去データから最も期待値の高い選択肢を提示しています。'}</small>`;
+        const esc=(value)=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;");
+        decisionBanner.innerHTML=`<strong>今回の推奨：${esc(modeLabel)}</strong><span>スコア ${esc((Number(sel.score||0)*100).toFixed(1))}%</span>${sel.organization_name?`<div>候補支援先：${esc(sel.organization_name)} / ${esc(sel.supporter_name||'')}</div>`:''}<small>${x.optimization?.decision?.exploration?'探索モード：まだデータが少ないため他の選択肢も試します。':'過去データから最も期待値の高い選択肢を提示しています。'}</small>`;
         buildAnalysisCards(x);
 
         if(intervention){
-          document.getElementById('intervention').innerHTML=`<strong>${intervention.variant}：${intervention.intervention_type}</strong><p>${intervention.intervention_text}</p>`;
+          const esc=(value)=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;");
+          document.getElementById('intervention').innerHTML=`<strong>${esc(intervention.variant)}：${esc(intervention.intervention_type)}</strong><p>${esc(intervention.intervention_text)}</p>`;
         }else{
           document.getElementById('intervention').innerHTML='<p>今回は支援者接続を優先。次の「支援者マッチング」で候補を確認してください。</p>';
         }
@@ -662,30 +667,46 @@ function renderInsight(data){
 
 function renderSolutions(data){
   const result = data?.result || {};
-  const solutions = Array.isArray(result.solutions) && result.solutions.length ? result.solutions : [
+  const fallback = [
     { id: 'A', title: '今できる作業を1つ進める', description: '最小の一歩から始める' },
     { id: 'B', title: '問題を整理する', description: '困りごとと次の一歩を3つまでに整理する' },
     { id: 'C', title: '支援者に相談する', description: '一人で抱え込まない' }
   ];
+  const allowedIds=['A','B','C'];
+  const esc=(value)=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;");
+  const rawSolutions = Array.isArray(result.solutions) && result.solutions.length ? result.solutions : fallback;
+  const solutions = rawSolutions.slice(0,3).map((option,index)=>({
+    ...option,
+    id:allowedIds.includes(String(option?.id||'').trim().toUpperCase()) ? String(option.id).trim().toUpperCase() : allowedIds[index]
+  }));
 
-  selectedCoreOption = result.recommended_option || solutions[0]?.id || 'A';
-  document.getElementById('coreSolutions').innerHTML = `
+  selectedCoreOption = allowedIds.includes(String(result.recommended_option||'').trim().toUpperCase())
+    ? String(result.recommended_option).trim().toUpperCase()
+    : (solutions[0]?.id || 'A');
+
+  const container=document.getElementById('coreSolutions');
+  if(!container)return;
+  container.innerHTML = `
     <div class="decision-panel">
       <h3>🔧 解決策 A / B / C</h3>
       ${solutions.map((option, index) => `
-        <div class="solution-item ${selectedCoreOption === option.id ? 'selected' : ''}" data-solution-id="${option.id}">
-          <strong>${index + 1}. ${option.id}: ${option.title}</strong>
-          <div>${option.description}</div>
-          <small>${option.reason || ''}</small>
-          <button type="button" onclick="selectSolution('${option.id}')">この選択肢を選ぶ</button>
+        <div class="solution-item ${selectedCoreOption === option.id ? 'selected' : ''}" data-solution-id="${esc(option.id)}">
+          <strong>${index + 1}. ${esc(option.id)}: ${esc(option.title)}</strong>
+          <div>${esc(option.description)}</div>
+          <small>${esc(option.reason || '')}</small>
+          <button type="button" data-select-solution="${esc(option.id)}">この選択肢を選ぶ</button>
         </div>
       `).join('')}
     </div>
   `;
+  container.querySelectorAll('[data-select-solution]').forEach(button=>{
+    button.addEventListener('click',()=>{
+      selectSolution(button.getAttribute('data-select-solution')||'A');
+    });
+  });
 
   document.getElementById('coreSelected').textContent = `選択中: ${selectedCoreOption}`;
 }
-
 function selectSolution(optionId){
   selectedCoreOption = optionId;
   const nodes = document.querySelectorAll('.solution-item');
