@@ -159,7 +159,58 @@ async function getOrCreateFclUser(email){
 }
 
 function uuid() { return crypto.randomUUID(); }
-function scoreAnswers(a) { return Object.values(a).reduce((s,v)=>s+Number(v||0),0); }
+const CHECKIN_ANSWER_KEYS = ['q1','q2','q3','q4','q5'];
+
+function normalizeCheckinAnswers(value){
+  if(!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid answers');
+  const normalized={};
+  for(const key of CHECKIN_ANSWER_KEYS){
+    const n=Number(value[key]);
+    if(!Number.isInteger(n) || n<1 || n>5) throw new Error(key+' must be an integer from 1 to 5');
+    normalized[key]=n;
+  }
+  return normalized;
+}
+
+function isClosedMatchRecord(match){ return ['declined','expired'].includes(effectiveMatchStatus(match)); }
+function isActiveMatchRecord(match){ return Boolean(match && !isClosedMatchRecord(match)); }
+
+function escapeHtmlServer(value){
+  return String(value ?? '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
+}
+
+async function findActiveSupporterMatch(participant_id,supporter_id){
+  const matches=await select('supporter_matches',{participant_id,supporter_id});
+  return matches.filter(isActiveMatchRecord).sort((a,b)=>new Date(b.updated_at||b.created_at||0)-new Date(a.updated_at||a.created_at||0))[0] || null;
+}
+
+function normalizeEmailType(value){
+  const allowed=new Set(['matching_candidate','approval_received','connection_confirmed']);
+  const type=String(value||'matching_candidate').trim();
+  return allowed.has(type) ? type : 'matching_candidate';
+}
+
+async function sendFclResendEmail({to,subject,text,html,idempotencyKey}={}){
+  if(!to) throw new Error('recipient email is required');
+  const apiKey=process.env.RESEND_API_KEY;
+  const from=process.env.FCL_FROM_EMAIL;
+  const testMode=process.env.NODE_ENV==='development'||process.env.NODE_ENV==='test';
+  if(!apiKey||!from){
+    if(testMode) return {id:null,skipped:true,reason:'email configuration unavailable in test/development'};
+    throw new Error('メール送信設定がまだ完了していません。');
+  }
+  const response=await fetch('https://api.resend.com/emails',{
+    method:'POST',
+    headers:{'Content-Type':'application/json',Authorization:'Bearer '+apiKey,...(idempotencyKey?{'Idempotency-Key':idempotencyKey}:{})},
+    body:JSON.stringify({from,to:[to],subject,text,html:html||'<div style="font-family:Arial,sans-serif;line-height:1.7;white-space:pre-wrap">'+escapeHtmlServer(text)+'</div>'})
+  });
+  const responseText=await response.text();
+  if(!response.ok) throw new Error('Resend '+response.status+': '+responseText);
+  let parsed={}; try{parsed=JSON.parse(responseText);}catch{}
+  return parsed;
+}
+
+function scoreAnswers(a) { return CHECKIN_ANSWER_KEYS.reduce((s,key)=>s+Number(a[key]||0),0); }
 function riskFromScore(score){ const r=Math.round(((25-score)/20)*100); return Math.max(0, Math.min(100,r)); }
 function riskLevel(r){ return r>=70?'high':r>=45?'medium':'low'; }
 function intervention(variant, r){
@@ -254,7 +305,7 @@ async function optimizeAction({participant_id, checkin}){
   const [allI, allA, supporters, supportOutcomes, participant] = await Promise.all([
     select('intervention_assignments'),
     select('action_results'),
-    uniqueProductionContacts(await select('supporters')),
+    uniqueProductionContacts(await select('supporters')).filter(s=>s.user_id!==currentParticipant.user_id),
     select('supporter_outcomes'),
     select('participants',{id:participant_id})
   ]);
@@ -2461,9 +2512,11 @@ app.post('/api/checkins',async(req,res)=>{
 
   try{
     participant_id=String(req.body?.participant_id||'').trim();
-    answers=(req.body?.answers && typeof req.body.answers==='object' && !Array.isArray(req.body.answers))
-      ? req.body.answers
-      : {};
+    try{
+      answers=normalizeCheckinAnswers(req.body?.answers);
+    }catch(validationError){
+      return res.status(400).json({error:validationError.message||'invalid answers'});
+    }
     if(!participant_id) return res.status(400).json({error:'invalid participant_id'});
 
     recentCheckins=(await select('checkins',{participant_id}))
@@ -2475,7 +2528,16 @@ app.post('/api/checkins',async(req,res)=>{
       Date.now()-safeDate(row.checked_in_at).getTime() < 24*3600*1000
     );
 
+    const checkinJournalText=String(req.body?.checkin_text||'').trim();
+
     if(duplicateCheckin){
+      if(checkinJournalText){
+        try{
+          await saveJournalEntry({participant_id,entry_date:todayJstDate(),source:'fcl',raw_text:checkinJournalText,metadata:{imported_via:'checkin-retry',checkin_id:duplicateCheckin.id}});
+        }catch(journalError){
+          console.warn('[journal-entries] duplicate checkin note refresh failed',journalError?.message||journalError);
+        }
+      }
       const assignment=(await select('intervention_assignments',{participant_id,checkin_id:duplicateCheckin.id}))[0] || null;
       return res.json({
         ok:true,
@@ -2509,7 +2571,6 @@ app.post('/api/checkins',async(req,res)=>{
       checked_in_at:new Date().toISOString()
     });
 
-    const checkinJournalText=String(req.body?.checkin_text||'').trim();
     if(checkinJournalText){
       try{
         await saveJournalEntry({
@@ -2623,7 +2684,11 @@ app.post('/api/checkins',async(req,res)=>{
 
     if((policy.selected.action_type==='supporter'||policy.selected.action_type==='both') && policy.selected.supporter_id){
       try{
-        suggestedSupporterMatch=await insert('supporter_matches',{
+        const existingMatch=await findActiveSupporterMatch(participant_id,policy.selected.supporter_id);
+        if(existingMatch){
+          suggestedSupporterMatch={...existingMatch,reused_existing_match:true};
+        }else{
+          suggestedSupporterMatch=await insert('supporter_matches',{
           participant_id,
           supporter_id:policy.selected.supporter_id,
           score:Number((policy.selected.score*100).toFixed(2)),
@@ -2632,9 +2697,21 @@ app.post('/api/checkins',async(req,res)=>{
           created_at:new Date().toISOString(),
           updated_at:new Date().toISOString()
         });
+        }
       }catch(matchError){
-        console.error('[checkin] supporter match creation failed after checkin saved',matchError);
-        processingWarnings.push('supporter_match');
+        if(matchError?.code==='23505'){
+          try{
+            const existingMatch=await findActiveSupporterMatch(participant_id,policy.selected.supporter_id);
+            if(existingMatch) suggestedSupporterMatch={...existingMatch,reused_existing_match:true};
+            else { console.error('[checkin] supporter match unique conflict but no active match found',matchError); processingWarnings.push('supporter_match'); }
+          }catch(recoveryError){
+            console.error('[checkin] supporter match recovery failed',recoveryError);
+            processingWarnings.push('supporter_match');
+          }
+        }else{
+          console.error('[checkin] supporter match creation failed after checkin saved',matchError);
+          processingWarnings.push('supporter_match');
+        }
       }
     }
 
@@ -3303,7 +3380,7 @@ app.post('/api/matches',async(req,res)=>{
     const ps=(await select('participants',{id:participant_id}))[0];
     if(ps?.archived_at) return res.status(410).json({error:'この登録は終了しています。'});
     if(!ps) return res.status(404).json({error:'participant not found'});
-    const allSupporters = uniqueProductionContacts((await select('supporters')).filter(s => s.active !== false && s.accepting_new_matches !== false));
+    const allSupporters = uniqueProductionContacts((await select('supporters')).filter(s => s.active !== false && s.accepting_new_matches !== false && s.user_id !== ps.user_id));
     const allMatches = (await select('supporter_matches')).filter(m => !['connected','declined','expired'].includes(effectiveMatchStatus(m)));
     const activeCounts = new Map();
     for (const match of allMatches) {
@@ -3461,38 +3538,36 @@ app.get('/api/matches/:id/detail', async (req, res) => {
 
 app.post('/api/matches/:id/send-email', async (req, res) => {
   try {
-    const emailType = req.body?.email_type || 'matching_candidate';
-    const match = (await select('supporter_matches',{id:req.params.id}))[0];
-    if (!match) return res.status(404).json({ error: 'match not found' });
-    const participant = (await select('participants',{id:match.participant_id}))[0];
-    const supporter = (await select('supporters',{id:match.supporter_id}))[0];
-    const allowedTypes = new Set(['matching_candidate','approval_received','connection_confirmed']);
-    const finalType = allowedTypes.has(emailType) ? emailType : 'matching_candidate';
-    const email = {
-      type: finalType,
-      subject: {
-        matching_candidate: 'FCL: 支援候補のご案内',
-        approval_received: 'FCL: 承認の受領をお知らせ',
-        connection_confirmed: 'FCL: 接続成立のお知らせ'
-      }[finalType],
-      body: {
-        matching_candidate: `支援候補のご案内です。FCLサイトで詳細を確認し、承認の可否を選んでください。\n\n挑戦者: ${participant?.name || '未登録'}\n支援者: ${supporter?.supporter_name || '支援者'}\n詳細: /match-detail.html?match_id=${match.id}`,
-        approval_received: `承認を受け取りました。双方の承認後に接続が成立します。\n\nFCLサイトで状況を確認してください。\n詳細: /match-detail.html?match_id=${match.id}`,
-        connection_confirmed: `支援の接続が成立しました。支援実施と観測をFCLサイトで続けてください。\n\n詳細: /match-detail.html?match_id=${match.id}`
-      }[finalType],
-      redirect_url: `/match-detail.html?match_id=${match.id}`
-    };
-    await insert('connection_events', {
-      participant_id: match.participant_id,
-      supporter_id: match.supporter_id,
-      match_id: match.id,
-      event_type: 'email_sent',
-      note: JSON.stringify({ email_type: finalType, redirect_url: email.redirect_url }),
-      created_at: new Date().toISOString()
+    const finalType=normalizeEmailType(req.body?.email_type);
+    const match=(await select('supporter_matches',{id:req.params.id}))[0];
+    if(!match)return res.status(404).json({error:'match not found'});
+    const participant=(await select('participants',{id:match.participant_id}))[0];
+    const supporter=(await select('supporters',{id:match.supporter_id}))[0];
+    if(!participant||!supporter)return res.status(404).json({error:'接続相手が見つかりません。'});
+    const viewerRole=participant.user_id===req.fclUser?.id ? 'challenger' : supporter.user_id===req.fclUser?.id ? 'supporter' : null;
+    if(!viewerRole)return res.status(403).json({error:'この接続の当事者本人のみメールを送信できます。'});
+    const recipientRole=viewerRole==='challenger'?'supporter':'challenger';
+    const recipientEmail=recipientRole==='supporter'?normalizeContactEmail(supporter.email):normalizeContactEmail(participant.email);
+    if(!recipientEmail)return res.status(400).json({error:'相手のメールアドレスが登録されていません。'});
+    const publicUrl=(process.env.FCL_PUBLIC_URL || (req.protocol+'://'+req.get('host'))).replace(/\/$/,'');
+    const accessToken=effectiveMatchStatus(match)==='connected'?createAccessToken(match.id,recipientRole):'';
+    const detailUrl=publicUrl+'/match-detail.html?match_id='+encodeURIComponent(match.id)+(accessToken?'&token='+encodeURIComponent(accessToken):'');
+    const subject={matching_candidate:'FCL｜支援候補のご案内',approval_received:'FCL｜接続承認を受け取りました',connection_confirmed:'FCL｜支援の接続が成立しました'}[finalType];
+    const body={
+      matching_candidate:'FCLの支援候補をご案内します。\n\n挑戦者：'+(participant.name||'挑戦者')+'\n支援者：'+(supporter.supporter_name||'支援者')+'\n挑戦内容：'+(participant.challenge||'未登録')+'\n目標：'+(participant.goal||'未登録')+'\n\nFCLで詳細を確認し、接続の可否を選んでください。\n'+detailUrl+'\n\n心当たりがない場合は、このメールを無視してください。',
+      approval_received:'FCLの接続について相手から承認が届いています。\n\n挑戦者：'+(participant.name||'挑戦者')+'\n支援者：'+(supporter.supporter_name||'支援者')+'\n\nFCLで現在の接続状態を確認してください。\n'+detailUrl,
+      connection_confirmed:'FCLの支援接続が成立しました。\n\n挑戦内容：'+(participant.challenge||'未登録')+'\n目標：'+(participant.goal||'未登録')+'\n\nFCLの接続ページ：\n'+detailUrl+'\n\nここから、最初の支援内容を相手と相談してください.'
+    }[finalType];
+    const resend=await sendFclResendEmail({
+      to:recipientEmail,subject,text:body,
+      html:'<div style="font-family:Arial,sans-serif;line-height:1.7"><div style="white-space:pre-wrap">'+escapeHtmlServer(body)+'</div><p style="margin-top:20px"><a href="'+escapeHtmlServer(detailUrl)+'" style="display:inline-block;padding:12px 18px;background:#111827;color:#fff;text-decoration:none;border-radius:8px">FCLの接続ページを開く</a></p></div>',
+      idempotencyKey:'fcl/manual-email/'+match.id+'/'+finalType+'/'+recipientRole
     });
-    res.json({ ok: true, email, match_id: match.id, status: 'sent' });
+    await insert('connection_events',{participant_id:match.participant_id,supporter_id:match.supporter_id,match_id:match.id,event_type:'email_sent',note:JSON.stringify({email_type:finalType,recipient_role:recipientRole,recipient:recipientEmail,redirect_url:detailUrl,resend_id:resend?.id||null,skipped:Boolean(resend?.skipped),sent_by:viewerRole}),created_at:new Date().toISOString()});
+    res.json({ok:true,email:{type:finalType,subject,body,redirect_url:detailUrl},match_id:match.id,status:resend?.skipped?'recorded_test':'sent',resend_id:resend?.id||null});
   } catch (error) {
-    res.status(500).json({ error: error.message || 'send email failed' });
+    const status=/メール送信設定/.test(String(error?.message||''))?503:500;
+    res.status(status).json({error:error.message||'send email failed'});
   }
 });
 
@@ -3716,10 +3791,14 @@ app.post('/api/supporter-match', async (req, res) => {
     const { participant_id, supporter_id } = req.body || {};
     if (!participant_id || !supporter_id) return res.status(400).json({ error: 'invalid participant_id or supporter_id' });
 
-    const existing=(await select('supporter_matches',{participant_id,supporter_id}));
-    if (existing.length) {
-      return res.status(409).json({ error: 'duplicate support match', status: 'duplicate', match: existing[0] });
-    }
+    const participant=(await select('participants',{id:participant_id}))[0];
+    const supporter=(await select('supporters',{id:supporter_id}))[0];
+    if(!participant||participant.archived_at)return res.status(404).json({error:'participant not found'});
+    if(!supporter||supporter.archived_at)return res.status(404).json({error:'supporter not found'});
+    if(supporter.active===false||supporter.accepting_new_matches===false)return res.status(409).json({error:'この支援者は現在、新しい接続を受け付けていません。'});
+    if(participant.user_id===supporter.user_id)return res.status(409).json({error:'自分自身を支援者として選択することはできません。'});
+    const existing=await findActiveSupporterMatch(participant_id,supporter_id);
+    if(existing)return res.status(409).json({error:'duplicate active support match',status:'duplicate',match:existing});
 
     const match = await insert('supporter_matches', {
       participant_id,
