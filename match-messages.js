@@ -95,7 +95,7 @@ async function authorize(matchId, token) {
   return { auth, match, senderId: expectedSenderId };
 }
 
-async function sendMessageNotification({ match, senderRole, body }) {
+async function sendMessageNotification({ match, senderRole, body, messageId }) {
   if (!supabase || !resendApiKey || !fromEmail) return null;
 
   const [participantResult, supporterResult] = await Promise.all([
@@ -125,7 +125,7 @@ async function sendMessageNotification({ match, senderRole, body }) {
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${resendApiKey}`,
-      'Idempotency-Key': `fcl/message_notification/${match.id}/${crypto.randomUUID()}`
+      'Idempotency-Key': `fcl/message_notification/${match.id}/${messageId || crypto.randomUUID()}`
     },
     body: JSON.stringify({
       from: fromEmail,
@@ -246,7 +246,8 @@ export function registerMatchMessageRoutes(app) {
         notificationEmailId = await sendMessageNotification({
           match: authz.match,
           senderRole: authz.auth.role,
-          body
+          body,
+          messageId: message.id
         });
         notificationStatus = notificationEmailId ? 'sent' : 'skipped';
         await supabase.from('connection_events').insert({
