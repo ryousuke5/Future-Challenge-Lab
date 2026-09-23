@@ -205,7 +205,8 @@ async function loadJournalReply(){
             checkin_text:history.checkin_text || '',
             analysis:history.analysis || {},
             decision:history.decision || null,
-            outcome:history.outcome || null
+            outcome:history.outcome || null,
+            allow_openai:false
           })
         });
         const data=await response.json().catch(()=>({}));
