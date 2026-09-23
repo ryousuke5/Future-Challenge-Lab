@@ -307,12 +307,15 @@ test('closed supporter match can be recreated, active duplicate cannot', { concu
     accepting_new_matches:true
   });
 
-  await login(participantEmail);
-  const first = await api('/api/matches', {participant_id:participant.id});
-  const candidate = first.find(x=>x.supporter_id===supporter.id);
-  assert.ok(candidate);
+  await login(supporterEmail);
+  const first = await api('/api/supporter-match',{
+    participant_id:participant.id,
+    supporter_id:supporter.id
+  });
+  assert.equal(first.status,'saved');
 
-  const decline = await api('/api/matches/'+candidate.id+'/decline',{actor:'challenger'});
+  await login(participantEmail);
+  const decline = await api('/api/matches/'+first.match_id+'/decline',{actor:'challenger'});
   assert.equal(decline.status,'declined');
 
   await login(supporterEmail);
