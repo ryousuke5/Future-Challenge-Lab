@@ -2449,97 +2449,263 @@ app.post('/api/life-story-pages/generate',async(req,res)=>{
   }
 });
 app.post('/api/checkins',async(req,res)=>{
+  let participant_id=null;
+  let answers={};
+  let recentCheckins=[];
+  let checkin=null;
+  let policy=null;
+  let assigned=null;
+  let suggestedSupporterMatch=null;
+  let aiInterventionRecord=null;
+  const processingWarnings=[];
+
   try{
-    const {participant_id, answers={}}=req.body;
-    const recentCheckins=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
-    const duplicateCheckin=recentCheckins.find(row => sameValue(row.autonomy_answers || {}, answers) && safeDate(row.checked_in_at) && Date.now()-safeDate(row.checked_in_at).getTime() < 24*3600*1000);
+    participant_id=String(req.body?.participant_id||'').trim();
+    answers=(req.body?.answers && typeof req.body.answers==='object' && !Array.isArray(req.body.answers))
+      ? req.body.answers
+      : {};
+    if(!participant_id) return res.status(400).json({error:'invalid participant_id'});
+
+    recentCheckins=(await select('checkins',{participant_id}))
+      .sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at));
+
+    const duplicateCheckin=recentCheckins.find(row =>
+      sameValue(row.autonomy_answers || {}, answers) &&
+      safeDate(row.checked_in_at) &&
+      Date.now()-safeDate(row.checked_in_at).getTime() < 24*3600*1000
+    );
+
     if(duplicateCheckin){
       const assignment=(await select('intervention_assignments',{participant_id,checkin_id:duplicateCheckin.id}))[0] || null;
-      return res.json({duplicate:true,checkin:duplicateCheckin,checkin_count:recentCheckins.length,intervention:assignment,resumed:Boolean(duplicateCheckin.analysis?.resumed),intervention_record_status:'duplicate'});
+      return res.json({
+        ok:true,
+        duplicate:true,
+        checkin:duplicateCheckin,
+        checkin_count:recentCheckins.length,
+        intervention:assignment,
+        resumed:Boolean(duplicateCheckin.analysis?.resumed),
+        intervention_record_status:'duplicate'
+      });
     }
+
     const score=scoreAnswers(answers), risk=riskFromScore(score), level=riskLevel(risk);
     const previous=recentCheckins[0];
     const resumed=Boolean(previous && (Date.now()-new Date(previous.checked_in_at).getTime())>36*3600*1000);
-    const analysis={summary:level==='high'?'自己決定感が低く、離脱リスクが高い状態です。':'自己決定感を保てています。',resumed,signals:{score,risk,level}};
-    const checkin=await insert('checkins',{participant_id,autonomy_total:score,autonomy_answers:answers,risk_score:risk,risk_level:level,analysis,checked_in_at:new Date().toISOString()});
+    const analysis={
+      summary:level==='high'?'自己決定感が低く、離脱リスクが高い状態です。':'自己決定感を保てています。',
+      resumed,
+      signals:{score,risk,level}
+    };
+
+    // ここまでが「今日の1ページ」の本体。以降の学習・最適化処理が失敗しても
+    // 保存済みのチェックインを失敗扱いにしない。
+    checkin=await insert('checkins',{
+      participant_id,
+      autonomy_total:score,
+      autonomy_answers:answers,
+      risk_score:risk,
+      risk_level:level,
+      analysis,
+      checked_in_at:new Date().toISOString()
+    });
+
     const checkinJournalText=String(req.body?.checkin_text||'').trim();
     if(checkinJournalText){
       try{
-        await saveJournalEntry({participant_id,entry_date:todayJstDate(),source:'fcl',raw_text:checkinJournalText,metadata:{imported_via:'checkin',checkin_id:checkin.id}});
+        await saveJournalEntry({
+          participant_id,
+          entry_date:todayJstDate(),
+          source:'fcl',
+          raw_text:checkinJournalText,
+          metadata:{imported_via:'checkin',checkin_id:checkin.id}
+        });
       }catch(journalError){
         console.warn('[journal-entries] FCL note save failed',journalError?.message||journalError);
+        processingWarnings.push('journal_entry');
       }
     }
-    // Close the feedback loop for interventions that were observed before this check-in.
-    const openOutcomes=(await select('intervention_outcomes',{participant_id})).filter(row=>row.post_risk===null||row.post_risk===undefined);
-    for(const outcome of openOutcomes){
-      const intervention=outcome.intervention_id ? (await select('intervention_assignments',{id:outcome.intervention_id}))[0] : null;
-      if(!intervention) continue;
-      const sourceCheckin=intervention.checkin_id ? (await select('checkins',{id:intervention.checkin_id}))[0] : null;
-      if(!sourceCheckin) continue;
-      const sourceAt=new Date(sourceCheckin.checked_in_at||0).getTime();
-      const currentAt=new Date(checkin.checked_in_at||0).getTime();
-      if(!Number.isFinite(sourceAt)||!Number.isFinite(currentAt)||currentAt<=sourceAt) continue;
-      const preRisk=Number(outcome.pre_risk);
-      const postRisk=Number(risk);
-      const delta=Number.isFinite(preRisk)&&Number.isFinite(postRisk)?Number((postRisk-preRisk).toFixed(2)):null;
-      await update('intervention_outcomes',outcome.id,{
-        post_risk:Number.isFinite(postRisk)?postRisk:null,
-        resumed,
-        outcome_score:delta===null ? outcome.outcome_score : Number((-delta).toFixed(3))
-      });
-      await insert('model_learning_events',{
-        participant_id,
-        intervention_id:outcome.intervention_id,
-        features:{
-          action_type:'intervention_outcome_observed',
-          intervention_outcome_id:outcome.id,
-          pre_risk:Number.isFinite(preRisk)?preRisk:null,
+
+    try{
+      const openOutcomes=(await select('intervention_outcomes',{participant_id}))
+        .filter(row=>row.post_risk===null||row.post_risk===undefined);
+
+      for(const outcome of openOutcomes){
+        const intervention=outcome.intervention_id
+          ? (await select('intervention_assignments',{id:outcome.intervention_id}))[0]
+          : null;
+        if(!intervention) continue;
+
+        const sourceCheckin=intervention.checkin_id
+          ? (await select('checkins',{id:intervention.checkin_id}))[0]
+          : null;
+        if(!sourceCheckin) continue;
+
+        const sourceAt=new Date(sourceCheckin.checked_in_at||0).getTime();
+        const currentAt=new Date(checkin.checked_in_at||0).getTime();
+        if(!Number.isFinite(sourceAt)||!Number.isFinite(currentAt)||currentAt<=sourceAt) continue;
+
+        const preRisk=Number(outcome.pre_risk);
+        const postRisk=Number(risk);
+        const delta=Number.isFinite(preRisk)&&Number.isFinite(postRisk)
+          ? Number((postRisk-preRisk).toFixed(2))
+          : null;
+
+        await update('intervention_outcomes',outcome.id,{
           post_risk:Number.isFinite(postRisk)?postRisk:null,
-          risk_delta:delta,
-          action_completed:outcome.action_completed,
           resumed,
-          observed_at:new Date().toISOString()
-        },
-        label:{
-          action_completed:Boolean(outcome.action_completed),
-          resumed:Boolean(resumed),
-          risk_delta:delta
-        }
-      });
-    }
-    const policy=await optimizeAction({participant_id,checkin});
-    let assigned=null;
-    if(['intervention','supporter','both'].includes(policy.selected.action_type)){
-      const iv=intervention(policy.selected.variant,risk);
-      assigned=await insert('intervention_assignments',{participant_id,checkin_id:checkin.id,variant:policy.selected.variant||'A',intervention_type:iv.type,intervention_text:iv.text,meta:{risk_bucket:bucketRisk(risk),autonomy_bucket:bucketAutonomy(score),resumed,policy_version:'unified-contextual-bandit-v2'},assigned_at:new Date().toISOString()});
-    }
-    let suggestedSupporterMatch=null;
-    if((policy.selected.action_type==='supporter'||policy.selected.action_type==='both') && policy.selected.supporter_id){
-      suggestedSupporterMatch=await insert('supporter_matches',{participant_id,supporter_id:policy.selected.supporter_id,score:Number((policy.selected.score*100).toFixed(2)),reason:'介入最適化AIが、現在地・再開状態・支援成果データを統合して選択',status:'pending',created_at:new Date().toISOString(),updated_at:new Date().toISOString()});
+          outcome_score:delta===null ? outcome.outcome_score : Number((-delta).toFixed(3))
+        });
+
+        await insert('model_learning_events',{
+          participant_id,
+          intervention_id:outcome.intervention_id,
+          features:{
+            action_type:'intervention_outcome_observed',
+            intervention_outcome_id:outcome.id,
+            pre_risk:Number.isFinite(preRisk)?preRisk:null,
+            post_risk:Number.isFinite(postRisk)?postRisk:null,
+            risk_delta:delta,
+            action_completed:outcome.action_completed,
+            resumed,
+            observed_at:new Date().toISOString()
+          },
+          label:{
+            action_completed:Boolean(outcome.action_completed),
+            resumed:Boolean(resumed),
+            risk_delta:delta
+          }
+        });
+      }
+    }catch(feedbackError){
+      console.error('[checkin] feedback loop failed after checkin saved',feedbackError);
+      processingWarnings.push('feedback_loop');
     }
 
-    const aiInterventionRecord = await saveAIInterventionRecord({
-      participant_id,
-      checkin_id: checkin.id,
-      risk,
-      score,
-      resumed,
-      policySelected: policy.selected
-    });
+    try{
+      policy=await optimizeAction({participant_id,checkin});
+    }catch(policyError){
+      console.error('[checkin] action optimization failed after checkin saved',policyError);
+      processingWarnings.push('optimization');
+      policy={
+        selected:{action_type:'intervention',variant:'A',score:0},
+        decision:null,
+        candidates:[],
+        segment:{
+          risk_bucket:bucketRisk(risk),
+          autonomy_bucket:bucketAutonomy(score),
+          resumed
+        }
+      };
+    }
+
+    if(['intervention','supporter','both'].includes(policy.selected.action_type)){
+      try{
+        const iv=intervention(policy.selected.variant,risk);
+        assigned=await insert('intervention_assignments',{
+          participant_id,
+          checkin_id:checkin.id,
+          variant:policy.selected.variant||'A',
+          intervention_type:iv.type,
+          intervention_text:iv.text,
+          meta:{
+            risk_bucket:bucketRisk(risk),
+            autonomy_bucket:bucketAutonomy(score),
+            resumed,
+            policy_version:'unified-contextual-bandit-v2'
+          },
+          assigned_at:new Date().toISOString()
+        });
+      }catch(assignmentError){
+        console.error('[checkin] intervention assignment failed after checkin saved',assignmentError);
+        processingWarnings.push('intervention_assignment');
+      }
+    }
+
+    if((policy.selected.action_type==='supporter'||policy.selected.action_type==='both') && policy.selected.supporter_id){
+      try{
+        suggestedSupporterMatch=await insert('supporter_matches',{
+          participant_id,
+          supporter_id:policy.selected.supporter_id,
+          score:Number((policy.selected.score*100).toFixed(2)),
+          reason:'介入最適化AIが、現在地・再開状態・支援成果データを統合して選択',
+          status:'pending',
+          created_at:new Date().toISOString(),
+          updated_at:new Date().toISOString()
+        });
+      }catch(matchError){
+        console.error('[checkin] supporter match creation failed after checkin saved',matchError);
+        processingWarnings.push('supporter_match');
+      }
+    }
+
+    try{
+      aiInterventionRecord=await saveAIInterventionRecord({
+        participant_id,
+        checkin_id:checkin.id,
+        risk,
+        score,
+        resumed,
+        policySelected:policy.selected
+      });
+      if(aiInterventionRecord?.error) processingWarnings.push('ai_intervention_record');
+    }catch(interventionRecordError){
+      console.error('[checkin] AI intervention record failed after checkin saved',interventionRecordError);
+      processingWarnings.push('ai_intervention_record');
+      aiInterventionRecord={recorded:false,error:interventionRecordError.message};
+    }
 
     res.json({
+      ok:true,
+      partial:processingWarnings.length>0,
+      processing_warnings:processingWarnings,
       checkin,
-      checkin_count: recentCheckins.length + 1,
+      checkin_count:recentCheckins.length+1,
       intervention:assigned,
       suggestedSupporterMatch,
       resumed,
       optimization:policy,
-      ai_intervention: aiInterventionRecord.decision || null,
-      intervention_record_status: aiInterventionRecord.recorded ? 'saved' : aiInterventionRecord.error ? 'failed' : 'not_required',
-      intervention_record_error: aiInterventionRecord.error || null
+      ai_intervention:aiInterventionRecord?.decision||null,
+      intervention_record_status:aiInterventionRecord?.recorded ? 'saved' : aiInterventionRecord?.error ? 'failed' : 'not_required',
+      intervention_record_error:aiInterventionRecord?.error||null
     });
-  }catch(e){res.status(500).json({error:e.message,stack:process.env.NODE_ENV==='development'?e.stack:undefined});}
+  }catch(e){
+    console.error('[checkin] request failed',e);
+
+    // 重要: チェックイン保存後の失敗はHTTP 500にせず、
+    // 「今日の1ページ」は保存済みとして次のAI分析へ進められるようにする。
+    if(checkin){
+      let count=recentCheckins.length+1;
+      try{
+        count=(await select('checkins',{participant_id})).length;
+      }catch(_countError){}
+
+      return res.status(200).json({
+        ok:true,
+        partial:true,
+        processing_warnings:[...new Set([...processingWarnings,'post_processing'])],
+        checkin,
+        checkin_count:count,
+        intervention:assigned,
+        suggestedSupporterMatch,
+        resumed:Boolean(checkin.analysis?.resumed),
+        optimization:policy || {
+          selected:{action_type:'intervention',variant:'A',score:0},
+          decision:null,
+          candidates:[],
+          segment:{
+            risk_bucket:bucketRisk(Number(checkin.risk_score||0)),
+            autonomy_bucket:bucketAutonomy(Number(checkin.autonomy_total||0)),
+            resumed:Boolean(checkin.analysis?.resumed)
+          }
+        },
+        ai_intervention:aiInterventionRecord?.decision||null,
+        intervention_record_status:aiInterventionRecord?.recorded ? 'saved' : aiInterventionRecord?.error ? 'failed' : 'not_required',
+        intervention_record_error:aiInterventionRecord?.error||null
+      });
+    }
+
+    res.status(500).json({error:e.message||'checkin failed'});
+  }
 });
 
 app.post('/api/actions',async(req,res)=>{
