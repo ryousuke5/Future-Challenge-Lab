@@ -193,7 +193,7 @@ async function loadJournalReply(){
       return;
     }
 
-    if(history.analysis && history.analysis_event_id){
+    if(history.analysis || history.checkin_text){
       try{
         const response=await fetch('/api/journal-replies/generate',{
           method:'POST',
