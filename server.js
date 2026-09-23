@@ -1353,20 +1353,11 @@ async function refreshJournalReplyForEntry({ participant_id, checkin_id = null, 
       return eventDate===replyDate;
     })
     .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
-  let analysisEvent=sameDayEvents[0] || null;
-  let analysis=analysisEvent?.features?.result || analysisEvent?.features || {};
-  if(!analysisEvent){
-    const core=await runFclAiCore({
-      participant_id,
-      checkin_text:journalText,
-      participant_profile:{goal:participant.goal||'',barrier:''},
-      current_goal:participant.goal||'',
-      answers:{}
-    });
-    analysisEvent=core?.analysis_event_id ? (await select('model_learning_events',{id:core.analysis_event_id}))[0] : null;
-    analysis=core || {};
-  }
-  if(!analysisEvent?.id) throw new Error('analysis event could not be created');
+  const analysisEvent=sameDayEvents[0] || null;
+  // 返信はAI分析に依存させない。分析が失敗しても日誌本文だけで生成する。
+  const analysis=analysisEvent?.features?.result || analysisEvent?.features || {
+    insight:'今日の日誌に書かれた内容を受け取りました。'
+  };
 
   const previousReplies=(await select('journal_replies',{participant_id}))
     .filter(row=>String(row.reply_date||'')<replyDate)
@@ -1390,7 +1381,7 @@ async function refreshJournalReplyForEntry({ participant_id, checkin_id = null, 
   const row={
     participant_id,
     checkin_id:checkin_id || null,
-    source_analysis_event_id:analysisEvent.id,
+    source_analysis_event_id:analysisEvent?.id || null,
     reply_text:replyText,
     reply_version:aiReply ? 'v2-ai-journal' : 'v2-ai-journal-fallback',
     reply_date:replyDate,
@@ -1411,7 +1402,6 @@ async function refreshJournalReplyForEntry({ participant_id, checkin_id = null, 
 
 async function saveJournalReply({ participant_id, checkin_id = null, source_analysis_event_id, reply_text, reply_version = 'v1', reply_date = todayJstDate() }){
   if(!participant_id) throw new Error('invalid participant_id');
-  if(!source_analysis_event_id) throw new Error('invalid source_analysis_event_id');
   const text = String(reply_text || '').trim();
   if(!text) throw new Error('empty reply_text');
 
@@ -2322,11 +2312,12 @@ app.get('/api/story/:participant_id',async(req,res)=>{
 app.get('/api/core/history/:participant_id',async(req,res)=>{
   try{
     const participantId=req.params.participant_id;
-    const [participantRows,events,checkins,replies]=await Promise.all([
+    const [participantRows,events,checkins,replies,journalEntries]=await Promise.all([
       select('participants',{id:participantId}),
       select('model_learning_events',{participant_id:participantId}),
       select('checkins',{participant_id:participantId}),
-      select('journal_replies',{participant_id:participantId,reply_date:todayJstDate()})
+      select('journal_replies',{participant_id:participantId,reply_date:todayJstDate()}),
+      select('journal_entries',{participant_id:participantId})
     ]);
     const participant=participantRows[0];
     if(!participant) return res.status(404).json({error:'participant not found'});
@@ -2335,7 +2326,13 @@ app.get('/api/core/history/:participant_id',async(req,res)=>{
     const decision=sortedEvents.find(event=>event.features?.action_type==='core_decision');
     const outcome=sortedEvents.find(event=>event.features?.action_type==='core_outcome');
     const checkin=checkins.sort((a,b)=>new Date(b.checked_in_at||0)-new Date(a.checked_in_at||0))[0]||null;
+    const latestJournalEntry=journalEntries
+      .filter(row=>String(row.entry_date||'') <= todayJstDate())
+      .sort((a,b)=>new Date(b.updated_at||b.created_at||0)-new Date(a.updated_at||a.created_at||0))[0]||null;
     const savedReply=replies.sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0]||null;
+    const historyAnalysis=analysis
+      ? (analysis.features?.result||{...analysis.features,label:analysis.label})
+      : (checkin?.analysis || null);
     res.json({
       participant,
       checkin,
@@ -2343,8 +2340,8 @@ app.get('/api/core/history/:participant_id',async(req,res)=>{
       analysis_event_id:analysis?.id||null,
       checkin_checked_in_at:checkin?.checked_in_at||null,
       journal_reply:savedReply,
-      checkin_text:analysis?.features?.checkin_text||'',
-      analysis:analysis?(analysis.features?.result||{...analysis.features,label:analysis.label}):null,
+      checkin_text:analysis?.features?.checkin_text || latestJournalEntry?.raw_text || '',
+      analysis:historyAnalysis,
       decision:decision?{...decision.features,label:decision.label}:null,
       outcome:outcome?{...outcome.features,label:outcome.label}:null
     });
@@ -3856,18 +3853,36 @@ app.post('/api/core/analyze', async (req, res) => {
     if (!participant_id) return res.status(400).json({ error: 'invalid participant_id' });
     if (!checkin_text || !String(checkin_text).trim()) return res.status(400).json({ error: 'empty input' });
 
-    const response = await runFclAiCore({
-      participant_id,
-      checkin_text,
-      participant_profile,
-      current_goal,
-      answers,
-      recent_context
-    });
+    let response=null;
+    let coreAnalysisError=null;
+    try{
+      response = await runFclAiCore({
+        participant_id,
+        checkin_text,
+        participant_profile,
+        current_goal,
+        answers,
+        recent_context
+      });
+    }catch(coreError){
+      coreAnalysisError=coreError;
+      console.error('[core/analyze] analysis failed; reply will still be generated',coreError?.message||coreError);
+      response={
+        state:'現在の状態を確認中',
+        state_change:'AI分析は一時的に利用できませんでした。',
+        risk:{level:'unknown',reason:'AI分析エラー'},
+        insight:'今日の日誌は受け取っています。返信は分析結果とは別に生成します。',
+        problem:'AI分析の詳細を取得できませんでした。',
+        solutions:[],
+        recommended_option:'A',
+        next_action:'今日の記録をもとに、無理のない次の一歩を考える',
+        analysis_event_id:null
+      };
+    }
 
     let journalReply=null;
     let journalReplySource='none';
-    if(response?.analysis_event_id){
+    if(String(checkin_text || '').trim()){
       try{
         const participant=(await select('participants',{id:participant_id}))[0];
         const today=todayJstDate();
@@ -3898,7 +3913,7 @@ app.post('/api/core/analyze', async (req, res) => {
           journalReply=await saveJournalReply({
             participant_id,
             checkin_id:checkin_id || null,
-            source_analysis_event_id:response.analysis_event_id,
+            source_analysis_event_id:response?.analysis_event_id || null,
             reply_text:replyText,
             reply_version:aiReply ? 'v2-ai' : 'v2-ai-fallback',
             reply_date:today
@@ -3910,7 +3925,13 @@ app.post('/api/core/analyze', async (req, res) => {
       }
     }
 
-    res.json({ ok: true, result: response, journal_reply: journalReply, journal_reply_source: journalReplySource });
+    res.json({
+      ok: true,
+      result: response,
+      journal_reply: journalReply,
+      journal_reply_source: journalReplySource,
+      analysis_available: !coreAnalysisError
+    });
   } catch (error) {
     console.error('core analyze error', error);
     res.status(500).json({ error: error.message || 'analysis failed', fallback: {
@@ -4013,9 +4034,10 @@ ${previousReply || '昨日の返信はありません。'}
 
 app.post('/api/journal-replies/generate', async (req, res) => {
   try {
-    const { participant_id, checkin_id, source_analysis_event_id, checkin_text = '', analysis, decision, outcome } = req.body || {};
+    const { participant_id, checkin_id, source_analysis_event_id = null, checkin_text = '', analysis, decision, outcome } = req.body || {};
     const checkinText = String(checkin_text || '').trim();
-    if(!participant_id || !source_analysis_event_id) return res.status(400).json({error:'participant_id and source_analysis_event_id are required'});
+    if(!participant_id) return res.status(400).json({error:'participant_id is required'});
+    if(!checkinText && !(analysis && typeof analysis === 'object')) return res.status(400).json({error:'checkin_text or analysis is required'});
 
     const participant=(await select('participants',{id:participant_id}))[0];
     if(!participant) return res.status(404).json({error:'participant not found'});
