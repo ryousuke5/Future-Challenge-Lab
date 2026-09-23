@@ -15,7 +15,8 @@ function base64Url(value) {
 
 function createAccessToken(matchId, role) {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return '';
-  const payload = base64Url(JSON.stringify({ match_id: matchId, role }));
+  const expiresAt = Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60);
+  const payload = base64Url(JSON.stringify({ match_id: matchId, role, iat: Math.floor(Date.now() / 1000), exp: expiresAt }));
   const signature = crypto
     .createHmac('sha256', process.env.SUPABASE_SERVICE_ROLE_KEY)
     .update(payload)
@@ -41,6 +42,9 @@ function verifyAccessToken(token, matchId) {
     const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
     if (parsed.match_id !== matchId) return null;
     if (!['challenger', 'supporter'].includes(parsed.role)) return null;
+    // New tokens expire after 30 days. Legacy tokens without exp remain accepted
+    // so existing emailed links are not invalidated by this deployment.
+    if (parsed.exp !== undefined && (!Number.isFinite(Number(parsed.exp)) || Number(parsed.exp) <= Math.floor(Date.now() / 1000))) return null;
     return parsed;
   } catch {
     return null;
