@@ -540,31 +540,50 @@ async function loadSupporterDashboard(){
   const userId = document.getElementById('supporterIdInput').value.trim() || localStorage.getItem('fcl-user-id') || '';
   if(!userId){ return alert('ユーザーIDを入力してください'); }
   await withLoadingUI(document.getElementById('supporterDashboardBtn'), '支援者データ取得中です。しばらくお待ちください…', async () => {
-    const data = await fetch(`/api/supporter/dashboard?user_id=${encodeURIComponent(userId)}`).then(r => r.json());
-    if(data.error){ throw new Error(data.error); }
+    const data = await fetch(`/api/supporter/dashboard?user_id=${encodeURIComponent(userId)}`,{credentials:'same-origin'}).then(async response=>{
+      const json=await response.json().catch(()=>({}));
+      if(!response.ok) throw new Error(json.error||'支援者ダッシュボードの取得に失敗しました。');
+      return json;
+    });
+    const esc=(value)=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;");
     const summary = data.summary || {};
     const targets = (data.targets || []).map(item => `
       <div class='match'>
-        <strong>${item.participant_name || '挑戦者'}</strong>
-        <div>優先度: ${item.priority}</div>
-        <div>ステータス: ${item.challenger_status}</div>
-        <div>リスク: ${item.risk_level}</div>
-        <div>推奨: ${item.recommended_support_type}</div>
-        <p>${item.recommendation_reason}</p>
-        <textarea data-supporter-message='${item.participant_id}' placeholder='サポートメッセージを編集'>${item.suggested_message || ''}</textarea>
-        <button onclick="executeSupporterRecommendation('${item.participant_id}','${supporterId}','${item.recommendation_type_code || item.recommended_support_type}','${item.match_id}')">支援を実行</button>
+        <strong>${esc(item.participant_name || '挑戦者')}</strong>
+        <div>優先度: ${esc(item.priority)}</div>
+        <div>ステータス: ${esc(item.challenger_status)}</div>
+        <div>リスク: ${esc(item.risk_level)}</div>
+        <div>推奨: ${esc(item.recommended_support_type)}</div>
+        <p>${esc(item.recommendation_reason)}</p>
+        <textarea data-supporter-message='${esc(item.participant_id)}' placeholder='サポートメッセージを編集'>${esc(item.suggested_message || '')}</textarea>
+        <button type='button' data-execute-support
+          data-participant-id='${esc(item.participant_id)}'
+          data-supporter-id='${esc(userId)}'
+          data-recommendation-type='${esc(item.recommendation_type_code || item.recommended_support_type)}'
+          data-match-id='${esc(item.match_id)}'>支援を実行</button>
       </div>
     `).join('') || '<p>対象がありません。</p>';
 
-    document.getElementById('supporterDashboard').innerHTML = `
+    const dashboard=document.getElementById('supporterDashboard');
+    dashboard.innerHTML = `
       <div class='analysis-grid'>
-        <div class='result-card'><span class='section-tag'>総支援数</span><h3>${summary.total_support_count ?? 0}</h3></div>
-        <div class='result-card'><span class='section-tag'>観測実行率</span><h3>${summary.observed_execution_rate ?? 0}%</h3></div>
-        <div class='result-card'><span class='section-tag'>週次支援数</span><h3>${summary.weekly_support_count ?? 0}</h3></div>
-        <div class='result-card'><span class='section-tag'>支援能力</span><h3>${summary.support_capacity ?? 0}</h3></div>
+        <div class='result-card'><span class='section-tag'>総支援数</span><h3>${esc(summary.total_support_count ?? 0)}</h3></div>
+        <div class='result-card'><span class='section-tag'>観測実行率</span><h3>${esc(summary.observed_execution_rate ?? 0)}%</h3></div>
+        <div class='result-card'><span class='section-tag'>週次支援数</span><h3>${esc(summary.weekly_support_count ?? 0)}</h3></div>
+        <div class='result-card'><span class='section-tag'>支援能力</span><h3>${esc(summary.support_capacity ?? 0)}</h3></div>
       </div>
       <div style='margin-top:16px'>${targets}</div>
     `;
+    dashboard.querySelectorAll('[data-execute-support]').forEach(button=>{
+      button.addEventListener('click',()=>{
+        executeSupporterRecommendation(
+          button.getAttribute('data-participant-id')||'',
+          button.getAttribute('data-supporter-id')||'',
+          button.getAttribute('data-recommendation-type')||'',
+          button.getAttribute('data-match-id')||''
+        );
+      });
+    });
   });
 }
 
