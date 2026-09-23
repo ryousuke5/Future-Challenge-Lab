@@ -1,6 +1,162 @@
-<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Future Challenge Lab</title><link rel="stylesheet" href="style.css?v=20260922-1000"><link rel="stylesheet" href="supporter-flow.css?v=20260922-0930"></head><body><main>
-<header class="fcl-hero"><div><div class="hero-kicker"><span class="hero-dot"></span><span class="eyebrow">FUTURE CHALLENGE LAB</span><span class="hero-mini">挑戦する人の場所</span></div><h1>挑戦を、物語に。</h1><p>うまくいった日も、迷った日も。今日の一歩を気軽に残して、少しずつ前へ。</p><p class="muted">ひとりで抱えず、記録する。気づく。 挑戦を記録すると、次の一歩が見えてくる。</p><p class="muted">記録だけでは終わらない。挑戦の変化を見つけ、続ける力、支え合えるつながりを育てます。</p><div class="hero-steps"><span>① 記録する</span><span>② 気づく</span><span>③ 次へ進む</span></div></div><div class="hero-actions" style="display:flex;gap:8px;align-items:center"><a href="/user.html"><button type="button" class="secondary-btn">FCLマイページ</button></a><span id="mode" class="pill">checking…</span></div></header>
-<section class="card" style="background:linear-gradient(135deg,#f8fafc,#eef6ff);"><span class="eyebrow">WELCOME TO FCL</span><h2 style="margin-top:8px;">今日、ちょっと進もう。</h2><p>できた日も、迷った日も、止まった日も大丈夫。残した一日が、あとから自分の物語になっていきます。</p><div class="grid"><div><h3>📝 日記から始める</h3><p>今日あったことを、気軽に残してみよう。特別な準備はいりません。</p><a href="#journal-import"><button type="button">日記を残す</button></a></div><div><h3>🚀 挑戦する</h3><p>副業、勉強、運動、発信、起業など。今やってみたいことを登録できます。</p><a href="#challenger-registration"><button type="button">挑戦を登録する</button></a></div><div><h3>🤝 応援する</h3><p>挑戦している人を、ちょっと応援してみたい人・企業・団体はこちら。</p><a href="#supporter-registration"><button type="button">挑戦を応援する</button></a></div></div></section>
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Future Challenge Lab</title><link rel="stylesheet" href="style.css?v=20260922-1000"><link rel="stylesheet" href="supporter-flow.css?v=20260922-0930"><style id="fcl-v3-design">
+:root{
+  --fcl-blue:#1677e8;--fcl-blue-dark:#0b4fb3;--fcl-sky:#eaf6ff;
+  --fcl-mint:#e9fbf4;--fcl-ink:#17324d;--fcl-muted:#65788a;
+  --fcl-line:#dcecf7;--fcl-shadow:0 18px 45px rgba(24,83,132,.10);
+}
+body{background:linear-gradient(180deg,#f6fbff 0%,#ffffff 38%,#f7fbff 100%)}
+main{max-width:1120px;margin:auto;padding:18px 16px 64px}
+.fcl-home-hero{
+  position:relative;overflow:hidden;display:grid;grid-template-columns:1.15fr .85fr;
+  gap:18px;align-items:stretch;padding:28px;border-radius:26px;
+  border:1px solid #cfe8fa;box-shadow:var(--fcl-shadow);
+  background:linear-gradient(135deg,#1590ee 0%,#4fb8f4 48%,#dff4ff 100%);
+  color:#fff;margin-bottom:16px;
+}
+.fcl-home-hero:before,.fcl-home-hero:after{
+  content:"";position:absolute;border-radius:50%;pointer-events:none
+}
+.fcl-home-hero:before{width:280px;height:280px;right:-70px;top:-120px;background:rgba(255,255,255,.13)}
+.fcl-home-hero:after{width:220px;height:220px;left:-80px;bottom:-130px;background:rgba(255,255,255,.10)}
+.fcl-home-copy{position:relative;z-index:2;padding:8px 4px 4px}
+.fcl-home-copy .hero-kicker{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.fcl-home-copy .eyebrow{color:rgba(255,255,255,.90)}
+.fcl-home-copy .hero-mini{display:inline-flex;padding:5px 10px;border-radius:999px;background:rgba(255,255,255,.18);font-size:12px;font-weight:700}
+.fcl-home-copy .hero-dot{width:9px;height:9px;border-radius:50%;background:#fff;box-shadow:0 0 0 5px rgba(255,255,255,.16)}
+.fcl-home-copy h1{font-size:clamp(34px,5vw,58px);line-height:1.12;letter-spacing:-.03em;margin:22px 0 12px}
+.fcl-home-copy .hero-lead{font-size:19px;line-height:1.7;max-width:650px;margin:0 0 9px}
+.fcl-home-copy .hero-sub{font-size:14px;line-height:1.7;color:rgba(255,255,255,.90);max-width:680px;margin:0}
+.fcl-hero-steps{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
+.fcl-hero-steps span{padding:8px 12px;border-radius:999px;background:#fff;color:#1568c9;font-weight:800;font-size:13px}
+.fcl-home-actions{display:flex;gap:10px;align-items:center;margin-top:18px;flex-wrap:wrap}
+.fcl-home-actions a{text-decoration:none}
+.fcl-home-actions .secondary-btn{background:#fff!important;color:#1259ac!important;border-color:#fff!important}
+.fcl-home-actions .pill{background:rgba(255,255,255,.18)!important;color:#fff!important;border:1px solid rgba(255,255,255,.25)}
+.fcl-hero-art{position:relative;z-index:1;min-height:260px;border-radius:22px;overflow:hidden;background:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.03))}
+.fcl-hero-art svg{width:100%;height:100%;display:block}
+.fcl-roadmap.card,.fcl-highlights.card,.fcl-home-cta.card{border-color:#d9ebf8;box-shadow:var(--fcl-shadow)}
+.fcl-roadmap{padding:22px;margin-bottom:16px}
+.fcl-roadmap-head{display:flex;justify-content:space-between;gap:15px;align-items:end;flex-wrap:wrap;margin-bottom:14px}
+.fcl-roadmap-title{font-size:25px;font-weight:900;color:var(--fcl-ink);margin:4px 0}
+.fcl-roadmap-desc{margin:0;color:var(--fcl-muted);line-height:1.7}
+.fcl-roadmap-track{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+.fcl-step{
+  position:relative;min-height:150px;padding:16px 14px 14px;border:1px solid #dfeef8;border-radius:18px;
+  background:#fff;box-shadow:0 8px 22px rgba(35,92,131,.05);overflow:hidden
+}
+.fcl-step:after{content:"";position:absolute;right:-15px;top:29px;width:30px;height:2px;background:#bcdaf3}
+.fcl-step:last-child:after{display:none}
+.fcl-step .step-no{font-size:12px;font-weight:900;letter-spacing:.06em;color:#7990a5}
+.fcl-step .step-icon{
+  width:38px;height:38px;border-radius:14px;display:grid;place-items:center;margin:8px 0 10px;
+  font-size:19px;font-weight:900
+}
+.fcl-step.s1 .step-icon{background:#dcf8df;color:#2ca24d}.fcl-step.s2 .step-icon{background:#e5f0ff;color:#2583e8}
+.fcl-step.s3 .step-icon{background:#fff0d8;color:#ed9016}.fcl-step.s4 .step-icon{background:#efe6ff;color:#7b55d6}
+.fcl-step.s5 .step-icon{background:#ffe2ef;color:#dd4f8d}
+.fcl-step h3{font-size:15px;color:var(--fcl-ink);margin:0 0 6px}
+.fcl-step p{font-size:12px;line-height:1.55;color:#708296;margin:0}
+.fcl-step.current{border-color:#8ec9ff;box-shadow:0 10px 26px rgba(29,126,226,.13)}
+.fcl-step.current:before{content:"現在地";position:absolute;top:10px;right:10px;padding:4px 7px;border-radius:999px;background:#e9f5ff;color:#1976d2;font-size:10px;font-weight:900}
+.fcl-highlights{padding:20px;margin-bottom:16px}
+.fcl-highlights-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.fcl-highlight{
+  padding:16px;border-radius:18px;border:1px solid #e0edf6;background:linear-gradient(180deg,#fff,#f9fcff)
+}
+.fcl-highlight .label{font-size:12px;color:#6c8297;font-weight:800;letter-spacing:.03em}
+.fcl-highlight h3{font-size:18px;color:var(--fcl-ink);margin:7px 0}
+.fcl-highlight p{font-size:13px;color:#64788b;line-height:1.7;margin:0}
+.fcl-highlight .big{font-size:29px;color:#146bc7;font-weight:900;letter-spacing:-.03em}
+.fcl-home-cta{
+  display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px 20px;margin-bottom:16px;
+  background:linear-gradient(135deg,#eef8ff,#f6fffb)
+}
+.fcl-home-cta h3{font-size:19px;color:var(--fcl-ink);margin:0 0 5px}
+.fcl-home-cta p{margin:0;color:#64788b;font-size:13px;line-height:1.6}
+.fcl-home-cta .cta-btn{background:#1478e5;color:#fff;border-radius:14px;padding:12px 16px;text-decoration:none;font-weight:900;white-space:nowrap}
+.card{border-color:#e0edf6;box-shadow:0 10px 30px rgba(30,81,125,.055)}
+.card h2{color:var(--fcl-ink)}
+button{background:#146fd3}
+button.secondary,.secondary-btn{color:#1460ac;background:#fff;border-color:#cfe2f1}
+@media(max-width:900px){
+  .fcl-home-hero{grid-template-columns:1fr}.fcl-hero-art{min-height:220px}
+  .fcl-roadmap-track{grid-template-columns:1fr 1fr}.fcl-step:after{display:none}
+}
+@media(max-width:650px){
+  main{padding:10px 10px 42px}.fcl-home-hero{padding:20px;border-radius:20px}
+  .fcl-home-copy h1{font-size:35px}.fcl-home-copy .hero-lead{font-size:17px}
+  .fcl-highlights-grid{grid-template-columns:1fr}.fcl-roadmap-track{grid-template-columns:1fr}
+  .fcl-home-cta{align-items:flex-start;flex-direction:column}
+}
+</style></head><body><main>
+<header class="fcl-home-hero">
+  <div class="fcl-home-copy">
+    <div class="hero-kicker"><span class="hero-dot"></span><span class="eyebrow">FUTURE CHALLENGE LAB</span><span class="hero-mini">挑戦する人の場所</span></div>
+    <h1>挑戦を、続けられるように。</h1>
+    <p class="hero-lead">小さな一歩を記録して、変化に気づいて、次の一歩へ。</p>
+    <p class="hero-sub">うまくいった日も、迷った日も、止まった日も大丈夫。FCLは「続けるための物語」を一緒につくります。</p>
+    <div class="fcl-hero-steps"><span>① 記録する</span><span>② 気づく</span><span>③ 次へ進む</span></div>
+    <div class="fcl-home-actions">
+      <a href="#journal-import" class="cta-btn" style="background:#fff;color:#1466bb;padding:11px 16px;border-radius:14px;font-weight:900;">今日を記録する</a>
+      <a href="/user.html"><button type="button" class="secondary-btn">FCLマイページ</button></a>
+      <span id="mode" class="pill">checking…</span>
+    </div>
+  </div>
+  <div class="fcl-hero-art" aria-hidden="true">
+    <svg viewBox="0 0 640 420" preserveAspectRatio="xMidYMid slice" role="presentation">
+      <defs>
+        <linearGradient id="fclSky" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#8bd1ff"/><stop offset="100%" stop-color="#dff5ff"/></linearGradient>
+        <linearGradient id="fclRoad" x1="0" x2="1" y1="1" y2="0"><stop offset="0%" stop-color="#ffffff"/><stop offset="100%" stop-color="#ffeac0"/></linearGradient>
+      </defs>
+      <rect width="640" height="420" fill="url(#fclSky)"/>
+      <circle cx="520" cy="76" r="42" fill="rgba(255,255,255,.55)"/>
+      <path d="M0 300 L130 180 L215 265 L330 145 L465 285 L555 210 L640 310 L640 420 L0 420Z" fill="#7dc5a1" opacity=".85"/>
+      <path d="M0 325 L155 228 L248 305 L355 206 L470 316 L560 250 L640 340 L640 420 L0 420Z" fill="#4eaa82" opacity=".92"/>
+      <path d="M195 420 C225 356 286 321 358 301 C423 284 488 248 564 202" fill="none" stroke="url(#fclRoad)" stroke-width="32" stroke-linecap="round"/>
+      <path d="M195 420 C225 356 286 321 358 301 C423 284 488 248 564 202" fill="none" stroke="#f9d9a0" stroke-width="14" stroke-linecap="round" opacity=".65"/>
+      <g>
+        <circle cx="210" cy="365" r="19" fill="#43b96b"/><text x="210" y="372" text-anchor="middle" font-size="17" fill="#fff">✓</text>
+        <circle cx="313" cy="320" r="19" fill="#2f83e8"/><text x="313" y="327" text-anchor="middle" font-size="17" fill="#fff">→</text>
+        <circle cx="406" cy="282" r="19" fill="#ef991b"/><text x="406" y="289" text-anchor="middle" font-size="17" fill="#fff">★</text>
+        <circle cx="495" cy="235" r="19" fill="#8b63d8"/><text x="495" y="242" text-anchor="middle" font-size="17" fill="#fff">●</text>
+      </g>
+      <rect x="385" y="100" width="176" height="74" rx="18" fill="rgba(255,255,255,.82)"/>
+      <text x="404" y="128" font-size="18" font-weight="800" fill="#15589c">あなたの挑戦</text>
+      <text x="404" y="153" font-size="14" fill="#4f6f8c">ここまで来ました。</text>
+    </svg>
+  </div>
+</header>
+<section class="card fcl-roadmap">
+  <div class="fcl-roadmap-head">
+    <div>
+      <span class="eyebrow">YOUR CHALLENGE ROAD</span>
+      <div class="fcl-roadmap-title">あなたの挑戦の道のり</div>
+      <p class="fcl-roadmap-desc"><strong id="homeChallengeName">挑戦を選ぶと、ここに表示されます。</strong> 小さな一歩も、転機も、現在地もひとつの流れで見えるようにします。</p>
+    </div>
+    <div class="muted" id="homeGoalLabel">目標：まずは一歩から</div>
+  </div>
+  <div class="fcl-roadmap-track" id="homeRoadmap">
+    <article class="fcl-step s1"><div class="step-no">01</div><div class="step-icon">🌱</div><h3>挑戦のはじまり</h3><p>やってみたいことを言葉にした日。</p></article>
+    <article class="fcl-step s2"><div class="step-no">02</div><div class="step-icon">📖</div><h3>行動</h3><p>実際に動いて、一日ずつ記録する。</p></article>
+    <article class="fcl-step s3"><div class="step-no">03</div><div class="step-icon">🔥</div><h3>転機・気づき</h3><p>「ここが変わった」と気づいた瞬間。</p></article>
+    <article class="fcl-step s4 current"><div class="step-no">04</div><div class="step-icon">📍</div><h3>現在地</h3><p>いま何ができていて、何に迷っているか。</p></article>
+    <article class="fcl-step s5"><div class="step-no">05</div><div class="step-icon">➜</div><h3>次の一歩</h3><p id="homeNextStep">今日に合った小さな行動へ。</p></article>
+  </div>
+</section>
+<section class="card fcl-highlights">
+  <div class="daily-loop-heading" style="margin-bottom:12px;">
+    <div><span class="eyebrow">FCL IN ONE VIEW</span><h2 style="margin-top:4px;">記録 → 気づき → 次へ</h2><p class="muted">FCLは、今日の記録を「挑戦の変化」として見える形にしていきます。</p></div>
+  </div>
+  <div class="fcl-highlights-grid">
+    <div class="fcl-highlight"><div class="label">今日の記録</div><div class="big" id="homeCheckinCount">0</div><p>チェックイン。積み重ねが物語になります。</p></div>
+    <div class="fcl-highlight"><div class="label">見えてくるもの</div><h3>変化・転機・現在地</h3><p>「続いた」「迷った」「再開した」も大切な一ページとして残します。</p></div>
+    <div class="fcl-highlight"><div class="label">必要なときだけ</div><h3>AI・支援者につながる</h3><p>一人で進みにくいタイミングで、次の選択肢を広げます。</p></div>
+  </div>
+</section>
+<section class="card fcl-home-cta">
+  <div><h3>今日の一歩を、未来の一ページへ。</h3><p>まずは今日の日記を残す。そこからFCLの物語が始まります。</p></div>
+  <a class="cta-btn" href="#journal-import">今日の記録をはじめる →</a>
+</section>
 <section class="card daily-loop-shell" id="daily-loop">
   <div class="daily-loop-heading"><div><span class="eyebrow">FCL DAY LOOP</span><h2>今日を、次の一歩へ <span class="light-badge">毎日ここを見る</span></h2><p>記録したあとに、「ほめる・発見する・次へ進む」をひとつの流れで返します。</p></div></div>
   <div id="fclDailyLoopContent"></div>
@@ -30,4 +186,33 @@
 <section class="card" id="supporter-registration"><h2>5. 挑戦を応援する <span class="light-badge">支援者</span></h2><p>挑戦者を支援したい個人・企業・団体はこちらから登録できます。登録後、FCLのマッチングで支援先候補につながります。</p><div class="grid"><input id="org" placeholder="企業・団体名"><input id="supporter" placeholder="担当者名"><input id="supportEmail" placeholder="メール"><input id="category" placeholder="支援カテゴリ"></div><input id="strengths" placeholder="強み（カンマ区切り）"><input id="timing" placeholder="支援タイミング（例：離脱前,再開時）"><textarea id="desc" placeholder="どんな挑戦者を支援できるか"></textarea><button id="registerSupporterBtn" onclick="registerSupporter()">支援者として登録する</button><span id="supportStatus"></span><a id="supporterUserPageLink" class="user-page-link" href="/user.html" hidden>マイページを開く</a><button id="openSupporterDashboardBtn" type="button" class="secondary-btn" onclick="openSupporterDashboard()" hidden>支援者画面を開く</button></section>
 <section class="card"><h2>6. 誰かとつながる <span class="light-badge">必要なときだけ</span></h2><p>一人で進まなくても大丈夫。今の状態から支援者候補を確認し、必要なときに次の一歩を一緒につくれます。</p><p>介入最適化AIは「AI介入」「支援者」「AI＋支援者」を同じ候補群として比較します。</p><button id="matchBtn" onclick="showSupporterCandidates()">この挑戦を支えてくれる人を探す</button><div id="matches"></div></section>
 <section class="card" id="supporter-dashboard-section"><h2>7. 支援者として対応する <span class="light-badge">支援者向け</span></h2><p>マッチング候補を確認し、支援できるか回答します。つながった後は、支援内容や結果もここから記録できます。</p><div class="grid"><input id="supporterIdInput" placeholder="ユーザーID"><div><button id="supporterDashboardBtn" onclick="openSupporterDashboard()">支援者画面を開く</button><div class="muted" style="margin-top:8px;">入力するのは支援者専用IDではなく、FCL共通ユーザーIDです。</div><span id="supporterDashboardStatus"></span></div></div><div id="supporterDashboard" class="supporter-dashboard"></div></section>
-</main><script src="app.js?v=20260924-0045"></script><script src="journal-import.js?v=20260922-0600"></script><script src="journal-reply.js?v=20260923-0930"></script>\n<script src="daily-loop.js?v=20260922-0700"></script><script src="supporter-flow.js?v=20260918-0400"></script></body></html>
+</main><script src="app.js?v=20260924-0045"></script><script src="journal-import.js?v=20260922-0600"></script><script src="journal-reply.js?v=20260923-0930"></script>\n<script src="daily-loop.js?v=20260922-0700"></script><script src="supporter-flow.js?v=20260918-0400"></script>
+<script>
+(async()=>{
+  try{
+    const s=await fetch('/api/auth/session',{credentials:'same-origin'});
+    const session=s.ok?await s.json().catch(()=>({})):{};
+    const id=String(session?.user?.id||'').trim();
+    if(!id) return;
+    const r=await fetch('/api/story-user/'+encodeURIComponent(id),{credentials:'same-origin'});
+    const data=r.ok?await r.json().catch(()=>({})):{};
+    const first=(data?.participants||[])[0]||{};
+    const p=first.participant||{};
+    const checks=Array.isArray(first.checkins)?first.checkins:[];
+    const actions=Array.isArray(first.actions)?first.actions:[];
+    const events=Array.isArray(first.events)?first.events:[];
+    const latestAction=[...actions].sort((a,b)=>new Date(b.completed_at||b.created_at)-new Date(a.completed_at||a.created_at))[0];
+    const $=id=>document.getElementById(id);
+    if(p.challenge && $('homeChallengeName')) $('homeChallengeName').textContent=p.challenge;
+    if($('homeGoalLabel')) $('homeGoalLabel').textContent='目標：'+(p.goal||'まずは一歩から');
+    if($('homeCheckinCount')) $('homeCheckinCount').textContent=String(checks.length);
+    if(latestAction?.action_text && $('homeNextStep')) $('homeNextStep').textContent=latestAction.action_text;
+    const hasInsight=events.some(e=>['core_analysis','core_decision','core_outcome'].includes(e?.features?.action_type||e?.label));
+    const steps=document.querySelectorAll('#homeRoadmap .fcl-step');
+    steps.forEach((el,i)=>{
+      el.classList.toggle('done',(i===0&&!!p.created_at)||(i===1&&checks.length>0)||(i===2&&hasInsight));
+      if(i===3) el.classList.add('current');
+    });
+  }catch(e){ console.warn('home roadmap refresh unavailable',e); }
+})();
+</script></body></html>
