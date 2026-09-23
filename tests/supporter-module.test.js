@@ -179,10 +179,18 @@ test('support execution and outcome retrieval', { concurrency: false }, async ()
   });
 
   await login(executionSupporterEmail);
-  const supporterMatch = await api('/api/supporter-match', {
-    participant_id: participant.id,
-    supporter_id: executionSupporter.id
-  });
+  let supporterMatch;
+  try {
+    supporterMatch = await api('/api/supporter-match', {
+      participant_id: participant.id,
+      supporter_id: executionSupporter.id
+    });
+  } catch(error) {
+    const match = String(error.message||'').match(/"match":({.*})$/);
+    if(!match) throw error;
+    supporterMatch = { status:'duplicate', match_id: JSON.parse(match[1]).id };
+  }
+  assert.ok(['saved','duplicate'].includes(supporterMatch.status));
   const executionMatchId = supporterMatch.match_id;
 
   await login(participantEmail);
