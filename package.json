@@ -15,5 +15,8 @@
   },
   "devDependencies": {
     "supabase": "^2.114.0"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }
