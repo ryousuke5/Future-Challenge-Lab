@@ -83,14 +83,16 @@ async function getRows(table, filters = {}) {
   return data || [];
 }
 
-async function hasSent(matchId, recipientRole, recipientEmail) {
-  const events = await getRows('connection_events', { match_id: matchId, event_type: 'email_sent' });
+async function hasEmailOutcome(matchId, recipientRole, recipientEmail) {
+  const events = await getRows('connection_events', { match_id: matchId });
+  const target=normalizeEmail(recipientEmail);
   return events.some(event => {
+    if(!['email_sent','email_skipped'].includes(event.event_type)) return false;
     try {
       const note = JSON.parse(event.note || '{}');
       return note.email_type === 'connection_confirmed'
         && note.recipient_role === recipientRole
-        && normalizeEmail(note.recipient) === normalizeEmail(recipientEmail);
+        && normalizeEmail(note.recipient) === target;
     } catch {
       return false;
     }
@@ -325,7 +327,24 @@ async function processMatchEvent(event) {
       console.warn(`[email-worker] ${match.id} ${recipient.role}: no valid email; skipping`);
       continue;
     }
-    if (await hasSent(match.id, recipient.role, recipient.email)) continue;
+    if (await hasEmailOutcome(match.id, recipient.role, recipient.email)) continue;
+    if (isTestEmail(recipient.email) && process.env.NODE_ENV !== 'test') {
+      console.warn(`[email-worker] ${match.id} ${recipient.role}: synthetic test email ${recipient.email}; skipping delivery`);
+      await supabase.from('connection_events').insert({
+        participant_id: match.participant_id,
+        supporter_id: match.supporter_id,
+        match_id: match.id,
+        event_type: 'email_skipped',
+        note: JSON.stringify({
+          email_type: 'connection_confirmed',
+          recipient_role: recipient.role,
+          recipient: recipient.email,
+          reason: 'synthetic_test_email'
+        }),
+        created_at: new Date().toISOString()
+      });
+      continue;
+    }
 
     const email = await generateEmail({ recipientRole: recipient.role, participant, supporter, matchId: match.id });
     const resend = await sendEmail({
