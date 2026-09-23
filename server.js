@@ -855,7 +855,7 @@ async function callOpenAiFallback(prompt){
       body: JSON.stringify({
         model: 'gpt-4o-mini',
         temperature: 0.4,
-        messages: [{ role: 'system', content: 'You are a helpful assistant for challenge continuation. Return valid JSON with keys: state, state_change, risk, continuation_risk, insight, problem, solutions, recommended_option, next_action, adaptive_questions, personal_support_pattern, personal_learning. continuation_risk must contain level, reasons (array), and signals (array). Use only observed facts.' }, { role: 'user', content: prompt }],
+        messages: [{ role: 'system', content: 'You are a helpful assistant for challenge continuation. Return valid JSON with keys: state, state_change, risk, continuation_risk, insight, problem, solutions, recommended_option, next_action, adaptive_questions, personal_support_pattern, personal_learning, reply_text. continuation_risk must contain level, reasons (array), and signals (array). reply_text must be a natural Japanese reply to the current diary entry, 3-5 paragraphs and about 250-450 Japanese characters. Use at least two concrete details from today\'s diary, do not repeat the previous reply, do not invent facts, do not diagnose personality or health, and do not merely restate the analysis. Use only observed facts.' }, { role: 'user', content: prompt }],
         response_format: { type: 'json_object' }
       })
     });
@@ -1069,7 +1069,16 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
   const continuationProfile = buildContinuationProfile({ checkins, actions: recentActions, journalReplies });
   const modelLearningEvents = await select('model_learning_events',{participant_id});
   const personalLearning = buildPersonalLearningProfile({ assignments: recentAssignments, actions: recentActions, supportHistory, events: modelLearningEvents });
-  const personalAiProfile = await getOrBuildPersonalAiProfile({ participant, checkins, actions: recentActions, journalReplies, supportHistory, learningProfile: personalLearning });
+  // チェックイン処理では個人AIプロフィールをOpenAIで再生成しない。
+  // 過去データからの個人プロファイルはローカル計算で作り、OpenAI呼び出しを1回に限定する。
+  const personalAiProfile = buildPersonalAiFallback({
+    participant,
+    checkins,
+    actions: recentActions,
+    journalReplies,
+    supportHistory,
+    learningProfile: personalLearning
+  });
 
   const coreContext = buildCoreSummary(participant, latestCheckin, checkins, recentActions, recentAssignments);
   coreContext.goal = current_goal || participant.goal || coreContext.goal;
@@ -1131,12 +1140,14 @@ async function runFclAiCore({ participant_id, checkin_text, participant_profile 
     exploration: { mode: personalSupportPattern.status==='observational' ? 'exploit_with_exploration' : 'explore', reason: personalSupportPattern.statement }
   };
 
-  const prompt = 'recent_journal_entries=' + JSON.stringify(journalEntries.map(x=>({entry_date:x.entry_date,source:x.source,raw_text:String(x.raw_text||'').slice(0,1800)}))) + '\nparticipant_goal=' + coreContext.goal + '\ncheckin_text=' + coreContext.checkin_text + '\nstate=' + JSON.stringify(state) + '\nstate_changes=' + JSON.stringify(stateChanges) + '\nrisk_signals=' + JSON.stringify(riskSignals) + '\ncontinuation_profile=' + JSON.stringify(continuationProfile) + '\npersonal_learning=' + JSON.stringify(personalLearning) + '\npersonal_ai_profile=' + JSON.stringify(personalAiProfile||{}) + '\nrecommendation_learning=' + JSON.stringify(personalLearning.recommendation_learning||{}) + '\nindividual_continuation_pattern=' + JSON.stringify(personalLearning.individual_continuation_pattern||{}) + '\nrecent_action=' + coreContext.recentAction + '\nbarriers=' + coreContext.barriers + '\nUse continuation_profile to identify concrete continuation risks. Use recommendation_learning to adapt the next action from prior outcomes. When adjustment.mode is shrink_and_adjust or smaller_step, do not recommend repeating the same-sized action; use the provided next_action_hint. When adjustment.mode is reuse_observed, you may reuse the observed option but still keep the step small. Do not diagnose health or personality. Distinguish observed signals from hypotheses. Prefer a small actionable next step and avoid repeating previous journal wording.';
+  const prompt = 'recent_journal_entries=' + JSON.stringify(journalEntries.map(x=>({entry_date:x.entry_date,source:x.source,raw_text:String(x.raw_text||'').slice(0,1800)}))) + '\nparticipant_goal=' + coreContext.goal + '\ncheckin_text=' + coreContext.checkin_text + '\nstate=' + JSON.stringify(state) + '\nstate_changes=' + JSON.stringify(stateChanges) + '\nrisk_signals=' + JSON.stringify(riskSignals) + '\ncontinuation_profile=' + JSON.stringify(continuationProfile) + '\npersonal_learning=' + JSON.stringify(personalLearning) + '\npersonal_ai_profile=' + JSON.stringify(personalAiProfile||{}) + '\nrecommendation_learning=' + JSON.stringify(personalLearning.recommendation_learning||{}) + '\nindividual_continuation_pattern=' + JSON.stringify(personalLearning.individual_continuation_pattern||{}) + '\nrecent_action=' + coreContext.recentAction + '\nbarriers=' + coreContext.barriers + '\nUse continuation_profile to identify concrete continuation risks. Use recommendation_learning to adapt the next action from prior outcomes. When adjustment.mode is shrink_and_adjust or smaller_step, do not recommend repeating the same-sized action; use the provided next_action_hint. When adjustment.mode is reuse_observed, you may reuse the observed option but still keep the step small. Do not diagnose health or personality. Distinguish observed signals from hypotheses. Prefer a small actionable next step and avoid repeating previous journal wording. Generate reply_text in this same response: make it human and specific to today's diary, using at least two concrete details and avoiding yesterday's wording.';
   const llmResult = await callOpenAiFallback(prompt);
   if(llmResult){
     const result = normalizeAiCoreResult(llmResult, baseResult);
+    const journalReplyText = String(llmResult?.reply_text || '').trim();
     const analysisEvent=await insert('model_learning_events',{participant_id,features:{action_type:'core_analysis',checkin_text:coreContext.checkin_text,result,state:result.state,state_change:result.state_change,insight:result.insight,problem:result.problem,hypothesis:result.hypothesis,adaptive_questions:result.adaptive_questions,personal_support_pattern:result.personal_support_pattern,personal_ai_profile_version:result.personal_ai_profile?.model_version||null},label:{recommended_option:result.recommended_option,next_action:result.next_action}});
-    return { ...result, analysis_event_id: analysisEvent?.id || null, analysis_checkin_text: coreContext.checkin_text };
+    console.log('[fcl-ai] single OpenAI call completed: core_analysis + journal_reply');
+    return { ...result, journal_reply_text: journalReplyText, analysis_event_id: analysisEvent?.id || null, analysis_checkin_text: coreContext.checkin_text };
   }
 
   const analysisEvent=await insert('model_learning_events',{participant_id,features:{action_type:'core_analysis',checkin_text:coreContext.checkin_text,result:baseResult,state:baseResult.state,state_change:baseResult.state_change,insight:baseResult.insight,problem:baseResult.problem,hypothesis:baseResult.hypothesis,adaptive_questions:baseResult.adaptive_questions,personal_support_pattern:baseResult.personal_support_pattern},label:{recommended_option:baseResult.recommended_option,next_action:baseResult.next_action}});  return { ...baseResult, analysis_event_id: analysisEvent?.id || null, analysis_checkin_text: coreContext.checkin_text };
@@ -3894,21 +3905,13 @@ app.post('/api/core/analyze', async (req, res) => {
           journalReply=existingToday;
           journalReplySource='saved_today';
         }else{
-          const aiReply=await generateJournalReplyWithOpenAI({
-            participant,
-            checkinText:String(checkin_text || '').trim(),
-            analysis:response,
-            decision:null,
-            outcome:null,
-            recentReplies:(await select('journal_replies',{participant_id}))
-              .filter(row=>String(row.reply_date||'')<today)
-              .sort((a,b)=>new Date(b.reply_date||0)-new Date(a.reply_date||0))
-              .slice(0,1)
-          });
+          // /api/core/analyze ではOpenAIを追加で呼ばない。
+          // runFclAiCore の1回のOpenAI応答に含まれる reply_text をそのまま保存する。
+          const aiReply = String(response?.journal_reply_text || '').trim() || null;
           const replyText=aiReply || [
             `今日の記録「${String(checkin_text || '').trim().slice(0,180)}」を読みました。`,
             response.insight || '今の状態を一つずつ整理できています。',
-            response.next_action ? `次の一歩は「${response.next_action}」です。自分に合う形で進めていきましょう。` : '次に何をするかは、今日の自分に合う一歩からで大丈夫です。'
+            response.next_action ? `次の一歩は「${response.next_action}」です。自分に合う形で進めてみてください。` : '次に何をするかは、今日の自分に合う一歩からで大丈夫です。'
           ].join('\\n\\n');
           journalReply=await saveJournalReply({
             participant_id,
