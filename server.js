@@ -210,6 +210,14 @@ async function sendFclResendEmail({to,subject,text,html,idempotencyKey}={}){
   return parsed;
 }
 
+function parseBoolean(value, fallback=false){
+  if(typeof value==='boolean') return value;
+  const normalized=String(value??'').trim().toLowerCase();
+  if(['true','1','yes','y','on'].includes(normalized)) return true;
+  if(['false','0','no','n','off',''].includes(normalized)) return false;
+  return fallback;
+}
+
 function scoreAnswers(a) { return CHECKIN_ANSWER_KEYS.reduce((s,key)=>s+Number(a[key]||0),0); }
 function riskFromScore(score){ const r=Math.round(((25-score)/20)*100); return Math.max(0, Math.min(100,r)); }
 function riskLevel(r){ return r>=70?'high':r>=45?'medium':'low'; }
@@ -1233,18 +1241,21 @@ async function saveFclCoreDecision({ participant_id, selected_option, reason, ne
   const participant = (await select('participants',{id:participant_id}))[0];
   if(!participant) throw new Error('participant not found');
 
+  const normalizedOption=String(selected_option||'').trim().toUpperCase();
+  if(!['A','B','C'].includes(normalizedOption)) throw new Error('selected_option must be A, B, or C');
+
   const row = await insert('model_learning_events', {
     participant_id,
     features: {
       action_type: 'core_decision',
-      selected_option: sanitizeText(selected_option, 'A'),
+      selected_option: normalizedOption,
       reason: sanitizeText(reason, 'self_selected'),
       next_action: sanitizeText(next_action, '次に何をするかを整理する'),
       target_date: sanitizeText(target_date, null),
       created_at: new Date().toISOString()
     },
     label: {
-      selected_option: sanitizeText(selected_option, 'A'),
+      selected_option: normalizedOption,
       next_action: sanitizeText(next_action, '次に何をするかを整理する'),
       decision_made_by: 'participant'
     }
@@ -2811,14 +2822,14 @@ app.post('/api/checkins',async(req,res)=>{
 
 app.post('/api/actions',async(req,res)=>{
   try{
-    const actionPayload={participant_id:req.body.participant_id,intervention_id:req.body.intervention_id||null,action_text:req.body.action_text||'',completed:Boolean(req.body.completed),barrier:req.body.barrier||'',result_note:req.body.result_note||''};
+    const actionPayload={participant_id:req.body.participant_id,intervention_id:req.body.intervention_id||null,action_text:req.body.action_text||'',completed:parseBoolean(req.body.completed,false),barrier:req.body.barrier||'',result_note:req.body.result_note||''};
     const existingAction=(await select('action_results',{participant_id:actionPayload.participant_id})).find(row =>
       (row.intervention_id||null)===(actionPayload.intervention_id||null) &&
       row.action_text===actionPayload.action_text && Boolean(row.completed)===actionPayload.completed &&
       (row.barrier||'')===actionPayload.barrier && (row.result_note||'')===actionPayload.result_note
     );
     if(existingAction) return res.status(200).json({status:'duplicate',duplicate:true,row:existingAction});
-    const row=await insert('action_results',{participant_id:req.body.participant_id,intervention_id:req.body.intervention_id||null,action_text:req.body.action_text||'',completed:Boolean(req.body.completed),barrier:req.body.barrier||'',result_note:req.body.result_note||'',completed_at:req.body.completed?new Date().toISOString():null});
+    const row=await insert('action_results',{participant_id:req.body.participant_id,intervention_id:req.body.intervention_id||null,action_text:req.body.action_text||'',completed:parseBoolean(req.body.completed,false),barrier:req.body.barrier||'',result_note:req.body.result_note||'',completed_at:req.body.completed?new Date().toISOString():null});
     if(req.body.intervention_id){
       const ints=(await select('intervention_assignments',{id:req.body.intervention_id}))[0];
       const cis=ints?.checkin_id?(await select('checkins',{id:ints.checkin_id}))[0]:null;
