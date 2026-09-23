@@ -4037,7 +4037,7 @@ ${previousReply || '昨日の返信はありません。'}
 
 app.post('/api/journal-replies/generate', async (req, res) => {
   try {
-    const { participant_id, checkin_id, source_analysis_event_id = null, checkin_text = '', analysis, decision, outcome } = req.body || {};
+    const { participant_id, checkin_id, source_analysis_event_id = null, checkin_text = '', analysis, decision, outcome, allow_openai = true } = req.body || {};
     const checkinText = String(checkin_text || '').trim();
     if(!participant_id) return res.status(400).json({error:'participant_id is required'});
     if(!checkinText && !(analysis && typeof analysis === 'object')) return res.status(400).json({error:'checkin_text or analysis is required'});
@@ -4057,14 +4057,14 @@ app.post('/api/journal-replies/generate', async (req, res) => {
       .sort((a,b)=>new Date(b.reply_date||0)-new Date(a.reply_date||0))
       .slice(0,1);
 
-    const aiReply=await generateJournalReplyWithOpenAI({
+    const aiReply=allow_openai ? await generateJournalReplyWithOpenAI({
       participant,
       checkinText,
       analysis: analysis || {},
       decision: decision || null,
       outcome: outcome || null,
       recentReplies:previousReplies
-    });
+    }) : null;
 
     const replyText=aiReply || [
       '日誌を読みました。',
