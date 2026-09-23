@@ -30,7 +30,35 @@ function initializeCoreTargetDate(){
 }
 document.getElementById('questions').innerHTML=qs.map((q,i)=>`<div class="q"><strong>Q${i+1}.</strong> ${q}<select id="q${i}">${[1,2,3,4,5].map(x=>`<option value="${x}">${x}</option>`).join('')}</select></div>`).join('');
 fetch('/api/health').then(r=>r.json()).then(x=>document.getElementById('mode').textContent=x.supabase?'Supabase接続中':'ローカル開発モード');
-async function api(url,body){const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',body:JSON.stringify(body)});const x=await r.json().catch(()=>({}));if(!r.ok)throw Error(x.error||'error');return x;}
+async function api(url,body){
+  const r=await fetch(url,{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    credentials:'same-origin',
+    body:JSON.stringify(body)
+  });
+  const x=await r.json().catch(()=>({}));
+  if(!r.ok){
+    const error=new Error(x.error||'error');
+    error.status=r.status;
+    throw error;
+  }
+  return x;
+}
+async function apiWithRetry(url,body,{retries=1,delayMs=500}={}){
+  let lastError=null;
+  for(let attempt=0;attempt<=retries;attempt++){
+    try{
+      return await api(url,body);
+    }catch(error){
+      lastError=error;
+      const retryable=!Number.isFinite(Number(error?.status)) || Number(error.status)>=500 || Number(error.status)===429;
+      if(attempt>=retries || !retryable) throw error;
+      await new Promise(resolve=>setTimeout(resolve,delayMs));
+    }
+  }
+  throw lastError || new Error('request failed');
+}
 async function ensureFclSession(emailValue){
   const emailAddress=String(emailValue||'').trim().toLowerCase();
   if(!emailAddress)throw new Error('メールアドレスを入力してください');
@@ -280,38 +308,113 @@ function buildAnalysisCards(data){
 }
 
 async function checkin(){
-if(!participant)return alert('先に挑戦者登録をしてください');
-try { await withLoadingUI(document.getElementById('checkinBtn'), 'AI分析中です。しばらくお待ちください…', async () => {
-  const answers={};for(let i=0;i<5;i++)answers[`q${i+1}`]=Number(document.getElementById(`q${i}`).value);
-  const dailyNote=document.getElementById('dailyNote')?.value.trim() || '';
-  const x=await api('/api/checkins',{participant_id:participant.id,answers,checkin_text:dailyNote});
-  const checkinCount=Number(x.checkin_count||0);
-  if(checkinCount>0){const userId=participant.user_id||localStorage.getItem('fcl-user-id')||'';const storyLink=userId?`<a href="/story.html?user_id=${encodeURIComponent(userId)}" class="secondary-btn" style="display:inline-block;margin-top:12px;padding:12px 18px;border-radius:12px;background:#111827;color:#ffffff!important;text-decoration:none;font-weight:700;border:1px solid #111827;box-shadow:0 4px 12px rgba(15,23,42,.12);">あなたの挑戦の物語を見る</a>`:'';document.getElementById('checkinCelebration').innerHTML=`<strong>今日も挑戦を記録しました。</strong><span>FCLチェックイン ${checkinCount}回目</span><small>あなたの物語に、今日の1ページが加わりました。</small>${storyLink}`; window.refreshFclDailyLoop?.();}
-  if(x.intervention_record_status === 'failed' || x.intervention_record_error){ alert('AI分析は完了したが介入記録の保存に失敗しました'); }
-  intervention=x.intervention;
-  const sel=x.optimization?.selected||{};
-  const modeLabel={intervention:'AI介入',supporter:'支援者接続',both:'AI介入＋支援者接続'}[sel.action_type]||'最適化候補';
-  decisionBanner.innerHTML=`<strong>今回の推奨：${modeLabel}</strong><span>スコア ${(Number(sel.score||0)*100).toFixed(1)}%</span>${sel.organization_name?`<div>候補支援先：${sel.organization_name} / ${sel.supporter_name||''}</div>`:''}<small>${x.optimization?.decision?.exploration?'探索モード：まだデータが少ないため他の選択肢も試します。':'過去データから最も期待値の高い選択肢を提示しています。'}</small>`;
-  buildAnalysisCards(x);
-  if(intervention){document.getElementById('intervention').innerHTML=`<strong>${intervention.variant}：${intervention.intervention_type}</strong><p>${intervention.intervention_text}</p>`;} else {document.getElementById('intervention').innerHTML='<p>今回は支援者接続を優先。次の「支援者マッチング」で候補を確認してください。</p>';}
-  if(dailyNote && x.checkin?.id){
-    try{
-      const coreData=await fetch('/api/core/analyze',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({participant_id:participant.id,checkin_id:x.checkin.id,checkin_text:dailyNote,current_goal:participant.goal||'',participant_profile:{goal:participant.goal||'',barrier:document.getElementById('barrier')?.value||''},answers})}).then(async r=>{const json=await r.json();if(!r.ok)throw new Error(json?.error||'AI analysis failed');return json;});
-      document.getElementById('coreCheckinText').value=dailyNote;
-      renderCoreResult(coreData);renderInsight(coreData);renderSolutions(coreData);
-      document.getElementById('coreNextAction').value=coreData?.result?.next_action||'';
-      if(coreData?.journal_reply?.reply_text && typeof window.renderJournalReplyText==='function'){
-    const alreadyDoneToday=coreData.journal_reply_source==='saved_today';
-    window.renderJournalReplyText(
-      coreData.journal_reply.reply_text,
-      alreadyDoneToday ? '今日はすでに「あなたの日誌への返信」は済んでいます。' : ''
+  if(!participant)return alert('先に挑戦者登録をしてください');
+
+  try {
+    await withLoadingUI(
+      document.getElementById('checkinBtn'),
+      'AI分析中です。しばらくお待ちください…',
+      async () => {
+        const answers={};
+        for(let i=0;i<5;i++) answers[`q${i+1}`]=Number(document.getElementById(`q${i}`).value);
+        const dailyNote=document.getElementById('dailyNote')?.value.trim() || '';
+
+        // 初回リクエストが「保存後の後処理」で失敗した場合でも、
+        // 自動で一度だけ再取得する。サーバー側の重複チェックにより二重記録は作られない。
+        const x=await apiWithRetry('/api/checkins',{
+          participant_id:participant.id,
+          answers,
+          checkin_text:dailyNote
+        },{retries:1,delayMs:500});
+
+        const checkinCount=Number(x.checkin_count||0);
+        if(checkinCount>0){
+          const userId=participant.user_id||localStorage.getItem('fcl-user-id')||'';
+          const storyLink=userId
+            ? `<a href="/story.html?user_id=${encodeURIComponent(userId)}" class="secondary-btn" style="display:inline-block;margin-top:12px;padding:12px 18px;border-radius:12px;background:#111827;color:#ffffff!important;text-decoration:none;font-weight:700;border:1px solid #111827;box-shadow:0 4px 12px rgba(15,23,42,.12);">あなたの挑戦の物語を見る</a>`
+            : '';
+          document.getElementById('checkinCelebration').innerHTML=`<strong>今日も挑戦を記録しました。</strong><span>FCLチェックイン ${checkinCount}回目</span><small>あなたの物語に、今日の1ページが加わりました。</small>${storyLink}`;
+          window.refreshFclDailyLoop?.();
+        }
+
+        if(x.partial){
+          console.warn('[FCL] check-in saved, some background processing was incomplete',x.processing_warnings||[]);
+        }
+        if(x.intervention_record_status === 'failed' || x.intervention_record_error){
+          console.warn('[FCL] AI intervention record was not saved',x.intervention_record_error||'');
+        }
+
+        intervention=x.intervention;
+        const sel=x.optimization?.selected||{};
+        const modeLabel={
+          intervention:'AI介入',
+          supporter:'支援者接続',
+          both:'AI介入＋支援者接続'
+        }[sel.action_type]||'最適化候補';
+
+        decisionBanner.innerHTML=`<strong>今回の推奨：${modeLabel}</strong><span>スコア ${(Number(sel.score||0)*100).toFixed(1)}%</span>${sel.organization_name?`<div>候補支援先：${sel.organization_name} / ${sel.supporter_name||''}</div>`:''}<small>${x.optimization?.decision?.exploration?'探索モード：まだデータが少ないため他の選択肢も試します。':'過去データから最も期待値の高い選択肢を提示しています。'}</small>`;
+        buildAnalysisCards(x);
+
+        if(intervention){
+          document.getElementById('intervention').innerHTML=`<strong>${intervention.variant}：${intervention.intervention_type}</strong><p>${intervention.intervention_text}</p>`;
+        }else{
+          document.getElementById('intervention').innerHTML='<p>今回は支援者接続を優先。次の「支援者マッチング」で候補を確認してください。</p>';
+        }
+
+        if(dailyNote && x.checkin?.id){
+          try{
+            const coreData=await fetch('/api/core/analyze',{
+              method:'POST',
+              headers:{'content-type':'application/json'},
+              body:JSON.stringify({
+                participant_id:participant.id,
+                checkin_id:x.checkin.id,
+                checkin_text:dailyNote,
+                current_goal:participant.goal||'',
+                participant_profile:{
+                  goal:participant.goal||'',
+                  barrier:document.getElementById('barrier')?.value||''
+                },
+                answers
+              })
+            }).then(async r=>{
+              const json=await r.json();
+              if(!r.ok)throw new Error(json?.error||'AI analysis failed');
+              return json;
+            });
+
+            document.getElementById('coreCheckinText').value=dailyNote;
+            renderCoreResult(coreData);
+            renderInsight(coreData);
+            renderSolutions(coreData);
+            document.getElementById('coreNextAction').value=coreData?.result?.next_action||'';
+
+            if(coreData?.journal_reply?.reply_text && typeof window.renderJournalReplyText==='function'){
+              const alreadyDoneToday=coreData.journal_reply_source==='saved_today';
+              window.renderJournalReplyText(
+                coreData.journal_reply.reply_text,
+                alreadyDoneToday ? '今日はすでに「あなたの日誌への返信」は済んでいます。' : ''
+              );
+              if(!alreadyDoneToday) window.markJournalReplySeen?.(participant.id);
+            }
+          }catch(coreError){
+            console.warn('unified daily AI analysis failed',coreError);
+            showUiError(
+              document.getElementById('coreInsight'),
+              '今日のAI深掘り分析は一時的に完了できませんでした。記録は保存されています。'
+            );
+          }
+        }
+      }
     );
-    if(!alreadyDoneToday) window.markJournalReplySeen?.(participant.id);
+  }catch(error){
+    showUiError(
+      document.getElementById('decisionBanner'),
+      '今日の1ページの記録処理に失敗しました。もう一度お試しください。'
+    );
   }
-    }catch(coreError){console.warn('unified daily AI analysis failed',coreError);showUiError(document.getElementById('coreInsight'),'今日のAI深掘り分析は後から「AIで今日の状態を分析する」で再実行できます。');}
-  }
-}); } catch(error) { showUiError(document.getElementById('decisionBanner'),'分析に失敗しました。もう一度お試しください。'); }
-}async function saveAction(){
+}
+async function saveAction(){
   if(!participant||!intervention)return alert('先にチェックインしてください');
   try { await withLoadingUI(document.getElementById('saveActionBtn'), '保存処理中です。しばらくお待ちください…', async () => {
     const x=await api('/api/actions',{participant_id:participant.id,intervention_id:intervention.id,action_text:action.value,completed:completed.checked,barrier:barrier.value,result_note:resultNote.value});
