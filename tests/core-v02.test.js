@@ -114,3 +114,25 @@ test('Core v0.2 returns insight, adaptive questions, and personal evidence', asy
 test.after(async () => {
   await new Promise(resolve => server.close(resolve));
 });
+
+
+test('check-in rejects incomplete or out-of-range answers', { concurrency: false }, async () => {
+  const email=`validation-${Date.now()}@example.com`;
+  await login(email);
+  const participant=await api('/api/participants',{
+    name:'入力検証',
+    email,
+    challenge:'検証',
+    goal:'正しく保存'
+  });
+
+  await assert.rejects(
+    () => api('/api/checkins',{participant_id:participant.id,answers:{q1:1,q2:1,q3:1,q4:1}}),
+    /400|must be an integer/i
+  );
+
+  await assert.rejects(
+    () => api('/api/checkins',{participant_id:participant.id,answers:{q1:1,q2:1,q3:1,q4:1,q5:6}}),
+    /400|must be an integer/i
+  );
+});
