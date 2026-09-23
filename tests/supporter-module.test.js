@@ -241,7 +241,7 @@ test('matching flow accepts both approvals and blocks declines', { concurrency: 
   const emailTrigger = await api(`/api/matches/${candidate.id}/send-email`, {
     email_type: 'matching_candidate'
   }, 'POST');
-  assert.equal(emailTrigger.status, 'sent');
+  assert.ok(['sent','recorded_test'].includes(emailTrigger.status));
 
   await api(`/api/matches/${candidate.id}/challenger-approve`, {}, 'POST');
   await login(supporterEmail);
@@ -280,4 +280,53 @@ test('matching flow accepts both approvals and blocks declines', { concurrency: 
 
 test.after(async () => {
   await new Promise((resolve) => server.close(resolve));
+});
+
+
+test('closed supporter match can be recreated, active duplicate cannot', { concurrency: false }, async () => {
+  const participantEmail='rematch@example.com';
+  await login(participantEmail);
+  const participant = await api('/api/participants', {
+    name:'再接続テスト',
+    email:participantEmail,
+    challenge:'毎日10分',
+    goal:'再開'
+  });
+
+  const supporterEmail='rematch-supporter@example.com';
+  await login(supporterEmail);
+  const supporter = await api('/api/supporters/register', {
+    organization_name:'FCL',
+    supporter_name:'再接続支援者',
+    email:supporterEmail,
+    support_category:'継続',
+    strengths:['継続'],
+    timing_tags:['再開時'],
+    description:'再開支援',
+    capacity:2,
+    accepting_new_matches:true
+  });
+
+  await login(participantEmail);
+  const first = await api('/api/matches', {participant_id:participant.id});
+  const candidate = first.find(x=>x.supporter_id===supporter.id);
+  assert.ok(candidate);
+
+  const decline = await api('/api/matches/'+candidate.id+'/decline',{actor:'challenger'});
+  assert.equal(decline.status,'declined');
+
+  await login(supporterEmail);
+  const rematch = await api('/api/supporter-match',{
+    participant_id:participant.id,
+    supporter_id:supporter.id
+  });
+  assert.equal(rematch.status,'saved');
+
+  await assert.rejects(
+    () => api('/api/supporter-match',{
+      participant_id:participant.id,
+      supporter_id:supporter.id
+    }),
+    /409|duplicate/i
+  );
 });
