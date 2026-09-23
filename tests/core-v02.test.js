@@ -136,3 +136,50 @@ test('check-in rejects incomplete or out-of-range answers', { concurrency: false
     /400|must be an integer/i
   );
 });
+
+
+test('journal, daily story, and challenge story flow persists end-to-end', { concurrency: false }, async () => {
+  const email=`story-${Date.now()}@example.com`;
+  await login(email);
+  const participant=await api('/api/participants',{
+    name:'物語フロー検証',
+    email,
+    challenge:'毎日10分の学習',
+    goal:'継続する'
+  });
+
+  const checkin=await api('/api/checkins',{
+    participant_id:participant.id,
+    answers:{q1:4,q2:4,q3:4,q4:4,q5:5}
+  });
+  assert.ok(checkin.checkin?.id);
+
+  const journal=await api('/api/journal-entries',{
+    participant_id:participant.id,
+    entry_date:'2026-09-24',
+    source:'fcl',
+    raw_text:'今日は10分だけ学習できた。昨日より始めやすかった。'
+  });
+  assert.ok(journal.entry?.id);
+  assert.equal(journal.story_scope,'challenge');
+  assert.ok(journal.journal_reply?.reply_text);
+
+  const life=await api('/api/life-story/'+participant.user_id,undefined,'GET');
+  assert.equal(life.user_id,participant.user_id);
+  assert.equal(life.journal_entries.length,0);
+
+  const lifePage=await api('/api/life-story-pages/generate',{});
+  assert.ok(Array.isArray(lifePage.story_pages));
+
+  const storyPage=await api('/api/story-pages/generate',{participant_id:participant.id});
+  assert.equal(storyPage.ok,true);
+  assert.ok(storyPage.story_pages.length>=1);
+
+  const storyUser=await api('/api/story-user/'+participant.user_id,undefined,'GET');
+  assert.equal(storyUser.user_id,participant.user_id);
+  assert.ok(Array.isArray(storyUser.participants));
+
+  const challengeStory=await api('/api/story/'+participant.id,undefined,'GET');
+  assert.equal(challengeStory.participant.id,participant.id);
+  assert.ok(Array.isArray(challengeStory.checkins));
+});
