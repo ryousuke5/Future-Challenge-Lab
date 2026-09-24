@@ -1482,6 +1482,24 @@ async function generateLifeStoryPagesWithOpenAI({user,entries=[]}={}){
     return {};
   }
 }
+async function getPreferredJournalReplyText(participant_id, fallbackText='', replyDate=todayJstDate()){
+  const fallback=String(fallbackText||'').trim();
+  if(!participant_id) return fallback;
+  const entries=(await select('journal_entries',{participant_id}))
+    .filter(row=>String(row.entry_date||'')===String(replyDate).slice(0,10))
+    .sort((a,b)=>new Date(b.updated_at||b.created_at||0)-new Date(a.updated_at||a.created_at||0));
+  return String(entries[0]?.raw_text||'').trim() || fallback;
+}
+
+function isGenericJournalReply(replyText='', diaryText='', checkinText=''){
+  const reply=String(replyText||'');
+  const diary=String(diaryText||'').trim();
+  const checkin=String(checkinText||'').trim();
+  return Boolean(reply && diary && checkin && diary!==checkin &&
+    (reply.includes('という今日の記録から、今の状況が伝わってきました。') ||
+     (reply.includes('日誌を読みました。') && reply.includes('という今日の記録'))));
+}
+
 async function refreshJournalReplyForEntry({ participant_id, checkin_id = null, entry_date = todayJstDate(), checkin_text = '' } = {}){
   if(!participant_id) return null;
   const participant=(await select('participants',{id:participant_id}))[0];
@@ -2558,7 +2576,7 @@ app.get('/api/core/history/:participant_id',async(req,res)=>{
       analysis_event_id:analysis?.id||null,
       checkin_checked_in_at:checkin?.checked_in_at||null,
       journal_reply:savedReply,
-      checkin_text:analysis?.features?.checkin_text || latestJournalEntry?.raw_text || '',
+      checkin_text:latestJournalEntry?.raw_text || analysis?.features?.checkin_text || '',
       analysis:historyAnalysis,
       decision:decision?{...decision.features,label:decision.label}:null,
       outcome:outcome?{...outcome.features,label:outcome.label}:null
@@ -4365,31 +4383,42 @@ app.post('/api/core/analyze', async (req, res) => {
       try{
         const participant=(await select('participants',{id:participant_id}))[0];
         const today=todayJstDate();
+        const replyDiaryText=await getPreferredJournalReplyText(participant_id,checkin_text,today);
         const todaysReplies=(await select('journal_replies',{participant_id,reply_date:today}))
           .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
         const existingToday=todaysReplies[0] || null;
+        const existingNeedsRefresh=existingToday && isGenericJournalReply(existingToday.reply_text,replyDiaryText,checkin_text);
 
-        if(existingToday){
+        if(existingToday && !existingNeedsRefresh){
           journalReply=existingToday;
           journalReplySource='saved_today';
         }else{
-          // /api/core/analyze ではOpenAIを追加で呼ばない。
-          // runFclAiCore の1回のOpenAI応答に含まれる reply_text をそのまま保存する。
-          const aiReply = String(response?.journal_reply_text || '').trim() || null;
-          const replyText=aiReply || [
-            `今日の記録「${String(checkin_text || '').trim().slice(0,180)}」を読みました。`,
-            response.insight || '今の状態を一つずつ整理できています。',
-            response.next_action ? `次の一歩は「${response.next_action}」です。自分に合う形で進めてみてください。` : '次に何をするかは、今日の自分に合う一歩からで大丈夫です。'
-          ].join('\\n\\n');
-          journalReply=await saveJournalReply({
+          const refreshed=await refreshJournalReplyForEntry({
             participant_id,
-            checkin_id:checkin_id || null,
-            source_analysis_event_id:response?.analysis_event_id || null,
-            reply_text:replyText,
-            reply_version:aiReply ? 'v2-ai' : 'v2-ai-fallback',
-            reply_date:today
+            checkin_id:checkin_id || existingToday?.checkin_id || null,
+            entry_date:today,
+            checkin_text:replyDiaryText
           });
-          journalReplySource=aiReply ? 'openai' : 'fallback';
+          if(refreshed){
+            journalReply=refreshed;
+            journalReplySource=existingNeedsRefresh ? 'refreshed_today' : 'journal_entry_refresh';
+          }else{
+            const aiReply=String(response?.journal_reply_text || '').trim() || null;
+            const replyText=aiReply || [
+              '今日の日誌を読みました。',
+              `「${String(replyDiaryText || checkin_text || '').trim().slice(0,180)}」という今日の記録を受け取りました。`,
+              response.next_action ? `ここからは「${response.next_action}」を急がず、今日の状況に合う形で選んでいけます。` : '今日の記録を材料に、次の一歩を自分で選べる状態に整えていきましょう。'
+            ].join('\\n\\n');
+            journalReply=await saveJournalReply({
+              participant_id,
+              checkin_id:checkin_id || existingToday?.checkin_id || null,
+              source_analysis_event_id:response?.analysis_event_id || null,
+              reply_text:replyText,
+              reply_version:aiReply ? 'v2-ai' : 'v2-ai-journal-fallback',
+              reply_date:today
+            });
+            journalReplySource=aiReply ? 'openai' : 'fallback';
+          }
         }
       }catch(journalError){
         console.error('[journal-reply] inline generation failed',journalError?.message||journalError);
