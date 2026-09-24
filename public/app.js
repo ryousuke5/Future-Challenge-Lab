@@ -466,7 +466,19 @@ async function match(){
       } else {
         actionHtml=`<button type="button" onclick="requestConnection('${esc(x.id)}', this)">この支援者に支援をお願いする</button>`;
       }
-      return `<div class="match"><strong>${esc(x.supporter?.organization_name||'支援者')}</strong> / ${esc(x.supporter?.supporter_name||'')}<div>マッチ度 ${esc(x.score)}点</div><p>${esc(x.reason)}</p><div data-match-status="${esc(x.id)}">状態: ${esc(status)}</div>${supporterResponseLabel ? `<div class="supporter-response-display" style="margin-top:8px;padding:10px 12px;border-radius:10px;background:#f8fafc;"><strong>支援者の回答：</strong>${esc(supporterResponseLabel)}${supporterResponseHint ? `<br>${supporterResponseHint}` : ''}</div>` : ''}${actionHtml}</div>`;
+      const explanation=x.match_explanation||{};
+      const reasonItems=Array.isArray(explanation.reasons)?explanation.reasons.slice(0,3):[];
+      const reasonHtml=reasonItems.length
+        ? `<div class="match-reasons">${reasonItems.map(reason=>`<span class="match-reason">${esc(reason)}</span>`).join('')}</div>`
+        : '';
+      const explanationHtml=`<div class="match-explanation">
+        <div class="match-explanation-title">${esc(explanation.title||'今のあなたに合う理由')}</div>
+        <p>${esc(explanation.summary||x.reason||'現在の状態と支援内容を組み合わせて候補にしています。')}</p>
+        ${reasonHtml}
+        <div class="match-support-shape"><strong>最初の支援：</strong>${esc(explanation.support_shape||'一緒に次の一歩を整理する')}</div>
+        <div class="match-first-step">${esc(explanation.first_step||'つながったら、今日の一歩を1つ決めます。')}</div>
+      </div>`;
+      return `<div class="match"><div class="match-title-row"><strong>${esc(x.supporter?.organization_name||'支援者')}</strong> / ${esc(x.supporter?.supporter_name||'')}<span class="status ${status==='connected'?'connected':''}">${esc(status)}</span></div>${explanationHtml}${supporterResponseLabel ? `<div class="supporter-response-display" style="margin-top:8px;padding:10px 12px;border-radius:10px;background:#f8fafc;"><strong>支援者の回答：</strong>${esc(supporterResponseLabel)}${supporterResponseHint ? `<br>${supporterResponseHint}` : ''}</div>` : ''}${actionHtml}</div>`;
     }).join('')||'<p>現在候補がありません。支援パートナーを登録してください。</p>';
   });
 }
