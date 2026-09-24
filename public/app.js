@@ -376,7 +376,6 @@ function buildAnalysisCards(data){
     return `<li>${label}（期待値 ${esc((Number(c.score || 0) * 100).toFixed(0))}%）</li>`;
   }).join('') : '<li>候補を生成できていません。</li>';
 
-  const esc=(value)=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;");
   analysis.innerHTML = `
     <div class="analysis-grid">
       ${cards.map(card => `
