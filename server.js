@@ -1864,7 +1864,7 @@ app.use('/api',async(req,res,next)=>{
       if(ownSupporter) supporterId=ownSupporter.id;
       if(req.body && supporterId) req.body.supporter_id=supporterId;
     }
-    if(supporterId&&path!=='/supporter-outcomes'&&!(await requireSupporterOwnership(user.id,supporterId)))return res.status(403).json({error:'この支援者データへアクセスする権限がありません。'});
+    if(supporterId&&!(await requireSupporterOwnership(user.id,supporterId)))return res.status(403).json({error:'この支援者データへアクセスする権限がありません。'});
 
     if(userRoute){
       const target=String(userRoute[1]||'').trim();
