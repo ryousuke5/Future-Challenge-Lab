@@ -172,13 +172,13 @@ form.addEventListener('submit',async(e)=>{
     });
     const x=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(x.error||'登録に失敗しました');
-    const participantId=String(x.id||'').trim();
-    if(!participantId)throw new Error('登録は完了しましたが、登録IDを取得できませんでした。もう一度お試しください。');
+    const participantId=String(x.participant_id || x.id||'').trim();
+    if(!participantId)throw new Error('登録情報の取得に失敗しました。もう一度お試しください。');
     const userId=String(x.user_id||'').trim();
     localStorage.setItem('fcl-participant-id',participantId);
     localStorage.setItem('fcl-user-id',userId);
     success.style.display='block';
-    success.innerHTML='<strong>登録完了しました。</strong><br>登録ID: '+participantId+'<br>ユーザーID: '+(userId||'未取得')+'<div class="next"><strong>次にやること</strong><br>① 「FCL本体へ進む」を押す<br>② 今日の5問に回答する<br>③ AI分析を確認する<br>④ 今日の次の一歩を1つ実行する<br><br><a href="/">FCL本体へ進む →</a></div>';
+    success.innerHTML='<strong>登録完了しました。</strong><br>ユーザーID: '+(userId||'未取得')+'<div class="next"><strong>次にやること</strong><br>① 「FCL本体へ進む」を押す<br>② 今日の5問に回答する<br>③ AI分析を確認する<br>④ 今日の次の一歩を1つ実行する<br><br><a href="/">FCL本体へ進む →</a></div>';
     form.reset();
     success.scrollIntoView({behavior:'smooth',block:'center'});
   }catch(err){
