@@ -85,6 +85,14 @@ test('supporter dashboard and recommendation generation', { concurrency: false }
   assert.ok(candidates.candidates.length >= 1);
   assert.match(candidates.candidates[0].recommended_support_type || '', /支援|介入|相談|整理/);
 
+  await login(participantEmail);
+  const matchList = await api('/api/matches', {participant_id: participant.id});
+  assert.ok(Array.isArray(matchList));
+  assert.ok(matchList.length >= 1);
+  assert.ok(matchList[0].match_explanation);
+  assert.ok(Array.isArray(matchList[0].match_explanation.reasons));
+  assert.match(matchList[0].match_explanation.support_shape || '', /支援|整理|進め/);
+
   await login(supporterEmail);
   const dashboard = await api(`/api/supporter/dashboard?supporter_id=${supporter.id}`, undefined, 'GET');
   assert.ok(Array.isArray(dashboard.targets));
