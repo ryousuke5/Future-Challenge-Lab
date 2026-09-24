@@ -1909,8 +1909,7 @@ app.get('/api/health',(req,res)=>res.json({ok:true,supabase:hasSupabase,mode:has
 
 app.post('/api/participants',async(req,res)=>{
   try{
-    // This route is declared before the generic /api middleware below, so
-    // enforce authentication explicitly here as well.
+    // Keep an explicit authentication check here as defense in depth.
     const authenticatedUser=await getAuthenticatedFclUser(req);
     if(!authenticatedUser) return res.status(401).json({error:'FCLログインが必要です。メール認証コードでログインしてください。'});
 
