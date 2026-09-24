@@ -1710,17 +1710,73 @@ app.post('/api/auth/request-code',async(req,res)=>{
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return res.status(400).json({error:'有効なメールアドレスを入力してください'});
     const user=await getOrCreateFclUser(email);
     const sentAt=user.auth_code_sent_at?new Date(user.auth_code_sent_at).getTime():0;
-    if(sentAt&&Date.now()-sentAt<60000)return res.status(429).json({error:'認証コードは1分に1回まで送信できます。'});
-    const code=String(crypto.randomInt(100000,1000000));
-    await update('fcl_users',user.id,{auth_code_hash:hashSha256(code),auth_code_expires_at:new Date(Date.now()+10*60*1000).toISOString(),auth_code_sent_at:new Date().toISOString(),auth_code_attempts:0,updated_at:new Date().toISOString()});
-    const testMode=isTestEmail(email)&&(process.env.NODE_ENV==='development'||process.env.NODE_ENV==='test');
-    if(!testMode){
-      if(!process.env.RESEND_API_KEY||!process.env.FCL_FROM_EMAIL)return res.status(503).json({error:'認証メールの送信設定がまだ完了していません。'});
-      const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+process.env.RESEND_API_KEY},body:JSON.stringify({from:process.env.FCL_FROM_EMAIL,to:[email],subject:'FCL｜ログイン認証コード',text:'FCLのログイン認証コードは '+code+' です。\n\n10分以内にFCLの画面へ入力してください。\n\n心当たりがない場合は、このメールを無視してください。\n\nFuture Challenge Lab',html:'<p>FCLのログイン認証コードです。</p><p style="font-size:28px;font-weight:700;letter-spacing:4px">'+code+'</p><p>10分以内にFCLの画面へ入力してください。</p><p>心当たりがない場合は、このメールを無視してください。</p><p>Future Challenge Lab</p>'})});
-      const responseText=await response.text(); if(!response.ok)throw new Error('Resend '+response.status+': '+responseText);
+    const retryAfterSeconds=Math.max(0,Math.ceil((60000-(Date.now()-sentAt))/1000));
+    if(sentAt&&Date.now()-sentAt<60000){
+      return res.status(429).json({
+        error:'認証コードは1分に1回まで送信できます。すでに届いている認証コードを入力してください。',
+        retry_after_seconds:retryAfterSeconds
+      });
     }
-    res.json({ok:true,message:'認証コードをメールで送信しました。',development_code:testMode?code:undefined});
-  }catch(error){console.error('[fcl-auth] request-code',error);res.status(500).json({error:error.message||'認証コードの送信に失敗しました。'});}
+
+    const code=String(crypto.randomInt(100000,1000000));
+    const codePatch={
+      auth_code_hash:hashSha256(code),
+      auth_code_expires_at:new Date(Date.now()+10*60*1000).toISOString(),
+      auth_code_sent_at:new Date().toISOString(),
+      auth_code_attempts:0,
+      updated_at:new Date().toISOString()
+    };
+    await update('fcl_users',user.id,codePatch);
+
+    const clearCodeState=async()=>{
+      try{
+        await update('fcl_users',user.id,{
+          auth_code_hash:null,
+          auth_code_expires_at:null,
+          auth_code_sent_at:null,
+          auth_code_attempts:0,
+          updated_at:new Date().toISOString()
+        });
+      }catch(clearError){
+        console.error('[fcl-auth] failed to clear code state',clearError);
+      }
+    };
+
+    const testMode=isTestEmail(email)&&(process.env.NODE_ENV==='development'||process.env.NODE_ENV==='test');
+    try{
+      if(!testMode){
+        if(!process.env.RESEND_API_KEY||!process.env.FCL_FROM_EMAIL){
+          await clearCodeState();
+          return res.status(503).json({error:'認証メールの送信設定がまだ完了していません。'});
+        }
+        const response=await fetch('https://api.resend.com/emails',{
+          method:'POST',
+          headers:{'Content-Type':'application/json',Authorization:'Bearer '+process.env.RESEND_API_KEY},
+          body:JSON.stringify({
+            from:process.env.FCL_FROM_EMAIL,
+            to:[email],
+            subject:'FCL｜ログイン認証コード',
+            text:'FCLのログイン認証コードは '+code+' です。\n\n10分以内にFCLの画面へ入力してください。\n\n心当たりがない場合は、このメールを無視してください。\n\nFuture Challenge Lab',
+            html:'<p>FCLのログイン認証コードです。</p><p style="font-size:28px;font-weight:700;letter-spacing:4px">'+code+'</p><p>10分以内にFCLの画面へ入力してください。</p><p>心当たりがない場合は、このメールを無視してください。</p><p>Future Challenge Lab</p>'
+          })
+        });
+        const responseText=await response.text();
+        if(!response.ok) throw new Error('Resend '+response.status+': '+responseText);
+      }
+    }catch(error){
+      await clearCodeState();
+      throw error;
+    }
+
+    res.json({
+      ok:true,
+      message:'認証コードをメールで送信しました。',
+      development_code:testMode?code:undefined
+    });
+  }catch(error){
+    console.error('[fcl-auth] request-code',error);
+    res.status(500).json({error:error.message||'認証コードの送信に失敗しました。'});
+  }
 });
 
 app.post('/api/auth/verify-code',async(req,res)=>{
