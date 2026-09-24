@@ -3089,6 +3089,30 @@ function matchScore(p,s,last,adaptiveSupportFit={}){
   return {score:Math.min(score,100),reason:reason.join('。')||'挑戦分野と支援内容の近さを基礎スコアとして算出',adaptive_support_fit:adaptiveSupportFit};
 }
 
+function buildHumanMatchExplanation({participant={}, supporter={}, last=null, priorityData={}, adaptiveSupportFit={}}={}){
+  const challengeText = `${participant.challenge||''} ${participant.goal||''}`.toLowerCase();
+  const strengthsMatched = (supporter.strengths||[]).map(value=>String(value||'').trim()).filter(Boolean).filter(tag=>challengeText.includes(tag.toLowerCase()));
+  const timingTags = (supporter.timing_tags||[]).map(value=>String(value||'').trim()).filter(Boolean);
+  const riskScore = Number(last?.risk_score ?? 0);
+  const riskHigh = last?.risk_level === 'high' || riskScore >= 70;
+  const resumed = Boolean(last?.analysis?.resumed);
+  const reasons = [];
+  if (resumed && timingTags.includes('再開時')) reasons.push('再開した今のタイミングに合う支援ができます。');
+  else if (riskHigh && timingTags.some(tag=>['離脱前','停滞時','伴走'].includes(tag))) reasons.push('今の継続状態に合う支援タイミングです。');
+  else if (timingTags.some(tag=>['初期','成長期'].includes(tag))) reasons.push('今の挑戦段階に近い支援タイミングです。');
+  if (strengthsMatched.length) reasons.push(`支援内容の「${strengthsMatched.slice(0,2).join('」「')}」が、今回の挑戦と近いです。`);
+  const sameParticipantSuccesses = Number(adaptiveSupportFit?.evidence?.same_participant_support_successes || 0);
+  if (sameParticipantSuccesses > 0) reasons.push(`以前この支援者と関わり、${sameParticipantSuccesses}回前進につながった記録があります。`);
+  else {
+    const strongestMode = adaptiveSupportFit?.strongest_mode || priorityData?.personal_learning?.individual_continuation_pattern?.strongest_mode || null;
+    if (strongestMode) reasons.push(`これまでの記録から、今回の支援内容と相性を観測している進め方「${strongestMode}」を参考にしています。`);
+  }
+  if (!reasons.length && adaptiveSupportFit?.reasons?.length) reasons.push(...adaptiveSupportFit.reasons.slice(0,2).map(value=>String(value)));
+  if (!reasons.length) reasons.push('挑戦内容・支援内容・現在のタイミングを組み合わせて候補にしています。');
+  const supportShape = String(priorityData?.recommended_support_type || priorityData?.recommendation_type_code || '一緒に次の一歩を整理する');
+  return {title:'今のあなたに合う理由',summary:reasons[0],reasons:reasons.slice(0,3),support_shape:supportShape,first_step:'つながったら、今どこで止まっているかを共有して、今日の一歩を1つ決めます。',evidence_based:true};
+}
+
 function normalizeMatchStatus(status){
   const legacyMap = {
     suggested: 'pending',
@@ -3425,6 +3449,7 @@ app.post('/api/matches',async(req,res)=>{
     }
     const ss = allSupporters.filter(s => (Number(s.capacity ?? 5) > (activeCounts.get(s.id) || 0)));
     const last=(await select('checkins',{participant_id})).sort((a,b)=>new Date(b.checked_in_at)-new Date(a.checked_in_at))[0];
+    const priorityData=await buildSupporterPriority(participant_id);
     const personalEvents=await select('model_learning_events',{participant_id});
     const personalLearning=buildPersonalLearningProfile({events:personalEvents});
     personalLearning.support_method_events=personalEvents.filter(event=>event.features?.action_type==='support_method_outcome');
@@ -3458,6 +3483,11 @@ app.post('/api/matches',async(req,res)=>{
           match_score: Number(x.score),
           reason: x.reason,
           adaptive_support_fit: x.adaptive_support_fit || null,
+          match_explanation: buildHumanMatchExplanation({
+            participant: ps, supporter: x.s, last,
+            priorityData: { ...priorityData, personal_learning: personalLearning },
+            adaptiveSupportFit: x.adaptive_support_fit || {}
+          }),
           status,
           supporter_response,
           access_url: token ? `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(existing.id)}&token=${encodeURIComponent(token)}` : null
@@ -3486,6 +3516,11 @@ app.post('/api/matches',async(req,res)=>{
         ...record,
         supporter: x.s,
         match_score: Number(record.score),
+        match_explanation: buildHumanMatchExplanation({
+          participant: ps, supporter: x.s, last,
+          priorityData: { ...priorityData, personal_learning: personalLearning },
+          adaptiveSupportFit: x.adaptive_support_fit || {}
+        }),
         status,
         supporter_response: null,
         access_url: token ? `${publicUrl}/match-detail.html?match_id=${encodeURIComponent(record.id)}&token=${encodeURIComponent(token)}` : null
@@ -4017,25 +4052,31 @@ app.get('/api/supporter/dashboard', async (req,res)=>{
       );
       const status=effectiveMatchStatus(match);
       const token=status==='connected'?createAccessToken(match.id,'supporter'):'';
+      const targetSupportHistory=outcomes.filter(o=>o.participant_id===match.participant_id);
+      const publicLatestCheckin=priority.latest_checkin ? { checked_in_at:priority.latest_checkin.checked_in_at||null, risk_level:priority.latest_checkin.risk_level||null, summary:priority.latest_checkin.analysis?.summary||'' } : null;
+      const matchExplanation=buildHumanMatchExplanation({
+        participant, supporter, last:priority.latest_checkin, priorityData:priority,
+        adaptiveSupportFit:{strongest_mode:priority?.support_method_learning?.best_style||null,evidence:{same_participant_support_successes:targetSupportHistory.filter(o=>['restarted','action_completed','connected_and_progressed','positive'].includes(o.outcome)).length}}
+      });
       targetContexts.push({
         match_id:match.id,participant_id:match.participant_id,participant_name:participant.name||'挑戦者',
         priority:priority.priority,challenger_status:priority.challenger_status,
-        latest_checkin:priority.latest_checkin,risk_level:priority.risk_level,
+        latest_checkin:publicLatestCheckin,risk_level:priority.risk_level,
         recommended_support_type:priority.recommended_support_type,recommendation_reason:priority.recommendation_reason,
-        suggested_message:priority.suggested_message,
+        suggested_message:priority.suggested_message,match_explanation:matchExplanation,
         action_activity_score:priority.action_activity_score,action_activity_status:priority.action_activity_status,
         action_activity_label:priority.action_activity_label,action_priority_rank:priority.action_priority_rank,
         recent_action_count:priority.recent_action_count,recent_completed_action_count:priority.recent_completed_action_count,
         recent_checkin_days:priority.recent_checkin_days,last_activity_at:priority.last_activity_at,
         match_status:status,recommendation_type_code:priority.recommendation_type_code,
         access_url:token?`${publicUrl}/match-detail.html?match_id=${encodeURIComponent(match.id)}&token=${encodeURIComponent(token)}`:null,
-        participant,match,
+        match,
         priority,
         checkins:checkinsBy.get(match.participant_id)||[],
         actions:actionsBy.get(match.participant_id)||[],
         assignments:assignmentsBy.get(match.participant_id)||[],
         modelEvents:eventsBy.get(match.participant_id)||[],
-        supportHistory:outcomes.filter(o=>o.participant_id===match.participant_id)
+        supportHistory:targetSupportHistory
       });
     }
     const connectedTargetContexts=targetContexts.filter(target=>target.match_status==='connected');

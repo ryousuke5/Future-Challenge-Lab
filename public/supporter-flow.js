@@ -167,6 +167,14 @@
           <strong>FCLが整理した理由</strong>
           <p>${esc(item.recommendation_reason || '最近の状態から、支援者との対話が役立つ可能性があります。')}</p>
         </div>
+        ${item.match_explanation ?
+          '<div class="supporter-ai-summary">' +
+            '<div class="supporter-ai-summary-title"><span class="section-tag">なぜ今、あなたに届いたか</span><span class="supporter-ai-summary-badge">現在地から整理</span></div>' +
+            '<p class="supporter-ai-summary-main"><strong>' + esc(item.match_explanation.summary || '') + '</strong></p>' +
+            ((item.match_explanation.reasons || []).length ? '<div class="supporter-ai-summary-list"><strong>マッチ理由</strong><ul>' + item.match_explanation.reasons.slice(0,3).map(x => '<li>' + esc(x) + '</li>').join('') + '</ul></div>' : '') +
+            '<div class="supporter-ai-next"><strong>最初の支援</strong><p>' + esc(item.match_explanation.support_shape || '一緒に次の一歩を整理する') + '</p></div>' +
+          '</div>' : ''}
+
 
         ${item.ai_summary ? 
           '<div class="supporter-ai-summary">' +

@@ -1,8 +1,9 @@
 name: FCL integration tests
+# Feature branches are tested before merge.
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feat/**']
   workflow_dispatch:
 
 jobs:
