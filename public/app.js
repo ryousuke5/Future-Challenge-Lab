@@ -161,7 +161,7 @@ async function restoreParticipantHistory(participantId, userId){
   if(participant?.user_id) localStorage.setItem('fcl-user-id',participant.user_id);
 
   const status=document.getElementById('participantStatus');
-  if(status) status.textContent=` 登録ID: ${participant.id || '未取得'} / ユーザーID: ${participant.user_id || userId || '未取得'} / 現在の挑戦: ${participant.challenge || '未登録'}`;
+  if(status) status.textContent=` ユーザーID: ${participant.user_id || userId || '未取得'} / 現在の挑戦: ${participant.challenge || '未登録'} `;
 
   const goalInput=document.getElementById('coreGoal');
   if(goalInput && participant.goal) goalInput.value=participant.goal;
@@ -260,7 +260,7 @@ async function restoreCoreSession(){
           participant=history.participant;
           localStorage.setItem('fcl-participant-id',participant.id);
           const status=document.getElementById('participantStatus');
-          if(status) status.textContent=` 登録ID: ${participant.id || '未取得'} / ユーザーID: ${participant.user_id || userId || '未取得'} / 現在の挑戦: ${participant.challenge || '未登録'}`;
+          if(status) status.textContent=` ユーザーID: ${participant.user_id || userId || '未取得'} / 現在の挑戦: ${participant.challenge || '未登録'} `;
           const goalInput=document.getElementById('coreGoal');
           if(goalInput && participant.goal) goalInput.value=participant.goal;
           if(history.analysis){ renderCoreResult({result:history.analysis}); renderInsight({result:history.analysis}); renderSolutions({result:history.analysis}); }
@@ -310,9 +310,9 @@ async function register(){
         {retries:2,delayMs:800}
       );
 
-      const participantId=String(participant?.id||'').trim();
+      const participantId=String(participant?.participant_id || participant?.id||'').trim();
       if(!participantId){
-        throw new Error('登録は完了しましたが、登録IDを取得できませんでした。もう一度お試しください。');
+        throw new Error('登録情報の取得に失敗しました。もう一度お試しください。');
       }
 
       const userId=String(participant?.user_id||'').trim();
@@ -320,7 +320,7 @@ async function register(){
       localStorage.setItem('fcl-user-id',userId);
 
       if(participantStatus){
-        participantStatus.textContent=` 登録ID: ${participantId} / ユーザーID: ${userId || '未取得'} / 現在の挑戦: ${participant.challenge || '未登録'}`;
+        participantStatus.textContent=` ユーザーID: ${userId || '未取得'} / 現在の挑戦: ${participant.challenge || '未登録'}`;
       }
 
       const userPageLink=document.getElementById('participantUserPageLink');
