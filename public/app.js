@@ -514,7 +514,7 @@ async function registerSupporter(){
   try { await withLoadingUI(document.getElementById('registerSupporterBtn'), '登録処理中です。しばらくお待ちください…', async () => {
     await ensureFclSession(supportEmail.value);
     const x=await api('/api/supporters/register',{organization_name:org.value,supporter_name:supporter.value,email:supportEmail.value,support_category:category.value,strengths:strengths.value.split(',').map(x=>x.trim()).filter(Boolean),timing_tags:timing.value.split(',').map(x=>x.trim()).filter(Boolean),description:desc.value});
-    supportStatus.textContent=` 登録しました: ${x.supporter_name}`;
+    supportStatus.textContent=` 登録しました。ユーザーID: ${x.user_id || localStorage.getItem('fcl-user-id') || '未取得'}`;
   }); } catch(error) { showUiError(document.getElementById('supportStatus')); }
 }
 // NOTE: index.html's button calls showSupporterCandidates(), which did not exist
@@ -543,7 +543,7 @@ async function match(){
         : '';
       let actionHtml='';
       if(connected && accessUrl){
-        actionHtml=`<a href="${esc(accessUrl)}" class="secondary-btn">接続ページを開く</a><div class="support-outcome-box"><strong>支援後の結果</strong><p class="muted">どんな関わり方が次の一歩につながったか、FCLに残します。</p><select data-support-outcome-status="${esc(x.id)}"><option value="action_completed">行動につながった</option><option value="partial_progress">一部前進した</option><option value="no_progress">まだ前進しなかった</option><option value="restarted">再開につながった</option><option value="not_used">支援をまだ使っていない</option></select><textarea data-support-outcome-note="${esc(x.id)}" rows="2" placeholder="支援を受けて、何が起きた？"></textarea><button type="button" onclick="saveSupportOutcome('${esc(x.id)}','${esc(x.supporter_id || x.supporter?.id || '')}',this)">支援結果を保存</button><span data-support-outcome-status-text="${esc(x.id)}"></span></div>`;
+        actionHtml=`<a href="${esc(accessUrl)}" class="secondary-btn">接続ページを開く</a><div class="support-outcome-box"><strong>支援後の結果</strong><p class="muted">どんな関わり方が次の一歩につながったか、FCLに残します。</p><select data-support-outcome-status="${esc(x.id)}"><option value="action_completed">行動につながった</option><option value="partial_progress">一部前進した</option><option value="no_progress">まだ前進しなかった</option><option value="restarted">再開につながった</option><option value="not_used">支援をまだ使っていない</option></select><textarea data-support-outcome-note="${esc(x.id)}" rows="2" placeholder="支援を受けて、何が起きた？"></textarea><button type="button" onclick="saveSupportOutcome('${esc(x.id)}',this)">支援結果を保存</button><span data-support-outcome-status-text="${esc(x.id)}"></span></div>`;
       } else if(requestDone){
         const label=status==='supporter_approved' ? '支援者承認済み・接続待ち' : '接続依頼済み';
         actionHtml=`<button type="button" disabled>${label}</button>`;
@@ -936,12 +936,15 @@ async function submitCoreOutcome(){
   }); } catch(error) { showUiError(document.getElementById('coreOutcomeStatusText')); }
 }
 
-async function saveSupportOutcome(matchId,supporterId,btn){  if(!participant||!supporterId)return;
+async function saveSupportOutcome(matchId,btn){
+  if(!participant)return;
+  const userId=localStorage.getItem('fcl-user-id')||'';
+  if(!userId)return;
   const statusEl=btn.closest('.support-outcome-box')?.querySelector(`[data-support-outcome-status-text="${matchId}"]`);
   const outcome=document.querySelector(`[data-support-outcome-status="${matchId}"]`)?.value||'positive';
   const note=document.querySelector(`[data-support-outcome-note="${matchId}"]`)?.value||'';
   try { await withLoadingUI(btn, '支援結果を保存しています。しばらくお待ちください…', async () => {
-    const data=await api('/api/supporter-outcomes',{participant_id:participant.id,match_id:matchId,supporter_id:supporterId,outcome,outcome_score:outcome==='action_completed'||outcome==='restarted'||outcome==='positive'?1:outcome==='partial_progress'?0.5:0,note,support_style:'supporter'});
+    const data=await api('/api/supporter-outcomes',{participant_id:participant.id,match_id:matchId,supporter_user_id:userId,outcome,outcome_score:outcome==='action_completed'||outcome==='restarted'||outcome==='positive'?1:outcome==='partial_progress'?0.5:0,note,support_style:'supporter'});
     if(statusEl) statusEl.textContent=' 支援方法の学習データに保存しました。';
     if(typeof window.refreshFclDailyLoop==='function') window.refreshFclDailyLoop();
     btn.disabled=true;
