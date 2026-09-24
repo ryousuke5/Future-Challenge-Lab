@@ -84,7 +84,7 @@ test('challenger and supporter registrations share one public FCL user ID', {con
 
   // The supporter endpoints can resolve the internal supporter row from the authenticated user.
   const invalidOldId=await request('/api/supporter/dashboard?supporter_id=not-a-public-id',{cookie});
-  assert.equal(invalidOldId.response.status,400);
+  assert.equal(invalidOldId.response.status,403);
 });
 
 test.after(async()=> {
