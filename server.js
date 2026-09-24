@@ -2019,12 +2019,6 @@ app.get('/api/users/:user_id/overview', async (req,res)=>{
         if(participant.archived_at || participant.user_id===user.id) continue;
         const supporter=supporterMap.get(match.supporter_id)||{};
         const token=status==='connected'?createAccessToken(match.id,'supporter'):'';
-      const targetSupportHistory=outcomes.filter(o=>o.participant_id===match.participant_id);
-      const publicLatestCheckin=priority.latest_checkin ? { checked_in_at:priority.latest_checkin.checked_in_at||null, risk_level:priority.latest_checkin.risk_level||null, summary:priority.latest_checkin.analysis?.summary||'' } : null;
-      const matchExplanation=buildHumanMatchExplanation({
-        participant, supporter, last:priority.latest_checkin, priorityData:priority,
-        adaptiveSupportFit:{strongest_mode:priority?.support_method_learning?.best_style||null,evidence:{same_participant_support_successes:targetSupportHistory.filter(o=>['restarted','action_completed','connected_and_progressed','positive'].includes(o.outcome)).length}}
-      });
         visibleMatches.push({
           match_id:match.id,role:'supporter',role_label:'支援者',status,
           challenge:participant?.challenge||'未登録',goal:participant?.goal||'未登録',
@@ -4058,6 +4052,12 @@ app.get('/api/supporter/dashboard', async (req,res)=>{
       );
       const status=effectiveMatchStatus(match);
       const token=status==='connected'?createAccessToken(match.id,'supporter'):'';
+      const targetSupportHistory=outcomes.filter(o=>o.participant_id===match.participant_id);
+      const publicLatestCheckin=priority.latest_checkin ? { checked_in_at:priority.latest_checkin.checked_in_at||null, risk_level:priority.latest_checkin.risk_level||null, summary:priority.latest_checkin.analysis?.summary||'' } : null;
+      const matchExplanation=buildHumanMatchExplanation({
+        participant, supporter, last:priority.latest_checkin, priorityData:priority,
+        adaptiveSupportFit:{strongest_mode:priority?.support_method_learning?.best_style||null,evidence:{same_participant_support_successes:targetSupportHistory.filter(o=>['restarted','action_completed','connected_and_progressed','positive'].includes(o.outcome)).length}}
+      });
       targetContexts.push({
         match_id:match.id,participant_id:match.participant_id,participant_name:participant.name||'挑戦者',
         priority:priority.priority,challenger_status:priority.challenger_status,
