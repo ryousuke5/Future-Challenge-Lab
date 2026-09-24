@@ -64,23 +64,50 @@ async function apiWithRetry(url,body,{retries=1,delayMs=500}={}){
 async function ensureFclSession(emailValue){
   const emailAddress=String(emailValue||'').trim().toLowerCase();
   if(!emailAddress)throw new Error('メールアドレスを入力してください');
+
   let sessionResponse=await fetch('/api/auth/session',{credentials:'same-origin'}).catch(()=>null);
   if(sessionResponse?.ok){
     const session=await sessionResponse.json();
-    if(String(session?.user?.email||'').trim().toLowerCase()===emailAddress)return session.user;
-    await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'});
+    if(String(session?.user?.email||'').trim().toLowerCase()===emailAddress){
+      localStorage.setItem('fcl-user-id',session.user.id||'');
+      return session.user;
+    }
+    await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{});
   }
-  const send=await fetch('/api/auth/request-code',{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',body:JSON.stringify({email:emailAddress})});
+
+  const send=await fetch('/api/auth/request-code',{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    credentials:'same-origin',
+    body:JSON.stringify({email:emailAddress})
+  });
   const sendJson=await send.json().catch(()=>({}));
-  if(!send.ok)throw new Error(sendJson.error||'認証コードの送信に失敗しました');
+
   let code=sendJson.development_code||'';
-  if(!code)code=window.prompt('登録・ログインに使う6桁の認証コードをメールから入力してください');
+  if(send.status===429){
+    code=window.prompt('認証コードはすでに送信されています。届いている6桁のコードを入力してください');
+  }else{
+    if(!send.ok)throw new Error(sendJson.error||'認証コードの送信に失敗しました');
+    if(!code)code=window.prompt('登録・ログインに使う6桁の認証コードをメールから入力してください');
+  }
   if(!code)throw new Error('認証コードが入力されませんでした');
-  const verify=await fetch('/api/auth/verify-code',{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',body:JSON.stringify({email:emailAddress,code})});
+
+  const verify=await fetch('/api/auth/verify-code',{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    credentials:'same-origin',
+    body:JSON.stringify({email:emailAddress,code})
+  });
   const verifyJson=await verify.json().catch(()=>({}));
   if(!verify.ok)throw new Error(verifyJson.error||'認証に失敗しました');
+
   localStorage.setItem('fcl-user-id',verifyJson.user_id||'');
-  return {id:verifyJson.user_id,email:verifyJson.email};
+  const verifiedSession=await fetch('/api/auth/session',{credentials:'same-origin'}).catch(()=>null);
+  const verifiedSessionJson=await verifiedSession?.json().catch(()=>({}));
+  if(!verifiedSession?.ok || verifiedSessionJson?.user?.id!==verifyJson.user_id){
+    throw new Error('認証は完了しましたが、ログイン状態を確認できませんでした。ブラウザを更新してもう一度お試しください。');
+  }
+  return verifiedSessionJson.user;
 }
 function showUiError(target,message='保存に失敗しました。もう一度お試しください。'){if(target)target.textContent=` ${message}`;}
 async function fetchUserChallenges(userId){
