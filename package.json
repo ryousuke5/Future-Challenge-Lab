@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node start.js",
-    "test": "node tests/core-v02.test.js && node tests/supporter-module.test.js && node tests/message-email.test.js && node tests/registration-flow.test.js && node tests/id-unification.test.js"
+    "test": "node tests/core-v02.test.js && node tests/supporter-module.test.js && node tests/message-email.test.js && node tests/registration-flow.test.js && node tests/id-unification.test.js && node tests/journal-reply-source.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",
