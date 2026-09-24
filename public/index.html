@@ -175,8 +175,9 @@ button.secondary,.secondary-btn{color:#1460ac;background:#fff;border-color:#cfe2
   <div class="daily-loop-heading"><div><span class="eyebrow">FCL DAY LOOP</span><h2>今日を、次の一歩へ <span class="light-badge">毎日ここを見る</span></h2><p>記録したあとに、「ほめる・発見する・次へ進む」をひとつの流れで返します。</p></div></div>
   <div id="fclDailyLoopContent"></div>
   <div id="currentChallengeBar" hidden style="margin-top:14px;padding:12px 14px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-    <label for="challengeSelector" style="font-weight:700;">今、進めている挑戦</label>
-    <select id="challengeSelector" style="flex:1 1 320px;min-width:240px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;font:inherit;background:#fff;"></select>
+    <label for="challengeSelector" style="font-weight:800;min-width:160px;">今、進めている挑戦</label>
+    <select id="challengeSelector" aria-label="今、進めている挑戦を選択" style="flex:1 1 320px;min-width:240px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;font:inherit;background:#fff;"></select>
+    <span id="currentChallengeStatus" class="muted" style="flex:1 1 100%;font-size:12px;"></span>
     <a href="/user.html" class="challenge-manage-btn">挑戦を管理</a>
   </div>
 </section>
