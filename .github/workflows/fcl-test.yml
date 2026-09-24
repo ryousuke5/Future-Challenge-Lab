@@ -1,4 +1,5 @@
 name: FCL integration tests
+# Feature branches are tested before merge.
 
 on:
   push:
