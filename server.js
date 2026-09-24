@@ -210,6 +210,51 @@ async function sendFclResendEmail({to,subject,text,html,idempotencyKey}={}){
   return parsed;
 }
 
+async function sendMatchLifecycleEmail({match,emailType,recipientRole}={}){
+  const participant=(await select('participants',{id:match?.participant_id}))[0];
+  const supporter=(await select('supporters',{id:match?.supporter_id}))[0];
+  if(!match||!participant||!supporter||!['challenger','supporter'].includes(recipientRole)) return {status:'skipped',reason:'match recipient unavailable'};
+  const recipientEmail=recipientRole==='challenger' ? normalizeContactEmail(participant.email) : normalizeContactEmail(supporter.email);
+  if(!recipientEmail) return {status:'skipped',reason:'recipient email unavailable'};
+  const publicUrl=(process.env.FCL_PUBLIC_URL||'http://localhost:3000').replace(/\/$/,'');
+  const accessToken=effectiveMatchStatus(match)==='connected' ? createAccessToken(match.id,recipientRole) : '';
+  const detailUrl=publicUrl+'/match-detail.html?match_id='+encodeURIComponent(match.id)+(accessToken?'&token='+encodeURIComponent(accessToken):'');
+  const recipientName=recipientRole==='challenger' ? (participant.name||'挑戦者') : (supporter.supporter_name||'支援者');
+  const subjectMap={matching_candidate:'FCL｜支援候補のご案内',approval_received:'FCL｜接続承認を受け取りました',connection_confirmed:'FCL｜支援の接続が成立しました'};
+  const bodyMap={
+    matching_candidate:`${recipientName}さん\\n\\nFCLで、今の挑戦に合う支援候補が見つかりました。\\n\\n挑戦内容：${participant.challenge||'未登録'}\\n目標：${participant.goal||'未登録'}\\n\\n詳細を確認して、つながるかどうかを選んでください。\\n${detailUrl}\\n\\nメールが届かない場合は、迷惑メールフォルダーもご確認ください。\\nFuture Challenge Lab`,
+    approval_received:`${recipientName}さん\\n\\nFCLの支援接続について、相手から承認・接続依頼が届きました。\\n\\n挑戦者：${participant.name||'挑戦者'}\\n支援者：${supporter.supporter_name||'支援者'}\\n\\nFCLで現在の接続状態を確認してください。\\n${detailUrl}\\n\\nメールが届かない場合は、迷惑メールフォルダーもご確認ください。\\nFuture Challenge Lab`,
+    connection_confirmed:`${recipientName}さん\\n\\nFCLの支援接続が成立しました。\\n\\n挑戦内容：${participant.challenge||'未登録'}\\n目標：${participant.goal||'未登録'}\\n\\nここからは、今どこで止まっているかを共有し、今日できる最小の一歩を一緒に決めてください。\\n\\n接続ページ：${detailUrl}\\n\\nメールが届かない場合は、迷惑メールフォルダーもご確認ください。\\nFuture Challenge Lab`
+  };
+  const textBody=bodyMap[emailType]||bodyMap.matching_candidate;
+  const result=await sendFclResendEmail({
+    to:recipientEmail,
+    subject:subjectMap[emailType]||subjectMap.matching_candidate,
+    text:textBody,
+    html:'<div style="font-family:Arial,sans-serif;line-height:1.7"><div style="white-space:pre-wrap">'+escapeHtmlServer(textBody)+'</div><p style="margin-top:20px"><a href="'+escapeHtmlServer(detailUrl)+'" style="display:inline-block;padding:12px 18px;background:#111827;color:#fff;text-decoration:none;border-radius:8px">FCLの接続ページを開く</a></p></div>',
+    idempotencyKey:'fcl/lifecycle-email/'+match.id+'/'+emailType+'/'+recipientRole
+  });
+  await insert('connection_events',{
+    participant_id:match.participant_id,supporter_id:match.supporter_id,match_id:match.id,
+    event_type:result?.skipped?'email_skipped':'email_sent',
+    note:JSON.stringify({email_type:emailType,recipient_role:recipientRole,recipient:recipientEmail,resend_id:result?.id||null,skipped:Boolean(result?.skipped),automatic:true}),
+    created_at:new Date().toISOString()
+  });
+  return {status:result?.skipped?'recorded_test':'sent',resend_id:result?.id||null};
+}
+
+async function notifyMatchParties(match,emailType,recipientRoles=[]){
+  const results={};
+  for(const recipientRole of recipientRoles){
+    try{ results[recipientRole]=await sendMatchLifecycleEmail({match,emailType,recipientRole}); }
+    catch(error){
+      results[recipientRole]={status:'failed',error:error?.message||String(error)};
+      console.error('[match-email] lifecycle notification failed',{match_id:match?.id,email_type:emailType,recipient_role:recipientRole,error:error?.message||error});
+    }
+  }
+  return results;
+}
+
 function parseBoolean(value, fallback=false){
   if(typeof value==='boolean') return value;
   const normalized=String(value??'').trim().toLowerCase();
@@ -3540,7 +3585,8 @@ app.post('/api/matches/:id/request',async(req,res)=>{
       return res.json({ ...m, status: currentStatus, already_requested: true });
     }
     const updated=await updateMatchApprovalStatus(m.id,'challenger','request',req.body?.note||'Future Challenge Labからの接続依頼');
-    res.json({ ...updated, already_requested: false });
+    const lifecycleEmail=await notifyMatchParties(updated,'approval_received',['supporter']);
+    res.json({ ...updated, already_requested:false, lifecycle_email:lifecycleEmail });
   }catch(e){res.status(500).json({error:e.message});}
 });
 
@@ -3815,7 +3861,9 @@ app.post('/api/matches/:id/challenger-approve', async (req, res) => {
     if (['declined','expired'].includes(effectiveMatchStatus(match))) return res.status(409).json({ error: 'match is not active' });
     if (match.challenger_approved_at) return res.status(409).json({ error: 'challenger approval already recorded' });
     const updated = await updateMatchApprovalStatus(match.id, 'challenger', 'approve');
-    res.json({ ok: true, match: updated, status: updated.status, actor: 'challenger' });
+    const connected=effectiveMatchStatus(updated)==='connected';
+    const lifecycleEmail=await notifyMatchParties(updated,connected?'connection_confirmed':'approval_received',connected?['challenger','supporter']:['supporter']);
+    res.json({ ok: true, match: updated, status: updated.status, actor: 'challenger', lifecycle_email:lifecycleEmail });
   } catch (error) {
     res.status(500).json({ error: error.message || 'challenger approval failed' });
   }
@@ -3828,7 +3876,9 @@ app.post('/api/matches/:id/supporter-approve', async (req, res) => {
     if (['declined','expired'].includes(effectiveMatchStatus(match))) return res.status(409).json({ error: 'match is not active' });
     if (match.supporter_approved_at) return res.status(409).json({ error: 'supporter approval already recorded' });
     const updated = await updateMatchApprovalStatus(match.id, 'supporter', 'approve');
-    res.json({ ok: true, match: updated, status: updated.status, actor: 'supporter' });
+    const connected=effectiveMatchStatus(updated)==='connected';
+    const lifecycleEmail=await notifyMatchParties(updated,connected?'connection_confirmed':'approval_received',connected?['challenger','supporter']:['challenger']);
+    res.json({ ok: true, match: updated, status: updated.status, actor: 'supporter', lifecycle_email:lifecycleEmail });
   } catch (error) {
     res.status(500).json({ error: error.message || 'supporter approval failed' });
   }
@@ -3895,7 +3945,8 @@ app.post('/api/supporter-match', async (req, res) => {
       label: { status: 'pending', selected_by: 'supporter' }
     });
 
-    res.json({ ok: true, status: 'saved', match_id: match.id, match });
+    const lifecycleEmail=await notifyMatchParties(match,'matching_candidate',['challenger']);
+    res.json({ ok: true, status: 'saved', match_id: match.id, match, lifecycle_email:lifecycleEmail });
   } catch (error) {
     res.status(500).json({ error: error.message || 'supporter match failed' });
   }
