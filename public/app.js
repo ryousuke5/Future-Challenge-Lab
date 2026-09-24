@@ -120,27 +120,35 @@ async function fetchUserChallenges(userId){
 function renderChallengeSelector(challenges, selectedId){
   const bar=document.getElementById('currentChallengeBar');
   const selector=document.getElementById('challengeSelector');
+  const status=document.getElementById('currentChallengeStatus');
   if(!bar || !selector) return selectedId || '';
+
+  // 空のまま消さず、未登録・未ログイン時にも現在の状態を表示する。
+  bar.hidden=false;
+  const esc=(value)=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;");
+
   if(!challenges.length){
-    bar.hidden=true;
-    selector.innerHTML='';
+    selector.innerHTML='<option value="">現在の挑戦はまだありません</option>';
+    selector.value='';
+    selector.disabled=true;
+    if(status) status.textContent='「挑戦を登録する」と、ここから現在の挑戦を選べます。';
     return '';
   }
 
-  const esc=(value)=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;");
+  selector.disabled=false;
   selector.innerHTML=challenges.map((row,index)=>{
     const label=row.challenge || '挑戦テーマ未登録';
     const goal=row.goal ? ' — ' + row.goal : '';
-    return `<option value="${esc(row.id)}">${index+1}. ${esc(label)}${esc(goal)}</option>`;
+    return '<option value="'+esc(row.id)+'">'+(index+1)+'. '+esc(label)+esc(goal)+'</option>';
   }).join('');
 
   const valid=challenges.some(row=>row.id===selectedId);
   const activeId=valid ? selectedId : challenges[0].id;
   selector.value=activeId;
-  bar.hidden=false;
+  const active=challenges.find(row=>row.id===activeId);
+  if(status) status.textContent='現在：'+(active?.challenge || '挑戦テーマ未登録')+(active?.goal ? ' ／ 目標：'+active.goal : '');
   return activeId;
 }
-
 async function restoreParticipantHistory(participantId, userId){
   if(!participantId) return false;
   const response=await fetch('/api/core/history/'+encodeURIComponent(participantId),{credentials:'same-origin'});
@@ -186,12 +194,23 @@ async function selectCurrentChallenge(participantId){
     await window.refreshJournalReply?.();
     const selector=document.getElementById('challengeSelector');
     if(selector) selector.value=participantId;
+    if(typeof window.refreshHomeChallengeSummary==='function'){
+      window.refreshHomeChallengeSummary(participant);
+    }
+    const challenges=await fetchUserChallenges(userId);
+    renderChallengeSelector(challenges,participantId);
   }catch(error){
     showUiError(document.getElementById('participantStatus'),error.message||'挑戦の切り替えに失敗しました。');
   }
 }
-
 window.selectCurrentChallenge=selectCurrentChallenge;
+
+window.refreshHomeChallengeSummary=function(nextParticipant){
+  const p=nextParticipant || participant || {};
+  const $=id=>document.getElementById(id);
+  if($('homeChallengeName')) $('homeChallengeName').textContent=p.challenge || '挑戦を選ぶと、ここに表示されます。';
+  if($('homeGoalLabel')) $('homeGoalLabel').textContent='目標：'+(p.goal||'まずは一歩から');
+};
 
 async function loadChallengeSelector(userId, preferredId=''){
   if(!userId) return '';
@@ -208,7 +227,10 @@ async function loadChallengeSelector(userId, preferredId=''){
 
 async function restoreCoreSession(){
   const sessionResponse=await fetch('/api/auth/session',{credentials:'same-origin'}).catch(()=>null);
-  if(!sessionResponse?.ok)return;
+  if(!sessionResponse?.ok){
+    renderChallengeSelector([], '');
+    return;
+  }
 
   const session=await sessionResponse.json();
   const userId=session?.user?.id||localStorage.getItem('fcl-user-id')||'';
