@@ -121,10 +121,14 @@ async function ensureFclSession(emailValue){
     body:JSON.stringify({email})
   });
   const sendJson=await send.json().catch(()=>({}));
-  if(!send.ok) throw new Error(sendJson.error||'認証コードの送信に失敗しました。');
 
   let code=sendJson.development_code||'';
-  if(!code) code=window.prompt('メールに届いた6桁の認証コードを入力してください');
+  if(send.status===429){
+    code=window.prompt('認証コードはすでに送信されています。届いている6桁のコードを入力してください');
+  }else{
+    if(!send.ok) throw new Error(sendJson.error||'認証コードの送信に失敗しました。');
+    if(!code) code=window.prompt('メールに届いた6桁の認証コードを入力してください');
+  }
   if(!code) throw new Error('認証コードが入力されませんでした。');
 
   const verify=await fetch('/api/auth/verify-code',{
@@ -137,7 +141,12 @@ async function ensureFclSession(emailValue){
   if(!verify.ok) throw new Error(verifyJson.error||'認証に失敗しました。');
 
   localStorage.setItem('fcl-user-id',verifyJson.user_id||'');
-  return {id:verifyJson.user_id,email:verifyJson.email};
+  const verifiedSession=await fetch('/api/auth/session',{credentials:'same-origin'}).catch(()=>null);
+  const verifiedSessionJson=await verifiedSession?.json().catch(()=>({}));
+  if(!verifiedSession?.ok || verifiedSessionJson?.user?.id!==verifyJson.user_id){
+    throw new Error('認証は完了しましたが、ログイン状態を確認できませんでした。ブラウザを更新してもう一度お試しください。');
+  }
+  return verifiedSessionJson.user;
 }
 
 form.addEventListener('submit',async(e)=>{
