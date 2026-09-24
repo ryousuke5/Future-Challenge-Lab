@@ -132,6 +132,8 @@ test('duplicate supporter match is rejected', { concurrency: false }, async () =
     supporter_id: candidate.supporter_id || supporter.id
   });
   assert.equal(first.status, 'saved');
+  assert.ok(first.lifecycle_email);
+  assert.equal(first.lifecycle_email.challenger.status, 'recorded_test');
 
   await assert.rejects(
     () => api('/api/supporter-match', {
@@ -206,6 +208,9 @@ test('support execution and outcome retrieval', { concurrency: false }, async ()
   await login(executionSupporterEmail);
   const connectedExecutionMatch = await api(`/api/matches/${executionMatchId}/supporter-approve`, {}, 'POST');
   assert.equal(connectedExecutionMatch.status, 'connected');
+  assert.ok(connectedExecutionMatch.lifecycle_email);
+  assert.equal(connectedExecutionMatch.lifecycle_email.challenger.status, 'recorded_test');
+  assert.equal(connectedExecutionMatch.lifecycle_email.supporter.status, 'recorded_test');
 
   const execution = await api('/api/supporter/execute', {
     participant_id: participant.id,
