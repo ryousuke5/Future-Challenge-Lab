@@ -522,48 +522,64 @@ async function registerSupporter(){
 // button actually works; match()'s own logic is unchanged.
 function showSupporterCandidates(){ return match(); }
 async function match(){
-  if(!participant)return alert('先に挑戦者登録をしてください');
+  const target=document.getElementById('matches');
+  if(!target){
+    console.error('FCL: #matches element not found');
+    return;
+  }
+  if(!participant){
+    target.innerHTML='<p class="empty" role="alert">先に挑戦者登録をしてください。登録後、もう一度「今の自分に合う支援者を見る」を押してください。</p>';
+    return;
+  }
+
   await withLoadingUI(document.getElementById('matchBtn'), 'マッチング処理中です。しばらくお待ちください…', async () => {
-    const r=await api('/api/matches',{participant_id:participant.id});
-    const esc=(value)=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
-    matches.innerHTML=r.map(x=>{
-      const status=x.status||'pending';
-      const requestDone=['requested','challenger_approved','supporter_approved','connected'].includes(status);
-      const connected=status==='connected';
-      const accessUrl=x.access_url||'';
-      const supporterResponseLabel = x.supporter_response === 'maybe'
-        ? '△ 少しなら支援できる'
-        : x.supporter_response === 'yes'
-          ? '○ 支援できる'
-          : x.supporter_response === 'no'
-            ? '× 今回は難しい'
-            : '';
-      const supporterResponseHint = x.supporter_response === 'maybe'
-        ? '<small class="muted">まずは負担の少ない形で、少し試しながら支援したいという回答です。</small>'
-        : '';
-      let actionHtml='';
-      if(connected && accessUrl){
-        actionHtml=`<a href="${esc(accessUrl)}" class="secondary-btn">接続ページを開く</a><div class="support-outcome-box"><strong>支援後の結果</strong><p class="muted">どんな関わり方が次の一歩につながったか、FCLに残します。</p><select data-support-outcome-status="${esc(x.id)}"><option value="action_completed">行動につながった</option><option value="partial_progress">一部前進した</option><option value="no_progress">まだ前進しなかった</option><option value="restarted">再開につながった</option><option value="not_used">支援をまだ使っていない</option></select><textarea data-support-outcome-note="${esc(x.id)}" rows="2" placeholder="支援を受けて、何が起きた？"></textarea><button type="button" onclick="saveSupportOutcome('${esc(x.id)}',this)">支援結果を保存</button><span data-support-outcome-status-text="${esc(x.id)}"></span></div>`;
-      } else if(requestDone){
-        const label=status==='supporter_approved' ? '支援者承認済み・接続待ち' : '接続依頼済み';
-        actionHtml=`<button type="button" disabled>${label}</button>`;
-      } else {
-        actionHtml=`<button type="button" onclick="requestConnection('${esc(x.id)}', this)">この支援者に支援をお願いする</button>`;
-      }
-      const explanation=x.match_explanation||{};
-      const reasonItems=Array.isArray(explanation.reasons)?explanation.reasons.slice(0,3):[];
-      const reasonHtml=reasonItems.length
-        ? `<div class="match-reasons">${reasonItems.map(reason=>`<span class="match-reason">${esc(reason)}</span>`).join('')}</div>`
-        : '';
-      const explanationHtml=`<div class="match-explanation">
-        <div class="match-explanation-title">${esc(explanation.title||'今のあなたに合う理由')}</div>
-        <p>${esc(explanation.summary||x.reason||'現在の状態と支援内容を組み合わせて候補にしています。')}</p>
-        ${reasonHtml}
-        <div class="match-support-shape"><strong>最初の支援：</strong>${esc(explanation.support_shape||'一緒に次の一歩を整理する')}</div>
-        <div class="match-first-step">${esc(explanation.first_step||'つながったら、今日の一歩を1つ決めます。')}</div>
-      </div>`;
-      return `<div class="match"><div class="match-title-row"><strong>${esc(x.supporter?.organization_name||'支援者')}</strong> / ${esc(x.supporter?.supporter_name||'')}<span class="status ${status==='connected'?'connected':''}">${esc(status)}</span></div>${explanationHtml}${supporterResponseLabel ? `<div class="supporter-response-display" style="margin-top:8px;padding:10px 12px;border-radius:10px;background:#f8fafc;"><strong>支援者の回答：</strong>${esc(supporterResponseLabel)}${supporterResponseHint ? `<br>${supporterResponseHint}` : ''}</div>` : ''}${actionHtml}</div>`;
-    }).join('')||'<p>現在候補がありません。支援パートナーを登録してください。</p>';
+    try{
+      const r=await api('/api/matches',{participant_id:participant.id});
+      const rows=Array.isArray(r)?r:[];
+      const esc=(value)=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
+
+      target.innerHTML=rows.map(x=>{
+        const status=x.status||'pending';
+        const requestDone=['requested','challenger_approved','supporter_approved','connected'].includes(status);
+        const connected=status==='connected';
+        const accessUrl=x.access_url||'';
+        const supporterResponseLabel = x.supporter_response === 'maybe'
+          ? '△ 少しなら支援できる'
+          : x.supporter_response === 'yes'
+            ? '○ 支援できる'
+            : x.supporter_response === 'no'
+              ? '× 今回は難しい'
+              : '';
+        const supporterResponseHint = x.supporter_response === 'maybe'
+          ? '<small class="muted">まずは負担の少ない形で、少し試しながら支援したいという回答です。</small>'
+          : '';
+        let actionHtml='';
+        if(connected && accessUrl){
+          actionHtml=`<a href="${esc(accessUrl)}" class="secondary-btn">接続ページを開く</a><div class="support-outcome-box"><strong>支援後の結果</strong><p class="muted">どんな関わり方が次の一歩につながったか、FCLに残します。</p><select data-support-outcome-status="${esc(x.id)}"><option value="action_completed">行動につながった</option><option value="partial_progress">一部前進した</option><option value="no_progress">まだ前進しなかった</option><option value="restarted">再開につながった</option><option value="not_used">支援をまだ使っていない</option></select><textarea data-support-outcome-note="${esc(x.id)}" rows="2" placeholder="支援を受けて、何が起きた？"></textarea><button type="button" onclick="saveSupportOutcome('${esc(x.id)}',this)">支援結果を保存</button><span data-support-outcome-status-text="${esc(x.id)}"></span></div>`;
+        } else if(requestDone){
+          const label=status==='supporter_approved' ? '支援者承認済み・接続待ち' : '接続依頼済み';
+          actionHtml=`<button type="button" disabled>${label}</button>`;
+        } else {
+          actionHtml=`<button type="button" onclick="requestConnection('${esc(x.id)}', this)">この支援者に支援をお願いする</button>`;
+        }
+        const explanation=x.match_explanation||{};
+        const reasonItems=Array.isArray(explanation.reasons)?explanation.reasons.slice(0,3):[];
+        const reasonHtml=reasonItems.length
+          ? `<div class="match-reasons">${reasonItems.map(reason=>`<span class="match-reason">${esc(reason)}</span>`).join('')}</div>`
+          : '';
+        const explanationHtml=`<div class="match-explanation">
+          <div class="match-explanation-title">${esc(explanation.title||'今のあなたに合う理由')}</div>
+          <p>${esc(explanation.summary||x.reason||'現在の状態と支援内容を組み合わせて候補にしています。')}</p>
+          ${reasonHtml}
+          <div class="match-support-shape"><strong>最初の支援：</strong>${esc(explanation.support_shape||'一緒に次の一歩を整理する')}</div>
+          <div class="match-first-step">${esc(explanation.first_step||'つながったら、今日の一歩を1つ決めます。')}</div>
+        </div>`;
+        return `<div class="match"><div class="match-title-row"><strong>${esc(x.supporter?.organization_name||'支援者')}</strong> / ${esc(x.supporter?.supporter_name||'')}<span class="status ${status==='connected'?'connected':''}">${esc(status)}</span></div>${explanationHtml}${supporterResponseLabel ? `<div class="supporter-response-display" style="margin-top:8px;padding:10px 12px;border-radius:10px;background:#f8fafc;"><strong>支援者の回答：</strong>${esc(supporterResponseLabel)}${supporterResponseHint ? `<br>${supporterResponseHint}` : ''}</div>` : ''}${actionHtml}</div>`;
+      }).join('')||'<p>現在候補がありません。支援パートナーを登録してください。</p>';
+    }catch(error){
+      console.error('FCL matching failed', error);
+      target.innerHTML=`<p class="empty" role="alert">候補の取得に失敗しました。もう一度お試しください。<br><small>${esc(error?.message||'通信エラー')}</small></p>`;
+    }
   });
 }
 async function approveMatch(id,actor,btn){
