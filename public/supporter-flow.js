@@ -71,9 +71,10 @@
     return {id:verifyJson.user_id,email:verifyJson.email};
   }
 
-  function saveSupporterIdentity(userId, supporterId){
+  function saveSupporterIdentity(userId){
     if(userId) localStorage.setItem('fcl-user-id', userId);
-    if(supporterId) localStorage.setItem('fcl-supporter-id', supporterId); // legacy compatibility
+    // Remove the old second identity key so existing browsers converge on one public ID.
+    localStorage.removeItem('fcl-supporter-id');
     const input = document.getElementById('supporterIdInput');
     if(input && userId) input.value = userId;
   }
@@ -300,7 +301,7 @@
         credentials:'same-origin',
         body:JSON.stringify(payload)
       });
-      saveSupporterIdentity(data.user_id, data.id);
+      saveSupporterIdentity(data.user_id);
       const status = document.getElementById('supportStatus');
       if(status) status.innerHTML = ` 登録しました。<strong>ユーザーID：${esc(data.user_id || '未取得')}</strong>`; const userPageLink=document.getElementById('supporterUserPageLink'); if(userPageLink&&data.user_id){ userPageLink.href='/user.html?user_id='+encodeURIComponent(data.user_id); userPageLink.hidden=false; }
       const openBtn = document.getElementById('openSupporterDashboardBtn');
@@ -324,7 +325,7 @@
     try{
       const data = await fetchJson(`/api/supporter/dashboard?user_id=${encodeURIComponent(userId)}`);
       const supporterId = data.supporter?.id || '';
-      saveSupporterIdentity(data.supporter?.user_id || userId, supporterId);
+      saveSupporterIdentity(data.supporter?.user_id || userId);
       const currentSupportCount = await loadCurrentSupportCount(supporterId, data.targets || []);
       renderDashboard(data, supporterId, currentSupportCount);
       const status = document.getElementById('supporterDashboardStatus');
@@ -373,7 +374,7 @@
         headers:{'content-type':'application/json'},
         body:JSON.stringify({
           participant_id:participantId,
-          supporter_id:document.getElementById('supporterDashboard')?.dataset.supporterId || localStorage.getItem('fcl-supporter-id'),
+          supporter_user_id:localStorage.getItem('fcl-user-id'),
           match_id:matchId,
           outcome:canSupport === 'no' ? 'supporter_declined' : canSupport === 'maybe' ? 'supporter_response_maybe' : 'supporter_response_yes',
           outcome_score:canSupport === 'no' ? 0 : canSupport === 'maybe' ? 0.5 : 1,
@@ -412,7 +413,7 @@
     const statusEl = root?.querySelector(`[data-outcome-status="${CSS.escape(matchId)}"]`);
     const outcome = root?.querySelector(`[data-outcome="${CSS.escape(matchId)}"]`)?.value || 'connected_and_progressed';
     const note = root?.querySelector(`[data-outcome-note="${CSS.escape(matchId)}"]`)?.value || '';
-    const supporterId = document.getElementById('supporterDashboard')?.dataset.supporterId || localStorage.getItem('fcl-supporter-id');
+    const supporterId = document.getElementById('supporterDashboard')?.dataset.supporterId || '';
     const restore = loading(btn, '保存中…');
     try{
       await fetchJson('/api/supporter-outcomes', {
@@ -420,7 +421,7 @@
         headers:{'content-type':'application/json'},
         body:JSON.stringify({
           participant_id:participantId,
-          supporter_id:supporterId,
+          supporter_user_id:localStorage.getItem('fcl-user-id'),
           match_id:matchId,
           outcome,
           outcome_score:['restarted','action_completed','connected_and_progressed','positive'].includes(outcome) ? 1 : 0,
@@ -435,7 +436,7 @@
   };
 
   document.addEventListener('DOMContentLoaded', () => {
-    const id = localStorage.getItem('fcl-user-id') || localStorage.getItem('fcl-supporter-id');
+    const id = localStorage.getItem('fcl-user-id') || localStorage.getItem('fcl-user-id');
     if(id){
       const input = document.getElementById('supporterIdInput');
       if(input) input.value = localStorage.getItem('fcl-user-id') || id;
