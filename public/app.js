@@ -1,4 +1,6 @@
 let participant=null, intervention=null;
+const participantStatus = document.getElementById('participantStatus');
+const participantError = document.getElementById('participantError');
 
 // --- loading UX helper (UI-only; does not touch API/data logic) ---
 // Disables the given button, swaps its label to "処理中…", shows a small
@@ -124,7 +126,7 @@ async function restoreParticipantHistory(participantId, userId){
   if(participant?.user_id) localStorage.setItem('fcl-user-id',participant.user_id);
 
   const status=document.getElementById('participantStatus');
-  if(status) status.textContent=` ユーザーID: ${participant.user_id || userId || '未取得'} / 現在の挑戦: ${participant.challenge || '未登録'}`;
+  if(status) status.textContent=` 登録ID: ${participant.id || '未取得'} / ユーザーID: ${participant.user_id || userId || '未取得'} / 現在の挑戦: ${participant.challenge || '未登録'}`;
 
   const goalInput=document.getElementById('coreGoal');
   if(goalInput && participant.goal) goalInput.value=participant.goal;
@@ -209,7 +211,7 @@ async function restoreCoreSession(){
           participant=history.participant;
           localStorage.setItem('fcl-participant-id',participant.id);
           const status=document.getElementById('participantStatus');
-          if(status) status.textContent=` ユーザーID: ${participant.user_id || userId || '未取得'} / 現在の挑戦: ${participant.challenge || '未登録'}`;
+          if(status) status.textContent=` 登録ID: ${participant.id || '未取得'} / ユーザーID: ${participant.user_id || userId || '未取得'} / 現在の挑戦: ${participant.challenge || '未登録'}`;
           const goalInput=document.getElementById('coreGoal');
           if(goalInput && participant.goal) goalInput.value=participant.goal;
           if(history.analysis){ renderCoreResult({result:history.analysis}); renderInsight({result:history.analysis}); renderSolutions({result:history.analysis}); }
@@ -239,22 +241,56 @@ restoreCoreSession().catch(() => {});
 
 async function register(){
   await withLoadingUI(document.getElementById('registerBtn'), '登録処理中です。しばらくお待ちください…', async () => {
-    const nameValue=document.getElementById('name')?.value||'';
-    const emailValue=document.getElementById('email')?.value||'';
-    const challengeValue=document.getElementById('challenge')?.value||'';
-    const goalValue=document.getElementById('goal')?.value||'';
-    await ensureFclSession(emailValue);
-    participant=await api('/api/participants',{name:nameValue,email:emailValue,challenge:challengeValue,goal:goalValue});
-    localStorage.setItem('fcl-participant-id',participant.id);
-    localStorage.setItem('fcl-user-id',participant.user_id || '');
-    participantStatus.textContent=` ユーザーID: ${participant.user_id || '未取得'} / 現在の挑戦: ${participant.challenge || '未登録'}`;
-    const userPageLink=document.getElementById('participantUserPageLink');
-    if(userPageLink&&participant.user_id){
-      userPageLink.href='/user.html?user_id='+encodeURIComponent(participant.user_id);
-      userPageLink.hidden=false;
+    if(participantError){
+      participantError.hidden=true;
+      participantError.textContent='';
     }
-    await loadChallengeSelector(participant.user_id||'',participant.id);
-    window.refreshFclDailyLoop?.();
+    try{
+      const nameValue=document.getElementById('name')?.value||'';
+      const emailValue=document.getElementById('email')?.value||'';
+      const challengeValue=document.getElementById('challenge')?.value||'';
+      const goalValue=document.getElementById('goal')?.value||'';
+
+      await ensureFclSession(emailValue);
+
+      // Registration is safe to retry because the API reuses the existing
+      // participant record for the same authenticated user + challenge + goal.
+      participant=await apiWithRetry(
+        '/api/participants',
+        {name:nameValue,email:emailValue,challenge:challengeValue,goal:goalValue},
+        {retries:2,delayMs:800}
+      );
+
+      const participantId=String(participant?.id||'').trim();
+      if(!participantId){
+        throw new Error('登録は完了しましたが、登録IDを取得できませんでした。もう一度お試しください。');
+      }
+
+      const userId=String(participant?.user_id||'').trim();
+      localStorage.setItem('fcl-participant-id',participantId);
+      localStorage.setItem('fcl-user-id',userId);
+
+      if(participantStatus){
+        participantStatus.textContent=` 登録ID: ${participantId} / ユーザーID: ${userId || '未取得'} / 現在の挑戦: ${participant.challenge || '未登録'}`;
+      }
+
+      const userPageLink=document.getElementById('participantUserPageLink');
+      if(userPageLink&&userId){
+        userPageLink.href='/user.html?user_id='+encodeURIComponent(userId);
+        userPageLink.hidden=false;
+      }
+
+      await loadChallengeSelector(userId,participantId);
+      window.refreshFclDailyLoop?.();
+    }catch(error){
+      const message=error?.message||'登録に失敗しました。もう一度お試しください。';
+      if(participantError){
+        participantError.textContent=message;
+        participantError.hidden=false;
+      }else if(participantStatus){
+        participantStatus.textContent=' '+message;
+      }
+    }
   });
 }
 function buildAnalysisCards(data){
