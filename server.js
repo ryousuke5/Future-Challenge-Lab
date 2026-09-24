@@ -98,6 +98,13 @@ function clearFclSessionCookie(res){ const secure=process.env.NODE_ENV!=='develo
 async function getAuthenticatedFclUser(req){ const session=verifyFclSessionToken(getRequestSessionToken(req)); if(!session?.user_id)return null; const user=(await select('fcl_users',{id:session.user_id}))[0]||null; return user?{...user,session}:null; }
 async function requireParticipantOwnership(userId,participantId){ if(!userId||!participantId)return false; const participant=(await select('participants',{id:participantId}))[0]; return Boolean(participant&&participant.user_id===userId&&!participant.archived_at); }
 async function requireSupporterOwnership(userId,supporterId){ if(!userId||!supporterId)return false; const supporter=(await select('supporters',{id:supporterId}))[0]; return Boolean(supporter&&supporter.user_id===userId&&!supporter.archived_at); }
+async function getActiveSupporterForUser(userId){
+  if(!userId) return null;
+  const candidates=(await select('supporters',{user_id:userId}))
+    .filter(x=>!x.archived_at && x.active!==false)
+    .sort((a,b)=>new Date(b.updated_at||b.created_at||0)-new Date(a.updated_at||a.created_at||0));
+  return candidates[0]||null;
+}
 async function userOwnsMatch(userId,match){ if(!userId||!match)return false; const p=(await select('participants',{id:match.participant_id}))[0]; const s=(await select('supporters',{id:match.supporter_id}))[0]; return Boolean((p&&p.user_id===userId)||(s&&s.user_id===userId)); }
 function isFclAdmin(user){ const allowed=String(process.env.FCL_ADMIN_EMAILS||'').split(',').map(x=>normalizeContactEmail(x)).filter(Boolean); return Boolean(user?.email&&allowed.includes(normalizeContactEmail(user.email))); }
 function verifyMatchAccessToken(token,matchId){ if(!token||!process.env.SUPABASE_SERVICE_ROLE_KEY)return null; const parts=String(token).split('.'); const payload=parts[0],signature=parts[1]; if(!payload||!signature)return null; const expected=crypto.createHmac('sha256',process.env.SUPABASE_SERVICE_ROLE_KEY).update(payload).digest('base64url'); const a=Buffer.from(signature),b=Buffer.from(expected); if(a.length!==b.length||!crypto.timingSafeEqual(a,b))return null; try{const parsed=JSON.parse(Buffer.from(payload,'base64url').toString('utf8'));if(parsed?.match_id!==matchId||!['challenger','supporter'].includes(parsed?.role))return null;if(parsed.exp!==undefined&&(!Number.isFinite(Number(parsed.exp))||Number(parsed.exp)<=Math.floor(Date.now()/1000)))return null;return parsed;}catch{return null;} }
@@ -1850,7 +1857,13 @@ app.use('/api',async(req,res,next)=>{
     const participantOwnershipExemptRoutes = new Set(['/supporter-outcomes','/supporter/execute','/supporter-match']);
     if(participantId&&!participantOwnershipExemptRoutes.has(path)&&!(await requireParticipantOwnership(user.id,participantId)))return res.status(403).json({error:'この挑戦者データへアクセスする権限がありません。'});
 
-    const supporterId=String(req.body?.supporter_id||req.query?.supporter_id||'').trim();
+    let supporterId=String(req.body?.supporter_id||req.query?.supporter_id||'').trim();
+    const supporterUserRoutes=new Set(['/supporter-outcomes','/supporter/execute','/supporter-match']);
+    if(!supporterId&&supporterUserRoutes.has(path)){
+      const ownSupporter=await getActiveSupporterForUser(user.id);
+      if(ownSupporter) supporterId=ownSupporter.id;
+      if(req.body && supporterId) req.body.supporter_id=supporterId;
+    }
     if(supporterId&&path!=='/supporter-outcomes'&&!(await requireSupporterOwnership(user.id,supporterId)))return res.status(403).json({error:'この支援者データへアクセスする権限がありません。'});
 
     if(userRoute){
@@ -1952,7 +1965,7 @@ app.post('/api/participants',async(req,res)=>{
         challenge:challenge||duplicate.challenge||'',
         goal:goal||duplicate.goal||''
       });
-      return res.json({ ...row, user_id:fclUser.id, reused_existing_challenge:true });
+      return res.json({ ...row, participant_id:row.id, user_id:fclUser.id, reused_existing_challenge:true });
     }
 
     const row=await insert('participants',{
@@ -1960,7 +1973,7 @@ app.post('/api/participants',async(req,res)=>{
       external_user_id:req.body.external_user_id||('web-'+Date.now()),
       name,email,challenge,goal
     });
-    res.json({ ...row, user_id:fclUser.id, reused_existing_challenge:false });
+    res.json({ ...row, participant_id:row.id, user_id:fclUser.id, reused_existing_challenge:false });
   }catch(e){res.status(500).json({error:e.message});}
 });
 
@@ -2950,6 +2963,26 @@ app.post('/api/actions',async(req,res)=>{
   }catch(e){res.status(500).json({error:e.message});}
 });
 
+app.get('/api/supporter/outcomes', async (req,res)=>{
+  try{
+    const userId=String(req.query.user_id||req.fclUser?.id||'').trim();
+    if(!userId||userId!==req.fclUser?.id)return res.status(403).json({error:'この支援者の結果を確認する権限がありません。'});
+    const supporter=await getActiveSupporterForUser(userId);
+    if(!supporter)return res.status(404).json({error:'支援者登録が見つかりません。'});
+    const outcomes=(await select('supporter_outcomes',{supporter_id:supporter.id}))
+      .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
+    const supportEvents=(await select('connection_events',{supporter_id:supporter.id,event_type:'support_execution'}));
+    const summary={
+      total_support_count:outcomes.length,
+      observed_execution_rate:supportEvents.length ? Number(((supportEvents.length/Math.max(1,outcomes.length||supportEvents.length))*100).toFixed(1)) : 0,
+      recent_support_outcomes:outcomes.slice(0,5)
+    };
+    res.json({ok:true,user_id:userId,outcomes,summary});
+  }catch(error){
+    res.status(500).json({error:error.message||'support outcomes failed'});
+  }
+});
+
 app.post('/api/supporter-outcomes',async(req,res)=>{
   try{
     const participant_id=req.body.participant_id;
@@ -3089,7 +3122,7 @@ app.post('/api/supporters/register',async(req,res)=>{
         .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))[0];
       if(existing) return res.json({ ...(await update('supporters',existing.id,patch)), user_id:fclUser.id });
     }
-    res.json({ ...(await insert('supporters',patch)), user_id:fclUser.id });
+    const created=await insert('supporters',patch); res.json({ ...created, supporter_id:created.id, user_id:fclUser.id });
   }catch(e){res.status(500).json({error:e.message});}
 });
 
