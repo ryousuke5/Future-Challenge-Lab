@@ -1853,9 +1853,17 @@ app.get('/api/health',(req,res)=>res.json({ok:true,supabase:hasSupabase,mode:has
 
 app.post('/api/participants',async(req,res)=>{
   try{
+    // This route is declared before the generic /api middleware below, so
+    // enforce authentication explicitly here as well.
+    const authenticatedUser=await getAuthenticatedFclUser(req);
+    if(!authenticatedUser) return res.status(401).json({error:'FCLログインが必要です。メール認証コードでログインしてください。'});
+
     const email=normalizeContactEmail(req.body.email);
     if(!email) return res.status(400).json({error:'有効なメールアドレスを入力してください'});
-    const fclUser = await getOrCreateFclUser(email);
+    if(email!==normalizeContactEmail(authenticatedUser.email)){
+      return res.status(403).json({error:'登録メールアドレスを認証してください。'});
+    }
+    const fclUser = authenticatedUser;
 
     const challenge=String(req.body.challenge||'').trim();
     const goal=String(req.body.goal||'').trim();
