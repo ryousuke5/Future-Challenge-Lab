@@ -517,10 +517,38 @@ async function registerSupporter(){
     supportStatus.textContent=` 登録しました。ユーザーID: ${x.user_id || localStorage.getItem('fcl-user-id') || '未取得'}`;
   }); } catch(error) { showUiError(document.getElementById('supportStatus')); }
 }
-// NOTE: index.html's button calls showSupporterCandidates(), which did not exist
-// (only match() was defined) — pre-existing dead wiring. Aliased below so the
-// button actually works; match()'s own logic is unchanged.
-function showSupporterCandidates(){ return match(); }
+// Keep the public button reliable even when the initial async session restore
+// has not finished yet. The old implementation called match() immediately,
+// which could see participant === null and stop before the current challenge
+// was restored.
+async function showSupporterCandidates(){
+  if(!participant){
+    const userId=String(localStorage.getItem('fcl-user-id')||'').trim();
+    const queryParticipantId=new URLSearchParams(location.search).get('participant_id')||'';
+    let participantId=queryParticipantId || String(localStorage.getItem('fcl-participant-id')||'').trim();
+
+    if(!participantId && userId){
+      try{
+        const challenges=await fetchUserChallenges(userId);
+        participantId=String(challenges[0]?.id||'').trim();
+        if(participantId) localStorage.setItem('fcl-participant-id',participantId);
+      }catch(error){
+        console.warn('supporter candidate challenge lookup failed',error);
+      }
+    }
+
+    if(participantId){
+      const restored=await restoreParticipantHistory(participantId,userId);
+      if(!restored && !participant){
+        const target=document.getElementById('matches');
+        if(target) target.innerHTML='<p class="empty" role="alert">現在の挑戦を読み込めませんでした。ページを更新してもう一度お試しください。</p>';
+        return;
+      }
+    }
+  }
+  return match();
+}
+window.showSupporterCandidates=showSupporterCandidates;
 async function match(){
   const target=document.getElementById('matches');
   if(!target){
