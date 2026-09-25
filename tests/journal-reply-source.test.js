@@ -100,5 +100,5 @@ test('supporter candidate button is wired and waits for current challenge restor
 
   const indexHtml=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
   assert.match(indexHtml,/onclick="showSupporterCandidates\(\)"/);
-  assert.match(indexHtml,/app\.js\?v=20260926-0001/);
+  assert.match(indexHtml,/app\.js\?v=20260926-0003/);
 });
