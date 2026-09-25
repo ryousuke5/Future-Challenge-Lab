@@ -132,10 +132,22 @@ function renderJournalReply(result, decision = null, outcome = null){
   return replyText;
 }
 
+function normalizeJournalReplyDisplayText(value=''){
+  return String(value ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\n')
+    .replace(/\\t/g, '\t')
+    .replace(/\u0000/g, '')
+    .trim();
+}
+
 function renderJournalReplyText(replyText, statusText = ''){
   const panel = document.getElementById('journalReply');
+  const normalizedReplyText = normalizeJournalReplyDisplayText(replyText);
   if(!panel) return;
-  const paragraphs = String(replyText || '')
+  const paragraphs = normalizedReplyText
     .split(/\n\s*\n/)
     .map(text => text.trim())
     .filter(Boolean)
