@@ -4,6 +4,7 @@ process.env.SUPABASE_URL='';
 process.env.SUPABASE_SERVICE_ROLE_KEY='';
 
 import test from 'node:test';
+import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 
 const { app } = await import('../server.js');
@@ -89,4 +90,15 @@ test('daily reply uses the actual same-day journal instead of a short check-in n
 
 test.after(async()=> {
   await new Promise(resolve=>server.close(resolve));
+});
+
+test('supporter candidate button is wired and waits for current challenge restore',{concurrency:false},async()=>{
+  const appJs=await readFile(new URL('../public/app.js',import.meta.url),'utf8');
+  assert.match(appJs,/async function showSupporterCandidates\(\)/);
+  assert.match(appJs,/window\.showSupporterCandidates=showSupporterCandidates/);
+  assert.match(appJs,/restoreParticipantHistory\(participantId,userId\)/);
+
+  const indexHtml=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
+  assert.match(indexHtml,/onclick="showSupporterCandidates\(\)"/);
+  assert.match(indexHtml,/app\.js\?v=20260926-0001/);
 });
