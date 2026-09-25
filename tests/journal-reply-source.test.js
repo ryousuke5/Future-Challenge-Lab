@@ -81,6 +81,8 @@ test('daily reply uses the actual same-day journal instead of a short check-in n
   assert.equal(history.response.status,200);
   assert.equal(history.data.checkin_text,'バグが増えた！？');
   assert.match(history.data.journal_reply?.reply_text||'',/バグが増えた/);
+  assert.doesNotMatch(history.data.journal_reply?.reply_text||'',/\\n/);
+  assert.match(history.data.journal_reply?.reply_text||'',/\n/);
   assert.doesNotMatch(history.data.journal_reply?.reply_text||'',/今日もチェックインした.*今日の記録から/s);
 });
 
