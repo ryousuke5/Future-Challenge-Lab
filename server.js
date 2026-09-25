@@ -532,6 +532,18 @@ function sanitizeText(value, fallback='unknown'){
   const text=String(value).trim(); return text || fallback;
 }
 
+function normalizeJournalReplyText(value=''){
+  return String(value ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\n')
+    .replace(/\\t/g, '\t')
+    .replace(/\u0000/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function coerceNumber(value, fallback=0){
   const parsed=Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -1543,7 +1555,7 @@ async function refreshJournalReplyForEntry({ participant_id, checkin_id = null, 
     '今日の日誌を読みました。',
     '「'+journalText.slice(0,180)+'」という今日の記録から、今の状況が伝わってきました。',
     analysis?.insight || '今日の出来事を言葉にして残せたこと自体が、次の一歩を考える材料になっています。'
-  ].join('\\n\\n');
+  ].join('\n\n');
 
   const row={
     participant_id,
@@ -1569,7 +1581,7 @@ async function refreshJournalReplyForEntry({ participant_id, checkin_id = null, 
 
 async function saveJournalReply({ participant_id, checkin_id = null, source_analysis_event_id, reply_text, reply_version = 'v1', reply_date = todayJstDate() }){
   if(!participant_id) throw new Error('invalid participant_id');
-  const text = String(reply_text || '').trim();
+  const text = normalizeJournalReplyText(reply_text);
   if(!text) throw new Error('empty reply_text');
 
   const participant = (await select('participants',{id:participant_id}))[0];
@@ -4408,7 +4420,7 @@ app.post('/api/core/analyze', async (req, res) => {
               '今日の日誌を読みました。',
               `「${String(replyDiaryText || checkin_text || '').trim().slice(0,180)}」という今日の記録を受け取りました。`,
               response.next_action ? `ここからは「${response.next_action}」を急がず、今日の状況に合う形で選んでいけます。` : '今日の記録を材料に、次の一歩を自分で選べる状態に整えていきましょう。'
-            ].join('\\n\\n');
+            ].join('\n\n');
             journalReply=await saveJournalReply({
               participant_id,
               checkin_id:checkin_id || existingToday?.checkin_id || null,
@@ -4524,7 +4536,7 @@ ${previousReply || '昨日の返信はありません。'}
     const raw=json?.choices?.[0]?.message?.content;
     if(!raw) throw new Error('AI response missing content');
     const parsed=JSON.parse(raw);
-    const reply=String(parsed?.reply_text||'').trim();
+    const reply=normalizeJournalReplyText(parsed?.reply_text || '');
     return reply ? reply : null;
   }catch(error){
     console.error('[journal-reply] OpenAI generation failed',error?.message||error);
@@ -4567,7 +4579,7 @@ app.post('/api/journal-replies/generate', async (req, res) => {
       '日誌を読みました。',
       checkinText ? `「${String(checkinText).trim().slice(0,120)}」という今日の記録から、今の状況が伝わってきました。` : '今日の記録から、今の状態を少しずつ整理できています。',
       analysis?.next_action ? `次の一歩は「${analysis.next_action}」とあります。まずは自分に合う形で進めてみてください。` : '次に何をするかは、その日の自分に合う小さな一歩で大丈夫です。'
-    ].join('\\n\\n');
+    ].join('\n\n');
 
     let saved;
     if(existing){
