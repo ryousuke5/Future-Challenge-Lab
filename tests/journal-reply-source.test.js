@@ -63,24 +63,27 @@ test('daily reply uses the actual same-day journal instead of a short check-in n
   assert.equal(analyzed.response.status,200);
 
   // The richer diary is saved afterwards. It must become the reply source.
+  const fclToday=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo'}).format(new Date());
   const journal=await request('/api/journal-entries',{
     method:'POST',
     cookie,
     body:{
       participant_id:participantId,
-      entry_date:'2026-09-25',
+      entry_date:fclToday,
       source:'chatgpt',
       raw_text:'バグが増えた！？'
     }
   });
   assert.equal(journal.response.status,200);
-  assert.equal(journal.data.journal_reply?.reply_date,'2026-09-25');
+  assert.equal(journal.data.journal_reply?.reply_date,fclToday);
   assert.match(journal.data.journal_reply?.reply_text||'',/バグが増えた/);
 
   const history=await request(`/api/core/history/${encodeURIComponent(participantId)}`,{cookie});
   assert.equal(history.response.status,200);
   assert.equal(history.data.checkin_text,'バグが増えた！？');
   assert.match(history.data.journal_reply?.reply_text||'',/バグが増えた/);
+  assert.doesNotMatch(history.data.journal_reply?.reply_text||'',/\\n/);
+  assert.match(history.data.journal_reply?.reply_text||'',/\n/);
   assert.doesNotMatch(history.data.journal_reply?.reply_text||'',/今日もチェックインした.*今日の記録から/s);
 });
 

@@ -121,6 +121,16 @@ main{max-width:1080px!important;padding:16px 14px 64px!important}
 (() => {
 const $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;");
+function normalizeJournalReplyText(v){
+  return String(v??'')
+    .replace(/\r\n?/g,'\n')
+    .replace(/\\r\\n/g,'\n')
+    .replace(/\\n/g,'\n')
+    .replace(/\\r/g,'\n')
+    .replace(/\\t/g,'\t')
+    .replace(/\u0000/g,'')
+    .trim();
+}
 const dateOnly=v=>v?new Date(v).toLocaleDateString('ja-JP',{year:'numeric',month:'numeric',day:'numeric'}):'日付不明';
 const dateTime=v=>v?new Date(v).toLocaleString('ja-JP',{year:'numeric',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'日付不明';
 function showError(m){$('error').textContent=m;$('error').hidden=false}
@@ -462,7 +472,7 @@ async function load(){
         .filter(row=>String(row.reply_date||'')===d.key && String(row.reply_date||'')<=todayJst);
       if(sameDayReplies.length){
         const saved=sameDayReplies
-          .map(row=>String(row.reply_text||'').trim())
+          .map(row=>normalizeJournalReplyText(row.reply_text||''))
           .filter(Boolean)
           .join('\n\n');
         d.journalReply=saved
