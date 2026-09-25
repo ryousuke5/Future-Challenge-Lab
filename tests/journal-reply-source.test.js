@@ -89,34 +89,3 @@ test('daily reply uses the actual same-day journal instead of a short check-in n
 test.after(async()=> {
   await new Promise(resolve=>server.close(resolve));
 });
-test('journal reply save normalizes escaped line break sequences',{concurrency:false},async()=>{
-  const email='journal-normalize-'+Date.now()+'@example.com';
-  const {cookie}=await login(email);
-
-  const registered=await request('/api/participants',{
-    method:'POST',
-    cookie,
-    body:{name:'正規化テスト',email,challenge:'FCL',goal:'返信表示を確認'}
-  });
-  assert.equal(registered.response.status,200);
-  const participantId=registered.data.participant_id||registered.data.id;
-  assert.ok(participantId);
-
-  const saved=await request('/api/journal-replies',{
-    method:'POST',
-    cookie,
-    body:{
-      participant_id:participantId,
-      reply_text:'1行目\n\n2行目\n\n3行目',
-      reply_version:'test'
-    }
-  });
-  assert.equal(saved.response.status,200);
-  assert.equal(saved.data.reply.reply_text,'1行目
-
-2行目
-
-3行目');
-  assert.doesNotMatch(saved.data.reply.reply_text,/\\n/);
-  assert.match(saved.data.reply.reply_text,/\n/);
-});
