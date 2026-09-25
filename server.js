@@ -440,8 +440,8 @@ async function insert(table, row){
   const q=db(table); if(q){
     const compatibleRow = { ...row };
     if (table === 'supporter_matches') {
-      // The production DB may still use legacy status values (suggested/requested)
-      // while the approval timestamps/meta columns persist the real state.
+      // Keep writes compatible with the current production constraint.
+      // Legacy "suggested"/"requested" values are read-only compatibility aliases.
       compatibleRow.status = toCompatibleMatchStatus(row.status || 'pending');
       writeSupporterApprovalState(row.id, {
         approvals: row.meta?.approvals || {},
@@ -3302,10 +3302,15 @@ function normalizeMatchStatus(status){
 }
 
 function toCompatibleMatchStatus(status){
+  // Production Supabase currently accepts the canonical lifecycle statuses:
+  // pending -> challenger_approved/supporter_approved -> connected.
+  // Legacy values such as "suggested" / "requested" are still normalized when
+  // reading older records, but must never be written to the current schema.
   const normalized = normalizeMatchStatus(status);
-  if (['connected','declined','expired'].includes(normalized)) return normalized;
-  if (normalized === 'challenger_approved' || normalized === 'supporter_approved') return 'requested';
-  return 'suggested';
+  if (['pending','challenger_approved','supporter_approved','connected','declined','expired'].includes(normalized)) {
+    return normalized;
+  }
+  return 'pending';
 }
 
 function stripUnsupportedColumns(table, row = {}) {
