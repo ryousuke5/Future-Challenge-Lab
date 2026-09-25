@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 process.env.NODE_ENV='test';
 process.env.FCL_SESSION_SECRET='fcl-test-session-secret';
@@ -297,6 +298,19 @@ test('matching flow accepts both approvals and blocks declines', { concurrency: 
     () => api(`/api/matches/${secondCandidate.id}/supporter-approve`, {}, 'POST'),
     /409|not active|match is not active/i
   );
+});
+
+
+test('supporter match DB writer never emits legacy suggested/requested statuses',{concurrency:false},async()=>{
+  const source=await readFile(new URL('../server.js',import.meta.url),'utf8');
+  const start=source.indexOf('function toCompatibleMatchStatus');
+  const end=source.indexOf('\n}\n\nfunction stripUnsupportedColumns',start);
+  assert.ok(start>=0 && end>start);
+  const fn=source.slice(start,end+2);
+  assert.match(fn,/return normalized;/);
+  assert.doesNotMatch(fn,/return 'suggested';/);
+  assert.doesNotMatch(fn,/return 'requested';/);
+  assert.match(fn,/return 'pending';/);
 });
 
 test.after(async () => {
