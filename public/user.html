@@ -81,7 +81,7 @@
       <div class="notice">
         現在登録されているメールアドレス：<span id="accountEmail" class="account-email">確認中…</span>
         <br>
-        登録解除すると、このメールアドレスでのFCLログインとメール通知を停止し、挑戦者・支援者としての登録を非公開にします。過去の挑戦・日誌などの履歴は削除しません。
+        登録解除すると、このメールアドレスでのFCLログインとメール通知を停止し、現在の挑戦者・支援者登録をアーカイブして新規マッチング対象から外します。過去の挑戦・日誌などの履歴は削除しません。
       </div>
       <div class="account-actions">
         <button id="removeEmailBtn" type="button" class="danger-button" disabled>メールアドレス登録を解除</button>
@@ -176,7 +176,7 @@
     if(!emailEl || !button || !status) return;
 
     button.disabled=true;
-    status.textContent='本人確認を確認中…';
+    status.textContent='ログイン状態を確認中…';
 
     try{
       const response=await fetch('/api/auth/session',{credentials:'same-origin'});
@@ -217,7 +217,7 @@
       'メールアドレス登録を解除しますか？\n\n'+
       '・FCLへのメール認証ログインを停止します\n'+
       '・FCLからのメール通知を停止します\n'+
-      '・現在の挑戦者／支援者登録を非公開にします\n'+
+      '・現在の挑戦者／支援者登録をアーカイブします\n'+
       '・過去の挑戦や日誌などの履歴は削除しません'
     );
     if(!confirmed) return;
