@@ -39,6 +39,12 @@
     .error{padding:12px;border-radius:12px;background:#fef2f2;color:#991b1b;margin-bottom:14px}
     .empty{padding:14px;background:#f8fafc;border-radius:12px;color:#64748b}
     .notice{padding:12px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-size:13px;line-height:1.7}
+    .success{padding:12px;border-radius:12px;background:#ecfdf5;color:#166534;margin-bottom:14px;line-height:1.7}
+    .account-email{font-weight:700;word-break:break-all}
+    .danger-button{background:#b42318!important;color:#fff!important}
+    .danger-button:hover{background:#8f1d14!important}
+    .account-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}
+    .account-status{margin-top:10px;font-size:13px;line-height:1.7}
     .top-nav{display:flex;justify-content:space-between;align-items:center;gap:10px}
     @media (max-width:760px){.summary-grid,.role-grid{grid-template-columns:1fr}.match-head{flex-direction:column}}
   </style>
@@ -59,6 +65,7 @@
       <button id="loadBtn" type="button">マイページを開く</button>
     </div>
     <div id="errorBox" class="error" hidden></div>
+    <div id="successBox" class="success" hidden></div>
   </section>
 
   <section id="content" hidden>
@@ -67,6 +74,20 @@
       <div id="userIdLabel" class="match-title"></div>
       <div id="roles" style="margin-top:10px"></div>
       <p class="muted" style="margin-top:10px">同じメールアドレスで登録した内容は、1つのFCLユーザーIDにまとまります。挑戦は複数登録でき、使う挑戦をここから切り替えられます。</p>
+    </section>
+
+    <section class="card">
+      <h2>メールアドレス登録</h2>
+      <div class="notice">
+        現在登録されているメールアドレス：<span id="accountEmail" class="account-email">確認中…</span>
+        <br>
+        登録解除すると、このメールアドレスでのFCLログインとメール通知を停止し、挑戦者・支援者としての登録を非公開にします。過去の挑戦・日誌などの履歴は削除しません。
+      </div>
+      <div class="account-actions">
+        <button id="removeEmailBtn" type="button" class="danger-button" disabled>メールアドレス登録を解除</button>
+        <span id="accountSessionStatus" class="muted"></span>
+      </div>
+      <div id="removeEmailStatus" class="account-status muted"></div>
     </section>
 
     <section class="card">
@@ -99,7 +120,7 @@
     </section>
 
     <section class="card">
-      <p class="muted">現在のMVPでは、共通ユーザーIDを端末から指定して表示しています。本番の本人確認はメール認証付きリンクへ移行します。</p>
+      <p class="muted">マイページの表示とメールアドレス登録解除は、現在のメール認証セッションで本人確認します。</p>
     </section>
   </section>
 </main>
@@ -139,6 +160,104 @@
   function clearError(){
     $('errorBox').hidden = true;
     $('errorBox').textContent = '';
+  }
+
+  function showSuccess(message){
+    $('successBox').textContent = message || '';
+    $('successBox').hidden = !message;
+  }
+
+  let currentSession = null;
+
+  async function refreshAccountSession(expectedUserId=''){
+    const emailEl=$('accountEmail');
+    const button=$('removeEmailBtn');
+    const status=$('accountSessionStatus');
+    if(!emailEl || !button || !status) return;
+
+    button.disabled=true;
+    status.textContent='本人確認を確認中…';
+
+    try{
+      const response=await fetch('/api/auth/session',{credentials:'same-origin'});
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok || !data?.user?.id){
+        currentSession=null;
+        emailEl.textContent='メール認証が必要です';
+        status.textContent='メール認証済みの状態で登録解除できます。';
+        return;
+      }
+
+      currentSession=data.user;
+      const loadedId=String(expectedUserId||$('userIdInput').value||'').trim();
+      if(loadedId && loadedId!==String(data.user.id)){
+        currentSession=null;
+        emailEl.textContent='現在のログインユーザーと表示中のユーザーが一致しません';
+        status.textContent='現在のメール認証セッションのユーザーでマイページを開いてください。';
+        return;
+      }
+
+      emailEl.textContent=String(data.user.email||'');
+      status.textContent='本人確認済み';
+      button.disabled=false;
+    }catch(error){
+      currentSession=null;
+      emailEl.textContent='確認できませんでした';
+      status.textContent='セッション確認に失敗しました。ページを更新してください。';
+    }
+  }
+
+  async function unregisterEmailRegistration(){
+    const button=$('removeEmailBtn');
+    const status=$('removeEmailStatus');
+    if(!currentSession?.email || button.disabled) return;
+
+    const email=String(currentSession.email).trim();
+    const confirmed=window.confirm(
+      'メールアドレス登録を解除しますか？\n\n'+
+      '・FCLへのメール認証ログインを停止します\n'+
+      '・FCLからのメール通知を停止します\n'+
+      '・現在の挑戦者／支援者登録を非公開にします\n'+
+      '・過去の挑戦や日誌などの履歴は削除しません'
+    );
+    if(!confirmed) return;
+
+    const typed=window.prompt('確認のため、現在のメールアドレスを入力してください。\n\n'+email,'');
+    if(typed===null) return;
+    if(String(typed).trim().toLowerCase()!==email.toLowerCase()){
+      status.textContent='入力したメールアドレスが一致しません。登録解除は行っていません。';
+      return;
+    }
+
+    button.disabled=true;
+    button.textContent='解除処理中…';
+    status.textContent='登録解除を処理しています…';
+    clearError();
+
+    try{
+      const response=await fetch('/api/auth/unregister',{
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        credentials:'same-origin',
+        body:JSON.stringify({email_confirmation:email})
+      });
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok) throw new Error(data.error||'メールアドレス登録の解除に失敗しました。');
+
+      currentSession=null;
+      localStorage.removeItem('fcl-user-id');
+      localStorage.removeItem('fcl-participant-id');
+      $('userIdInput').value='';
+      $('content').hidden=true;
+      button.hidden=true;
+      status.textContent='';
+      showSuccess(data.message+' FCLからログアウトしました。再利用する場合は、トップページから同じメールアドレスで認証できます。');
+    }catch(error){
+      button.disabled=false;
+      button.textContent='メールアドレス登録を解除';
+      status.textContent='';
+      showError(error.message||'メールアドレス登録の解除に失敗しました。');
+    }
   }
 
   function renderRecords(data){
@@ -235,6 +354,8 @@
       renderRecords(data);
       renderMatches(data.matches || []);
       $('content').hidden = false;
+      showSuccess('');
+      await refreshAccountSession(data.user_id);
     }catch(error){
       $('content').hidden = true;
       showError(error.message || 'マイページの取得に失敗しました。');
@@ -250,6 +371,7 @@
   });
 
   $('loadBtn').addEventListener('click', () => loadOverview($('userIdInput').value));
+  $('removeEmailBtn').addEventListener('click', unregisterEmailRegistration);
 
   const params = new URLSearchParams(location.search);
   const initialUserId = params.get('user_id') || localStorage.getItem('fcl-user-id') || '';
@@ -258,6 +380,8 @@
   if(initialUserId){
     $('userIdInput').value = initialUserId;
     loadOverview(initialUserId);
+  }else{
+    refreshAccountSession('');
   }
 })();
 </script>
