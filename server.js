@@ -95,7 +95,7 @@ function parseCookieHeader(header=''){ return String(header||'').split(';').redu
 function getRequestSessionToken(req){ const cookies=parseCookieHeader(req.headers.cookie||''); return cookies.fcl_session || String(req.headers.authorization||'').replace(/^Bearer\s+/i,'').trim() || ''; }
 function setFclSessionCookie(res,token){ const secure=process.env.NODE_ENV!=='development'?'; Secure':''; res.setHeader('Set-Cookie','fcl_session='+encodeURIComponent(token)+'; Max-Age='+String(30*24*60*60)+'; Path=/; HttpOnly; SameSite=Lax'+secure); }
 function clearFclSessionCookie(res){ const secure=process.env.NODE_ENV!=='development'?'; Secure':''; res.setHeader('Set-Cookie','fcl_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax'+secure); }
-async function getAuthenticatedFclUser(req){ const session=verifyFclSessionToken(getRequestSessionToken(req)); if(!session?.user_id)return null; const user=(await select('fcl_users',{id:session.user_id}))[0]||null; return user?{...user,session}:null; }
+async function getAuthenticatedFclUser(req){ const session=verifyFclSessionToken(getRequestSessionToken(req)); if(!session?.user_id)return null; const user=(await select('fcl_users',{id:session.user_id}))[0]||null; return user && !user.account_disabled_at ? {...user,session}:null; }
 async function requireParticipantOwnership(userId,participantId){ if(!userId||!participantId)return false; const participant=(await select('participants',{id:participantId}))[0]; return Boolean(participant&&participant.user_id===userId&&!participant.archived_at); }
 async function requireSupporterOwnership(userId,supporterId){ if(!userId||!supporterId)return false; const supporter=(await select('supporters',{id:supporterId}))[0]; return Boolean(supporter&&supporter.user_id===userId&&!supporter.archived_at); }
 async function getActiveSupporterForUser(userId){
@@ -1741,6 +1741,73 @@ async function saveFclCoreOutcome({ participant_id, selected_option, next_action
   }};
 }
 
+async function unregisterFclUser({userId,email}={}){
+  const normalizedEmail=normalizeContactEmail(email);
+  if(!userId||!normalizedEmail) throw new Error('メールアドレス登録解除に必要な情報が不足しています。');
+
+  if(supabase){
+    const {data,error}=await supabase.rpc('fcl_unregister_user',{
+      target_user_id:userId,
+      target_email:normalizedEmail
+    });
+    if(error){
+      logSupabaseError({table:'fcl_users',operation:'unregister',error});
+      throw error;
+    }
+    return data || {ok:true};
+  }
+
+  const user=memory.fcl_users.find(x=>x.id===userId);
+  if(!user || user.account_disabled_at) throw new Error('FCLユーザーが見つからないか、すでに登録解除されています。');
+  if(normalizeContactEmail(user.email)!==normalizedEmail) throw new Error('メールアドレス確認に失敗しました。');
+
+  const now=new Date().toISOString();
+  let participantCount=0;
+  let supporterCount=0;
+
+  for(const row of memory.participants){
+    if(row.user_id!==userId) continue;
+    row.email=null;
+    row.archived_at=row.archived_at||now;
+    participantCount++;
+  }
+  for(const row of memory.supporters){
+    if(row.user_id!==userId) continue;
+    row.email=null;
+    row.active=false;
+    row.archived_at=row.archived_at||now;
+    supporterCount++;
+  }
+  const redactValue=(value)=>{
+    if(typeof value==='string') return value.split(normalizedEmail).join('[email removed]');
+    if(Array.isArray(value)) return value.map(redactValue);
+    if(value && typeof value==='object'){
+      return Object.fromEntries(Object.entries(value).map(([key,val])=>[key,redactValue(val)]));
+    }
+    return value;
+  };
+  for(const row of memory.connection_events||[]){
+    if(typeof row.note==='string') row.note=row.note.split(normalizedEmail).join('[email removed]');
+  }
+  for(const row of memory.model_learning_events||[]){
+    row.features=redactValue(row.features);
+    row.label=redactValue(row.label);
+  }
+
+  const redactedEmail='removed+'+String(userId).replaceAll('-','')+'@fcl.invalid';
+  Object.assign(user,{
+    email:redactedEmail,
+    email_normalized:redactedEmail,
+    account_disabled_at:now,
+    auth_code_hash:null,
+    auth_code_expires_at:null,
+    auth_code_sent_at:null,
+    auth_code_attempts:0,
+    updated_at:now
+  });
+  return {ok:true,participant_count:participantCount,supporter_count:supporterCount};
+}
+
 app.post('/api/auth/request-code',async(req,res)=>{
   try{
     const email=normalizeContactEmail(req.body?.email);
@@ -1850,6 +1917,35 @@ app.get('/api/reengagement/:participant_id/continue',async(req,res)=>{
   }
 });
 app.post('/api/auth/logout',(req,res)=>{clearFclSessionCookie(res);res.json({ok:true});});
+app.post('/api/auth/unregister',async(req,res)=>{
+  try{
+    const user=await getAuthenticatedFclUser(req);
+    if(!user) return res.status(401).json({error:'FCLログインが必要です。メール認証コードでログインしてください。'});
+
+    const confirmation=normalizeContactEmail(req.body?.email_confirmation);
+    if(!confirmation || confirmation!==normalizeContactEmail(user.email)){
+      return res.status(400).json({error:'確認のため、現在登録されているメールアドレスを正確に入力してください。'});
+    }
+
+    const result=await unregisterFclUser({userId:user.id,email:confirmation});
+    clearFclSessionCookie(res);
+    res.json({
+      ok:true,
+      message:'メールアドレス登録を解除しました。',
+      participant_count:Number(result?.participant_count||0),
+      supporter_count:Number(result?.supporter_count||0)
+    });
+  }catch(error){
+    console.error('[fcl-auth] unregister',error);
+    const message=String(error?.message||'');
+    const status=/email confirmation does not match|メールアドレス確認/.test(message)?400:500;
+    res.status(status).json({
+      error:status===400
+        ? 'メールアドレス確認に失敗しました。'
+        : 'メールアドレス登録の解除に失敗しました。時間をおいてもう一度お試しください。'
+    });
+  }
+});
 
 app.use('/api',async(req,res,next)=>{
   const path=req.path||'';
