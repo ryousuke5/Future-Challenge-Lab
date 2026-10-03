@@ -7,7 +7,8 @@ create table if not exists fcl_users (
   email text not null,
   email_normalized text not null unique,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  account_disabled_at timestamptz
 );
 
 
