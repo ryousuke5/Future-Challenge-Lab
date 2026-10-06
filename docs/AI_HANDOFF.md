@@ -21,7 +21,11 @@ Do not restart from memory alone.
 
 ## Current Verified Repository State
 
-Latest verified commits on `main` before this handoff setup:
+Latest verified commit on `main`:
+
+- `5b55b820e0dd495af03eaf9fe403da08fef14f05` — chore: connect ChatGPT and Claude through shared GitHub handoff (#20)
+
+Recent preceding commits include:
 
 - `5873108090f438dfb58715a5ed2b68c90c92a8e7` — fix: clarify FCL email unsubscribe behavior
 - `7ac03ad213646611f151903e944958d77ec9b694` — db: add atomic FCL email registration unsubscribe
@@ -79,18 +83,19 @@ These items are repository-history facts, not a claim that the production deploy
 
 ## Current Task
 
-Status: AI collaboration/resume infrastructure setup.
+Status: AI collaboration/resume infrastructure is merged and ready for use.
 
 Goal:
 Make ChatGPT and Claude able to work on the same FCL repository without losing context when a session is interrupted.
 
-Completed in this setup branch:
+Completed:
 
 - strengthened `CLAUDE.md`
-- added this `docs/AI_HANDOFF.md`
+- added `docs/AI_HANDOFF.md`
 - added a PR template requiring implementation/test/handoff information
+- merged PR #20 into `main`
 
-Next action after this branch is merged:
+Next action:
 Connect `ryousuke5/Future-Challenge-Lab` to Claude's GitHub integration / Claude Code, then have Claude read `CLAUDE.md` and `docs/AI_HANDOFF.md` before its first implementation task.
 
 ## Resume Checkpoint
