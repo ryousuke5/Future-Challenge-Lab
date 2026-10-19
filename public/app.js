@@ -783,7 +783,7 @@ function renderCoreResult(data){
   // instead of incorrectly presenting them as unknown.
   const stateValue = typeof result.state === 'object'
     ? (result.state.currentState || result.state.current_state || result.state.summary || '')
-    : (result.state || '');
+    : (result.state || result.summary || '');
   const riskScore = result.signals?.risk ?? result.risk_score;
   const riskLevel = (result.risk?.level && result.risk.level !== 'unknown' ? result.risk.level : '')
     || result.signals?.level || result.risk_level || result.risk?.level || 'unknown';
