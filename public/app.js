@@ -149,6 +149,21 @@ function renderChallengeSelector(challenges, selectedId){
   if(status) status.textContent='現在：'+(active?.challenge || '挑戦テーマ未登録')+(active?.goal ? ' ／ 目標：'+active.goal : '');
   return activeId;
 }
+function isLegacyCoreAnalysis(result){
+  return Boolean(result && typeof result === 'object'
+    && !String(result.insight || '').trim()
+    && !String(result.problem || '').trim()
+    && !String(result.hypothesis || '').trim()
+    && (String(result.summary || '').trim() || (result.signals && typeof result.signals === 'object')));
+}
+
+function restoreLegacyCoreCheckinText(history){
+  if(!isLegacyCoreAnalysis(history?.analysis)) return;
+  const input = document.getElementById('coreCheckinText');
+  const savedText = String(history?.checkin_text || '').trim();
+  if(input && !String(input.value || '').trim() && savedText) input.value = savedText;
+}
+
 async function restoreParticipantHistory(participantId, userId){
   if(!participantId) return false;
   const response=await fetch('/api/core/history/'+encodeURIComponent(participantId),{credentials:'same-origin'});
@@ -171,6 +186,7 @@ async function restoreParticipantHistory(participantId, userId){
     renderInsight({result:history.analysis});
     renderSolutions({result:history.analysis});
   }
+    restoreLegacyCoreCheckinText(history);
   const decision=history.decision?.selected_option || history.analysis?.recommended_option;
   if(decision){
     selectedCoreOption=decision;
@@ -263,7 +279,7 @@ async function restoreCoreSession(){
           if(status) status.textContent=` ユーザーID: ${participant.user_id || userId || '未取得'} / 現在の挑戦: ${participant.challenge || '未登録'} `;
           const goalInput=document.getElementById('coreGoal');
           if(goalInput && participant.goal) goalInput.value=participant.goal;
-          if(history.analysis){ renderCoreResult({result:history.analysis}); renderInsight({result:history.analysis}); renderSolutions({result:history.analysis}); }
+          if(history.analysis){ renderCoreResult({result:history.analysis}); renderInsight({result:history.analysis}); renderSolutions({result:history.analysis}); restoreLegacyCoreCheckinText(history); }
           const decision=history.decision?.selected_option || history.analysis?.recommended_option;
           if(decision){ selectedCoreOption=decision; document.getElementById('coreSelected').textContent=`選択中: ${decision}`; }
           const nextAction=history.decision?.next_action || history.analysis?.label?.next_action;
@@ -753,6 +769,7 @@ let selectedCoreOption = null;
 
 function renderCoreResult(data){
   const result = data?.result || {};
+  const legacy = isLegacyCoreAnalysis(result);
   const continuation = result.continuation_risk || {};
   const continuationReasons = Array.isArray(continuation.reasons) ? continuation.reasons : [];
   const esc = (value) => String(value ?? '')
@@ -760,14 +777,25 @@ function renderCoreResult(data){
     .replaceAll('<','&lt;')
     .replaceAll('>','&gt;')
     .replaceAll('"','&quot;')
-    .replaceAll("'",'&#39;');
+    .replaceAll("'","&#39;");
+
+  // Older check-ins saved {summary, signals, resumed}; show those real fields
+  // instead of incorrectly presenting them as unknown.
+  const stateValue = typeof result.state === 'object'
+    ? (result.state.currentState || result.state.current_state || result.state.summary || '')
+    : (result.state || '');
+  const riskScore = result.signals?.risk ?? result.risk_score;
+  const riskLevel = (result.risk?.level && result.risk.level !== 'unknown' ? result.risk.level : '')
+    || result.signals?.level || result.risk_level || result.risk?.level || 'unknown';
+  const riskReason = result.risk?.reason
+    || (riskScore !== undefined && riskScore !== null ? `記録時のリスクスコア ${riskScore}` : (legacy ? '詳細分析は未実施です' : 'reason unknown'));
   const summary = [
-    { title: '現在の状態', value: typeof result.state === 'object' ? (result.state.currentState || result.state.current_state || 'unknown') : (result.state || 'unknown') },
-    { title: '変化', value: Array.isArray(result.state_change) ? result.state_change.join(' ') : (result.state_change || '変化の有無はまだ不明です。') },
-    { title: 'リスク', value: `${result.risk?.level || 'unknown'} / ${result.risk?.reason || 'reason unknown'}` },
-    { title: '継続リスクの理由', value: continuationReasons.length ? continuationReasons.slice(0,2).join(' / ') : '具体的な繰り返し兆候はまだ十分にありません。' },
-    { title: '推奨次の一歩', value: result.next_action || '次の一歩を整理してください。' },
-    { title: '次回への調整', value: result.adaptive_next_step_reason || '今回の結果を次回の提案に反映します。' }
+    { title: '現在の状態', value: stateValue || (legacy ? '過去のチェックイン記録（詳細AI分析なし）' : 'unknown') },
+    { title: '変化', value: Array.isArray(result.state_change) ? result.state_change.join(' ') : (result.state_change || (legacy ? (result.resumed ? '中断後に再開した記録です。前回との差分分析は未実施です。' : 'この記録では前回との差分分析は未実施です。') : '変化の有無はまだ不明です。')) },
+    { title: 'リスク', value: `${riskLevel} / ${riskReason}` },
+    { title: '継続リスクの理由', value: continuationReasons.length ? continuationReasons.slice(0,2).join(' / ') : (legacy ? '詳細AI分析が未実施のため、繰り返し兆候は未評価です。' : '具体的な繰り返し兆候はまだ十分にありません。') },
+    { title: '推奨次の一歩', value: result.next_action || (legacy ? '最新の日誌を確認して「分析する」を実行してください。' : '次の一歩を整理してください。') },
+    { title: '次回への調整', value: result.adaptive_next_step_reason || (legacy ? '詳細AI分析を実行すると、次回への調整が表示されます。' : '今回の結果を次回の提案に反映します。') }
   ];
 
   document.getElementById('coreResult').innerHTML = `
@@ -806,14 +834,24 @@ function renderInsight(data){
     .replaceAll('>','&gt;')
     .replaceAll('"','&quot;')
     .replaceAll("'","&#39;");
+  const legacy = isLegacyCoreAnalysis(result);
   const personalHint = result.personal_learning?.hint || '';
   const evidenceQuality = result.personal_learning?.evidence_quality || '観測中';
+  const insightText = result.insight || (legacy
+    ? 'チェックイン記録は保存されていますが、「今日の気づき」を作る詳細AI分析はまだありません。最新の日誌を確認し、「分析する」を押して分析してください。'
+    : '気づきを確認できませんでした。');
+  const problemText = result.problem || (legacy
+    ? '現在のチェックイン情報のみ保存されています。詳細な問題分析はまだありません。'
+    : '問題を整理してください。');
+  const hypothesisText = result.hypothesis || result.hypotheses?.[0] || (legacy
+    ? '日誌の詳細分析後に、記録に基づく仮説を表示します。'
+    : '次の一歩を小さくすると実行しやすくなる可能性があります。');
   document.getElementById('coreInsight').innerHTML = `
     <div class="result-card highlight">
       <span class="section-tag">💡 今日の気づき</span>
-      <p>${esc(result.insight || '気づきを確認できませんでした。')}</p>
-      <p><strong>今の問題:</strong> ${esc(result.problem || '問題を整理してください。')}</p>
-      <p><strong>仮説:</strong> ${esc(result.hypothesis || result.hypotheses?.[0] || '次の一歩を小さくすると実行しやすくなる可能性があります。')}</p>
+      <p>${esc(insightText)}</p>
+      <p><strong>今の問題:</strong> ${esc(problemText)}</p>
+      <p><strong>仮説:</strong> ${esc(hypothesisText)}</p>
       ${renderAdaptiveQuestions(result.adaptive_questions)}
       ${result.personal_support_pattern?.statement ? `<p><strong>個人別の観測:</strong> ${esc(result.personal_support_pattern.statement)}</p>` : ''}
       ${personalHint ? `<div class="personal-learning-hint"><strong>あなたの過去の記録からのヒント</strong><p>${esc(personalHint)}</p><small>観測の確かさ：${esc(evidenceQuality)}</small></div>` : ''}
