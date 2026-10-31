@@ -21,22 +21,17 @@ Do not restart from memory alone.
 
 ## Current Verified Repository State
 
-Latest verified commit on `main`:
+Latest verified commit on `main` at the time of this handoff update:
 
-- `5b55b820e0dd495af03eaf9fe403da08fef14f05` — chore: connect ChatGPT and Claude through shared GitHub handoff (#20)
+- `7bb23e9c97e7832a6e98003483f228fc21aad558` — fix: show legacy check-in summary (2026-10-19)
 
-Recent preceding commits include:
+The repository includes a `CLAUDE.md` defining Claude's implementation role, startup sequence, security rules, branch workflow, and handoff requirements.
 
-- `5873108090f438dfb58715a5ed2b68c90c92a8e7` — fix: clarify FCL email unsubscribe behavior
-- `7ac03ad213646611f151903e944958d77ec9b694` — db: add atomic FCL email registration unsubscribe
-- `95299fcd4b15c5a77d2b153f15521ed86f06f5b5` — test: add email registration unsubscribe coverage
-
-The repository already contains a `CLAUDE.md` defining Claude's role and security rules.
-This file adds the resumable cross-agent state.
+Important limitation: this checkpoint was inspected through the GitHub repository API. It does not verify a local working tree, Render deployment, or the live Supabase schema/runtime.
 
 ## Product / Architecture Baseline
 
-The README describes the unified learning loop:
+The README describes the existing unified learning-loop research MVP:
 
 1. Participant registration
 2. Self-determination questionnaire
@@ -49,17 +44,37 @@ The README describes the unified learning loop:
 9. Supporter matching
 10. Research dashboard
 
-The intervention optimizer currently considers:
+The intervention optimizer currently considers risk band, self-determination band, restart state, overall and same-context A/B performance, participant history, and exploration.
 
-- risk band
-- self-determination band
-- restart state
-- overall A/B performance
-- same-context A/B performance
-- participant historical performance
-- exploration
+The repository uses `fcl_users.id` as the common FCL user ID. `participants` rows represent challenger registrations and can contain multiple challenges for one user.
 
-The repository also documents a unified FCL user ID based on `fcl_users.id`.
+The current `public/story.html` already builds a date-based challenge narrative from check-ins, action results, model-learning events, supporter connections, and journal replies. `challenge_story_pages` and `life_story_pages` are also present. Do not build a duplicate daily diary/timeline or remove this existing story experience.
+
+## Product Direction Decision — 2026-10-31
+
+The owner selected this as FCL's primary user value:
+
+**Users choose FCL because their growth and challenge outcomes accumulate over time.**
+
+Initial target:
+- Company employees, initially centered on ages 30–40, who have already published at least one note/blog article as a side project.
+- They want to continue their side project but their outputs, learning, failures, and improvement history are scattered or difficult to review.
+
+Product concept:
+- FCL is a private, evidence-based challenge portfolio.
+- Capture meaningful outcomes, work samples, learning, setbacks, method changes, pauses, and restarts when they occur. Do not require daily check-ins.
+- Provide an evidence-based growth reflection that explains what changed and links back to source records.
+- Let past challenge experience inform later challenges.
+
+Key distinctions:
+- Existing `story.html`: daily/date-based narrative and journal history.
+- New portfolio: curated outcomes and evidence across a challenge, with AI reflection grounded in the saved records.
+- Keep all new portfolio records private by default. Do not auto-publish them through `challenge_stories`.
+
+The detailed approved product/implementation proposal is:
+- `docs/07_CHALLENGE_PORTFOLIO_GROWTH_SPEC.md`
+
+This is a product specification only. No application code or production database has been changed by this task.
 
 ## Recent Completed Work
 
@@ -83,35 +98,34 @@ These items are repository-history facts, not a claim that the production deploy
 
 ## Current Task
 
-Status: AI collaboration/resume infrastructure is merged and ready for use.
+Status: Product specification prepared on a feature branch; implementation has not started.
 
 Goal:
-Make ChatGPT and Claude able to work on the same FCL repository without losing context when a session is interrupted.
+Define and then implement a private challenge portfolio and evidence-based growth timeline without replacing the existing daily story experience.
 
 Completed:
-
-- strengthened `CLAUDE.md`
-- added `docs/AI_HANDOFF.md`
-- added a PR template requiring implementation/test/handoff information
-- merged PR #20 into `main`
+- Inspected README, CLAUDE.md, AI_HANDOFF, existing Supabase schema/migrations, story.html, user.html, and relevant server.js routes.
+- Confirmed that participants can represent multiple challenges per FCL user.
+- Confirmed that story.html already provides a date-based narrative timeline.
+- Added `docs/07_CHALLENGE_PORTFOLIO_GROWTH_SPEC.md` with product scope, data proposal, API proposal, privacy requirements, acceptance criteria, and rollout metrics.
+- Updated this handoff with the product decision and checkpoint.
 
 Next action:
-Connect `ryousuke5/Future-Challenge-Lab` to Claude's GitHub integration / Claude Code, then have Claude read `CLAUDE.md` and `docs/AI_HANDOFF.md` before its first implementation task.
+Claude Code must read `CLAUDE.md`, this handoff, and `docs/07_CHALLENGE_PORTFOLIO_GROWTH_SPEC.md`; inspect the local branch/worktree and live Supabase schema/migration history read-only; then implement the smallest additive migration and API/UI changes on a separate implementation branch. Do not change production DB or deploy until migration/security/tests are reviewed.
 
 ## Resume Checkpoint
 
-When a task is active, replace the section below with the latest checkpoint.
-
 ### Checkpoint
-- Date:
-- Branch:
-- Commit:
-- Objective:
-- Completed:
-- Files changed:
-- Tests:
-- Known issue/blocker:
-- Exact next action:
+- Date: 2026-10-31
+- Branch: `feat/challenge-portfolio-growth-spec-20261031`
+- Base main commit: `7bb23e9c97e7832a6e98003483f228fc21aad558`
+- Spec commit before this handoff update: `243b9c20a520803028b4dfb0b07af6355f641020`
+- Objective: Define the FCL challenge portfolio and evidence-based growth timeline.
+- Completed: Repository source inspection; product decision recorded; implementation spec added.
+- Files changed: `docs/07_CHALLENGE_PORTFOLIO_GROWTH_SPEC.md`; `docs/AI_HANDOFF.md`.
+- Tests: Not run; documentation-only changes. No app code, migration, live DB, or Render deployment was changed.
+- Known issue/blocker: Local working tree and live Supabase schema/runtime were not inspected in this session. Validate before implementation.
+- Exact next action: Claude Code to inspect local state and live schema, then implement Phase 1 of the spec on a separate feature branch.
 
 ## Validation Rules
 
