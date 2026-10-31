@@ -23,7 +23,7 @@ Do not restart from memory alone.
 
 Latest verified commit on `main` at the time of this handoff update:
 
-- `7bb23e9c97e7832a6e98003483f228fc21aad558` — fix: show legacy check-in summary (2026-10-19)
+- `ce8ff1bd44a1747f743e7098b178c55217890fd9` — merge PR #22, challenge portfolio and growth timeline specification (2026-10-31)
 
 The repository includes a `CLAUDE.md` defining Claude's implementation role, startup sequence, security rules, branch workflow, and handoff requirements.
 
@@ -98,34 +98,42 @@ These items are repository-history facts, not a claim that the production deploy
 
 ## Current Task
 
-Status: Product specification prepared on a feature branch; implementation has not started.
+Status: Product specification merged; implementation task opened as GitHub Issue #23. Application implementation has not started.
 
 Goal:
-Define and then implement a private challenge portfolio and evidence-based growth timeline without replacing the existing daily story experience.
+Implement a private challenge portfolio and evidence-based growth timeline that makes accumulated outcomes, artifacts, setbacks, learning, and observed changes useful to the user.
+
+Product decision:
+- Core value: users use FCL because their growth and challenge outcomes accumulate over time.
+- Initial audience: employees who have already published at least one note/blog article as a side project.
+- Existing `public/story.html` remains the day-by-day personal narrative. The new portfolio is a curated set of outcomes and evidence, not a duplicate daily timeline.
+- Daily check-in is not required.
+- AI growth analysis must be user-triggered and trace every claim to stored evidence.
 
 Completed:
-- Inspected README, CLAUDE.md, AI_HANDOFF, existing Supabase schema/migrations, story.html, user.html, and relevant server.js routes.
-- Confirmed that participants can represent multiple challenges per FCL user.
-- Confirmed that story.html already provides a date-based narrative timeline.
-- Added `docs/07_CHALLENGE_PORTFOLIO_GROWTH_SPEC.md` with product scope, data proposal, API proposal, privacy requirements, acceptance criteria, and rollout metrics.
-- Updated this handoff with the product decision and checkpoint.
+- PR #22 merged into `main`.
+- Added `docs/07_CHALLENGE_PORTFOLIO_GROWTH_SPEC.md`.
+- Created GitHub Issue #23 with implementation scope, acceptance criteria, and handoff instructions.
+- Read-only inspection of the connected Supabase project found the existing FCL tables, including `participants`, `action_results`, `challenge_story_pages`, `challenge_stories`, `journal_entries`, `journal_replies`, `personal_ai_profiles`, and `fcl_users`.
+- Confirmed RLS is enabled on inspected existing tables. `participants`, `action_results`, `challenge_stories`, `journal_entries`, `journal_replies`, and `fcl_users` have `deny_direct_api_access`; `challenge_story_pages` and `personal_ai_profiles` have service-role policies.
+- Confirmed `challenge_records` and `challenge_growth_snapshots` do not yet exist in the connected database.
+- Observed that the live migration-history listing is not a one-to-one match with every checked-in migration filename. This must be reconciled before any migration is applied.
 
 Next action:
-Claude Code must read `CLAUDE.md`, this handoff, and `docs/07_CHALLENGE_PORTFOLIO_GROWTH_SPEC.md`; inspect the local branch/worktree and live Supabase schema/migration history read-only; then implement the smallest additive migration and API/UI changes on a separate implementation branch. Do not change production DB or deploy until migration/security/tests are reviewed.
+Claude Code should take Issue #23, inspect the local worktree and live migration history, run `supabase migration new challenge_portfolio_growth` locally to create the timestamped migration, then implement on a feature branch. Do not apply DDL to production, reset the remote database, or deploy Render until the migration, API ownership checks, RLS, and tests have been reviewed.
 
 ## Resume Checkpoint
 
 ### Checkpoint
 - Date: 2026-10-31
-- Branch: `feat/challenge-portfolio-growth-spec-20261031`
-- Base main commit: `7bb23e9c97e7832a6e98003483f228fc21aad558`
-- Spec commit before this handoff update: `243b9c20a520803028b4dfb0b07af6355f641020`
-- Objective: Define the FCL challenge portfolio and evidence-based growth timeline.
-- Completed: Repository source inspection; product decision recorded; implementation spec added.
-- Files changed: `docs/07_CHALLENGE_PORTFOLIO_GROWTH_SPEC.md`; `docs/AI_HANDOFF.md`.
-- Tests: Not run; documentation-only changes. No app code, migration, live DB, or Render deployment was changed.
-- Known issue/blocker: Local working tree and live Supabase schema/runtime were not inspected in this session. Validate before implementation.
-- Exact next action: Claude Code to inspect local state and live schema, then implement Phase 1 of the spec on a separate feature branch.
+- Branch: `chore/portfolio-implementation-handoff-20261031` (handoff update branch)
+- Base commit: `ce8ff1bd44a1747f743e7098b178c55217890fd9`
+- Objective: Prepare implementation handoff after merging the portfolio/growth product specification.
+- Completed: Verified PR #22 is merged; inspected live Supabase table inventory, relevant columns, RLS status, and migration history read-only; opened Issue #23.
+- Files changed: `docs/AI_HANDOFF.md` only.
+- Tests: Not run; documentation-only handoff update. No application code, production DB, or Render service changed.
+- Known issue/blocker: Live Supabase migration history does not match all checked-in migration filenames one-to-one; Claude must reconcile before writing/applying a migration. No local working tree or Node test suite was available in this session.
+- Exact next action: Claude Code to begin Issue #23 on a separate implementation branch, starting with read-only local/live migration reconciliation.
 
 ## Validation Rules
 
